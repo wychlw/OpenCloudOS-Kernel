@@ -581,6 +581,13 @@ static struct ctl_table ipv4_table[] = {
 		.extra2		= &sysctl_fib_sync_mem_max,
 	},
 	{
+		.procname	= "tcp_wan_timestamps",
+		.data		= &init_net.ipv4.sysctl_tcp_wan_timestamps,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
 		.procname	= "tcp_tw_ignore_syn_tsval_zero",
 		.data		= &sysctl_tcp_tw_ignore_syn_tsval_zero,
 		.maxlen		= sizeof(int),
