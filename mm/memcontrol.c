@@ -65,6 +65,7 @@
 #include <linux/seq_buf.h>
 #include <linux/emm.h>
 #include <linux/sched/isolation.h>
+#include <linux/namei.h>
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
 #endif
@@ -406,7 +407,7 @@ struct cgroup_subsys_state *mem_cgroup_css_from_folio(struct folio *folio)
 {
 	struct mem_cgroup *memcg = folio_memcg(folio);
 
-	if (!memcg || !cgroup_subsys_on_dfl(memory_cgrp_subsys))
+	if (!memcg)
 		memcg = root_mem_cgroup;
 
 	return &memcg->css;
@@ -5477,6 +5478,27 @@ void mem_cgroup_wb_stats(struct bdi_writeback *wb, unsigned long *pfilepages,
 					    READ_ONCE(memcg->memory.high));
 		unsigned long used = page_counter_read(&memcg->memory);
 
+		/*
+		 * Create a cgroup hierarchy a/{b, c}, b and c have no limit set,
+		 * or the limit of b + c is greater than the limit of a. Then if
+		 * the task of b does buffer IO first, this will cause the
+		 * available memory of a to be greatly reduced. When the subsequent
+		 * task of c is started, the available memory of a is small,
+		 * resulting in the dirty page waterline of c being very small,
+		 * the IO of c is suppressed and cannot be delivered normally.
+		 * Since the file cache in b is recyclable, we can try to reclaim it,
+		 * so when calculating the headroom, the available memory of a
+		 * includes the file cache of a.
+		 */
+		if (memcg != mem_cgroup_from_css(wb->memcg_css)) {
+			unsigned long file, dirty, writeback;
+
+			file = memcg_page_state(memcg, NR_FILE_PAGES);
+			dirty = memcg_page_state(memcg, NR_FILE_DIRTY);
+			writeback = memcg_page_state(memcg, NR_WRITEBACK);
+			used -= file - dirty - writeback;
+		}
+
 		*pheadroom = min(*pheadroom, ceiling - min(ceiling, used));
 		memcg = parent;
 	}
@@ -6198,6 +6220,78 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
+}
+
+static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	struct cgroup_subsys_state *css;
+	struct path path;
+	char *pbuf;
+	int ret;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+	buf = strstrip(buf);
+
+	/* alloc memory outside mutex */
+	pbuf = kzalloc(PATH_MAX, GFP_KERNEL);
+	if (!pbuf)
+		return -ENOMEM;
+	strscpy(pbuf, buf, PATH_MAX - 1);
+
+	mutex_lock(&memcg_max_mutex);
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		memcg->bind_blkio_path = NULL;
+		css_put(memcg->bind_blkio);
+		memcg->bind_blkio = NULL;
+
+		wb_memcg_offline(memcg);
+		INIT_LIST_HEAD(&memcg->cgwb_list);
+	}
+
+	if (!strnlen(buf, PATH_MAX)) {
+		mutex_unlock(&memcg_max_mutex);
+		kfree(pbuf);
+		return nbytes;
+	}
+
+	ret = kern_path(pbuf, LOOKUP_FOLLOW, &path);
+	if (ret)
+		goto err;
+
+	css = css_tryget_online_from_dir(path.dentry, &io_cgrp_subsys);
+	if (IS_ERR(css)) {
+		ret = PTR_ERR(css);
+		path_put(&path);
+		goto err;
+	}
+	path_put(&path);
+
+	memcg->bind_blkio_path = pbuf;
+	memcg->bind_blkio = css;
+	mutex_unlock(&memcg_max_mutex);
+	return nbytes;
+
+err:
+	kfree(pbuf);
+	mutex_unlock(&memcg_max_mutex);
+	return ret;
+}
+
+static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	if (memcg->bind_blkio_path)
+		seq_printf(m, "%s\n", memcg->bind_blkio_path);
+
+	return 0;
 }
 
 static u64 memory_current_read(struct cgroup_subsys_state *css,
@@ -7211,6 +7305,12 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 	if (!cgroup_memory_nobpf)
 		static_branch_dec(&memcg_bpf_enabled_key);
 #endif
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		css_put(memcg->bind_blkio);
+	}
 
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);
@@ -9678,6 +9778,12 @@ static struct cftype memsw_files[] = {
 		.private = MEMFILE_PRIVATE(_MEMSWAP, RES_FAILCNT),
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "bind_blkio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_bind_blkio_write,
+		.seq_show = mem_cgroup_bind_blkio_show,
 	},
 	{ },	/* terminate */
 };

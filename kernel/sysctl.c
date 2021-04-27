@@ -171,6 +171,10 @@ extern int sysctl_vm_ramdisk_swaptune;
 extern int sysctl_vm_swapcache_fastfree;
 #endif
 
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
+extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind __read_mostly;
+#endif
+
 #ifdef CONFIG_TKERNEL_SECURITY_MONITOR
 unsigned long connect_info_flag;
 unsigned long accept_info_flag;
@@ -2669,6 +2673,17 @@ static struct ctl_table kern_table[] = {
 		.extra1			= SYSCTL_ZERO,
 		.extra2			= SYSCTL_ONE,
 	},
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
+	{
+		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
+		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif
 	{ }
 };
 

@@ -412,6 +412,10 @@ struct mem_cgroup {
 	atomic_long_t unevictable_size;
 #endif
 
+	/* attach a blkio with memcg for cgroup v1 */
+	struct cgroup_subsys_state *bind_blkio;
+	char *bind_blkio_path;
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
