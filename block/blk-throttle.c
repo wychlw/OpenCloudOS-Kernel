@@ -41,6 +41,7 @@
 
 /* A workqueue to queue throttle related work */
 static struct workqueue_struct *kthrotld_workqueue;
+static bool throtl_hierarchy __read_mostly = true;
 
 #define rb_entry_tg(node)	rb_entry((node), struct throtl_grp, rb_node)
 
@@ -93,6 +94,11 @@ static void throtl_pending_timer_fn(struct timer_list *t);
 static inline struct blkcg_gq *tg_to_blkg(struct throtl_grp *tg)
 {
 	return pd_to_blkg(&tg->pd);
+}
+
+static inline bool throtl_hierarchy_enabled(void)
+{
+	return throtl_hierarchy || cgroup_subsys_on_dfl(io_cgrp_subsys);
 }
 
 /**
@@ -151,7 +157,7 @@ static uint64_t tg_bps_limit(struct throtl_grp *tg, int rw)
 	struct throtl_data *td;
 	uint64_t ret;
 
-	if (cgroup_subsys_on_dfl(io_cgrp_subsys) && !blkg->parent)
+	if (throtl_hierarchy_enabled() && !blkg->parent)
 		return U64_MAX;
 
 	td = tg->td;
@@ -181,7 +187,7 @@ static unsigned int tg_iops_limit(struct throtl_grp *tg, int rw)
 	struct throtl_data *td;
 	unsigned int ret;
 
-	if (cgroup_subsys_on_dfl(io_cgrp_subsys) && !blkg->parent)
+	if (throtl_hierarchy_enabled() && !blkg->parent)
 		return UINT_MAX;
 
 	td = tg->td;
@@ -406,7 +412,7 @@ static void throtl_pd_init(struct blkg_policy_data *pd)
 	 * regardless of the position of the group in the hierarchy.
 	 */
 	sq->parent_sq = &td->service_queue;
-	if (cgroup_subsys_on_dfl(io_cgrp_subsys) && blkg->parent)
+	if (throtl_hierarchy_enabled() && blkg->parent)
 		sq->parent_sq = &blkg_to_tg(blkg->parent)->service_queue;
 	tg->td = td;
 }
@@ -1336,8 +1342,7 @@ static void tg_conf_updated(struct throtl_grp *tg, bool global)
 
 		tg_update_has_rules(this_tg);
 		/* ignore root/second level */
-		if (!cgroup_subsys_on_dfl(io_cgrp_subsys) || !blkg->parent ||
-		    !blkg->parent->parent)
+		if (!throtl_hierarchy_enabled() || !blkg->parent || !blkg->parent->parent)
 			continue;
 		parent_tg = blkg_to_tg(blkg->parent);
 		/*
@@ -2276,7 +2281,12 @@ again:
 		qn = &tg->qnode_on_parent[rw];
 		sq = sq->parent_sq;
 		tg = sq_to_tg(sq);
-		if (!tg) {
+
+		/*
+		 * Parent tg has already linked when throtl_hierarchy enabled.
+		 * But if io_qos disabled, skip check parent and fire directly.
+		 */
+		if (!tg || (!sysctl_io_qos_enabled && throtl_hierarchy_enabled())) {
 			bio_set_flag(bio, BIO_BPS_THROTTLED);
 			goto out_unlock;
 		}
@@ -2525,5 +2535,24 @@ static int __init throtl_init(void)
 
 	return blkcg_policy_register(&blkcg_policy_throtl);
 }
+
+static int __init throtl_hierarchy_setup(char *str)
+{
+	int val;
+
+	if (!str)
+		return -EINVAL;
+
+	if (!strcmp(str, "0"))
+		val = 0;
+	else if (!strcmp(str, "1"))
+		val = 1;
+
+	throtl_hierarchy = val;
+	pr_info("blk_throtl_hierarchy %s\n", val == 0 ? "disabled" : "enabled");
+
+	return 0;
+}
+early_param("blk_throtl_hierarchy", throtl_hierarchy_setup);
 
 module_init(throtl_init);

@@ -61,6 +61,10 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_insert);
 
 static DEFINE_IDA(blk_queue_ida);
 
+unsigned int sysctl_io_qos_enabled __read_mostly;
+EXPORT_SYMBOL(sysctl_io_qos_enabled);
+
+
 /*
  * For queue allocation
  */
