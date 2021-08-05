@@ -105,6 +105,10 @@ static const int six_hundred_forty_kb = 640 * 1024;
 static const int ngroups_max = NGROUPS_MAX;
 static const int cap_last_cap = CAP_LAST_CAP;
 
+#ifdef CONFIG_CGROUPS
+extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind;
+#endif
+
 #ifdef CONFIG_PROC_SYSCTL
 
 /**
@@ -2252,6 +2256,17 @@ static struct ctl_table kern_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2 	= SYSCTL_ONE,
 	},
+#ifdef CONFIG_CGROUPS
+	{
+		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
+		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2 	= SYSCTL_ONE,
+	},
+#endif
 	{ }
 };
 
