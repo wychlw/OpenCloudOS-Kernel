@@ -1467,6 +1467,39 @@ static u64 tg_read_buffered_write_bps(struct cgroup_subsys_state *css,
 }
 #endif
 
+static u64 tg_prfill_throttle_stat(struct seq_file *sf, struct blkg_policy_data *pd,
+			       int off)
+{
+	struct throtl_grp *tg = pd_to_tg(pd);
+	struct throtl_data *td = tg->td;
+	unsigned long read_slice = tg->slice_end[READ] - tg->slice_start[READ];
+	unsigned long write_slice = tg->slice_end[WRITE] - tg->slice_start[WRITE];
+
+	const char *dname = blkg_dev_name(pd->blkg);
+
+	if (!dname || !rue_io_enabled())
+		return 0;
+
+	seq_printf(sf, "%s limit_valid:[%d %d] limit_index=%d iops=%u/%u iops_low=%u/%u iops_max=%u/%u bio_queued=%u/%u slice=%lu/%lu io_disp=[%u/%u]\n",
+			dname,
+			td->limit_valid[0], td->limit_valid[1], td->limit_index,
+			tg_iops_limit(tg, READ), tg_iops_limit(tg, WRITE),
+			tg->iops[READ][LIMIT_LOW], tg->iops[WRITE][LIMIT_LOW],
+			tg->iops[READ][LIMIT_MAX], tg->iops[WRITE][LIMIT_MAX],
+			tg->service_queue.nr_queued[READ], tg->service_queue.nr_queued[WRITE],
+			read_slice, write_slice,
+			tg->io_disp[READ], tg->io_disp[WRITE]
+			);
+	return 0;
+}
+
+static int blkg_print_throttle_stat(struct seq_file *sf, void *v)
+{
+	blkcg_print_blkgs(sf, css_to_blkcg(seq_css(sf)), tg_prfill_throttle_stat,
+			  &blkcg_policy_throtl, seq_cft(sf)->private, false);
+	return 0;
+}
+
 static struct cftype throtl_legacy_files[] = {
 	{
 		.name = "throttle.read_bps_device",
@@ -1520,6 +1553,10 @@ static struct cftype throtl_legacy_files[] = {
 		.max_write_len = 256,
 	},
 #endif
+	{
+		.name = "throttle.stat",
+		.seq_show = blkg_print_throttle_stat,
+	},
 #ifdef CONFIG_PSI
 	{
 		.name = "pressure",
