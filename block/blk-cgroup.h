@@ -19,6 +19,7 @@
 #include <linux/kthread.h>
 #include <linux/blk-mq.h>
 #include <linux/llist.h>
+#include <linux/part_stat.h>
 
 struct blkcg_gq;
 struct blkg_policy_data;
@@ -160,6 +161,11 @@ struct blkcg_dkstats {
 	struct block_device		*part;
 	struct list_head		list_node;
 	struct rcu_head			rcu_head;
+};
+
+struct disk_stats_sum {
+	struct disk_stats		dkstats;
+	struct block_device		*part;
 };
 
 static inline int blkcg_do_io_stat(struct blkcg *blkcg)

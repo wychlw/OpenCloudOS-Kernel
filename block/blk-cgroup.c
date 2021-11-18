@@ -905,6 +905,119 @@ static int blkcg_dkstats_show_partion(struct blkcg *blkcg, struct gendisk *gd,
 	return 0;
 }
 
+static void blkcg_dkstats_sum(struct blkcg *blkcg, struct disk_stats_sum *sum)
+{
+	struct disk_stats *s = &sum->dkstats;
+	struct block_device *bdev = sum->part;
+
+	s->ios[READ] += blkcg_part_stat_read(blkcg, bdev, ios[READ]);
+	s->ios[WRITE] += blkcg_part_stat_read(blkcg, bdev, ios[WRITE]);
+	s->merges[READ] += blkcg_part_stat_read(blkcg, bdev, merges[READ]);
+	s->merges[WRITE] += blkcg_part_stat_read(blkcg, bdev, merges[WRITE]);
+	s->sectors[READ] += blkcg_part_stat_read(blkcg, bdev, sectors[READ]);
+	s->sectors[WRITE] += blkcg_part_stat_read(blkcg, bdev, sectors[WRITE]);
+	s->nsecs[READ] += blkcg_part_stat_read(blkcg, bdev, nsecs[READ]);
+	s->nsecs[WRITE] += blkcg_part_stat_read(blkcg, bdev, nsecs[WRITE]);
+}
+
+static void blkcg_dkstats_recursive_print(struct disk_stats_sum *sum, struct seq_file *seq)
+{
+	struct block_device *bdev = sum->part;
+	struct disk_stats *s = &sum->dkstats;
+	unsigned long rd_nsecs = s->nsecs[READ];
+	unsigned long wr_nsecs = s->nsecs[WRITE];
+
+	/* hidded inactive disks for this cgroup */
+	if (!s->ios[READ] && !s->ios[WRITE]) {
+		seq_printf(seq, "%4d %7d %pg %lu %lu %lu "
+			       "%u %lu %lu %lu %u %u %u %u %u %u %u %u\n",
+			       MAJOR(bdev->bd_dev), MINOR(bdev->bd_dev),
+			       bdev, 0UL, 0UL, 0UL, 0U, 0UL, 0UL, 0UL, 0U,
+			       0U, 0U, 0U, 0U, 0U, 0U, 0U);
+		return;
+	}
+
+	seq_printf(seq, "%4d %7d %pg %lu %lu %lu "
+		   "%u %lu %lu %lu %u %u %u %lu %u %u %u %u\n",
+		   MAJOR(bdev->bd_dev), MINOR(bdev->bd_dev),
+		   bdev,
+		   s->ios[READ],
+		   s->merges[READ],
+		   s->sectors[READ],
+		   (unsigned int)(rd_nsecs / 1000000),
+		   s->ios[WRITE],
+		   s->merges[WRITE],
+		   s->sectors[WRITE],
+		   (unsigned int)(wr_nsecs / 1000000), 0U,
+		   jiffies_to_msecs(part_stat_read(bdev, io_ticks)),
+		   part_stat_read_inqueue(bdev), 0U, 0U, 0U, 0U);
+}
+
+static void blkcg_part_stats_recursive_sum(
+		struct blkcg *blkcg, struct disk_stats_sum *sum)
+{
+	struct cgroup_subsys_state *pos;
+	struct blkcg *pos_blkcg;
+
+	rcu_read_lock();
+	css_for_each_descendant_pre(pos, &blkcg->css) {
+		pos_blkcg = css_to_blkcg(pos);
+		/*!!!dkstats_sum_recursive should be inited!!!*/
+		blkcg_dkstats_sum(pos_blkcg, sum);
+	}
+	rcu_read_unlock();
+}
+
+static int blkcg_dkstats_recursive_show(struct seq_file *sf, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
+	struct disk_stats_sum *sum;
+	int ret = 0;
+	struct class_dev_iter iter;
+	struct device *dev;
+
+	mutex_lock(&blkcg_pol_mutex);
+
+	if (!blkcg_do_io_stat(blkcg))
+		goto out;
+
+	sum = kzalloc(sizeof(struct disk_stats_sum), GFP_KERNEL);
+	if (!sum) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	class_dev_iter_init(&iter, &block_class, NULL, &disk_type);
+	/*for each gendisk*/
+	while ((dev = class_dev_iter_next(&iter))) {
+		unsigned long idx;
+		struct block_device *bdev;
+		struct gendisk *disk = dev_to_disk(dev);
+
+		rcu_read_lock();
+		xa_for_each(&disk->part_tbl, idx, bdev) {
+			if (!kobject_get_unless_zero(&bdev->bd_device.kobj))
+				continue;
+			rcu_read_unlock();
+
+			sum->part = bdev;
+			blkcg_part_stats_recursive_sum(blkcg, sum);
+			blkcg_dkstats_recursive_print(sum, sf);
+
+			memset(sum, 0, sizeof(struct disk_stats_sum));
+			put_device(&bdev->bd_device);
+			rcu_read_lock();
+		}
+		rcu_read_unlock();
+	}
+	class_dev_iter_exit(&iter);
+
+	kfree(sum);
+out:
+	mutex_unlock(&blkcg_pol_mutex);
+	return ret;
+}
+
 static int blkcg_dkstats_enable(struct cgroup_subsys_state *css,
 				struct cftype *cftype, u64 val)
 {
@@ -1619,6 +1732,10 @@ static struct cftype blkcg_legacy_files[] = {
 		.name = "diskstats",
 		.write_u64 = blkcg_dkstats_enable,
 		.seq_show = blkcg_dkstats_show,
+	},
+	{
+		.name = "diskstats_recursive",
+		.seq_show = blkcg_dkstats_recursive_show,
 	},
 #endif /* CONFIG_BLK_CGROUP_DISKSTATS */
 #ifdef CONFIG_RQM
