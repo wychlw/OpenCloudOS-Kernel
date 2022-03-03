@@ -819,7 +819,7 @@ static int align_dc_zva(unsigned long addr, struct pt_regs *regs)
 				return 1;
 		}
 	} else
-		memset_io((void *)addr, 0, sz);
+		memset_io((void __iomem *)addr, 0, sz);
 	return 0;
 }
 
@@ -867,6 +867,44 @@ static void set_vn_dt(int n, int t, u64 val)
 	default:
 		break;
 	}
+}
+
+static u64 replicate64(u64 val, int bits)
+{
+	switch (bits) {
+	case 8:
+		val = (val << 8) | (val & 0xff);
+		fallthrough;
+	case 16:
+		val = (val << 16) | (val & 0xffff);
+		fallthrough;
+	case 32:
+		val = (val << 32) | (val & 0xffffffff);
+		break;
+	default:
+		break;
+	}
+	return val;
+}
+
+static u64 elem_get(u64 hi, u64 lo, int index, int esize)
+{
+       int shift = index * esize;
+       u64 mask = GENMASK(esize - 1, 0);
+       if (shift < 64)
+	       return (lo >> shift) & mask;
+       else
+	       return (hi >> (shift - 64)) & mask;
+}
+
+static void elem_set(u64 *hi, u64 *lo, int index, int esize, u64 val)
+{
+       int shift = index * esize;
+       u64 mask = GENMASK(esize - 1, 0);
+       if (shift < 64)
+	       *lo = (*lo & ~(mask << shift)) | ((val & mask) << shift);
+       else
+	       *hi = (*hi & ~(mask << (shift - 64))) | ((val & mask) << (shift - 64));
 }
 
 static int align_ldst_pair(u32 insn, struct pt_regs *regs)
@@ -936,6 +974,114 @@ static int align_ldst_pair(u32 insn, struct pt_regs *regs)
 			pt_regs_write_reg(regs, n, address);
 	}
 
+	return 0;
+}
+
+static int align_ldst_vector_single(u32 insn, struct pt_regs *regs)
+{
+	const u32 Q_MASK = BIT(30);
+	const u32 L_MASK = BIT(22);
+	const u32 R_MASK = BIT(21);
+	const u32 OPCODE = GENMASK(15, 13);
+	const u32 S_MASK = BIT(12);
+	const u32 SIZE = GENMASK(11, 10);
+	u32 Q = FIELD_GET(Q_MASK, insn);
+	u32 L = FIELD_GET(L_MASK, insn);
+	u32 R = FIELD_GET(R_MASK, insn);
+	u32 opcode = FIELD_GET(OPCODE, insn);
+	u32 S = FIELD_GET(S_MASK, insn);
+	u32 size = FIELD_GET(SIZE, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int m = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RM, insn);
+	bool wback = !!(insn & BIT(23));
+	int init_scale = opcode >> 1;
+	int scale = init_scale;
+	int selem = (((opcode & 1) << 1) | R) + 1;
+	bool replicate = false;
+	int index;
+	int datasize;
+	int esize;
+	u64 address;
+	u64 offs;
+	u64 rval_d0, rval_d1;
+	u64 element;
+	int ebytes;
+	int s;
+	u64 data;
+	switch (scale) {
+	case 3:
+		if (!L || S)
+			return 1;
+		scale = size;
+		replicate = true;
+		break;
+	case 0:
+		index = (Q << 3) | (S << 2) | size;
+		break;
+	case 1:
+		if (size & 1)
+			return 1;
+		index = (Q << 2) | (S << 1) | (size >> 1);
+		break;
+	case 2:
+		if (size & 2)
+			return 1;
+		if (!(size & 1))
+			index = (Q << 1) | S;
+		else {
+			if (S)
+				return 1;
+			index = Q;
+			scale = 3;
+		}
+		break;
+	}
+	datasize = Q ? 128 : 64;
+	esize = 8 << scale;
+	ebytes = esize / 8;
+	address = regs_get_register(regs, n << 3);
+	offs = 0;
+	if (replicate) {
+		for (s = 0; s < selem; s++) {
+			if (align_load(address + offs, ebytes, &element))
+				return 1;
+			data = replicate64(element, esize);
+			set_vn_dt(t, 0, data);
+			if (datasize == 128)
+				set_vn_dt(t, 1, data);
+			else
+				set_vn_dt(t, 1, 0);
+			offs += ebytes;
+			t = (t + 1) & 31;
+		}
+	} else {
+		for (s = 0; s < selem; s++) {
+			rval_d0 = get_vn_dt(t, 0);
+			rval_d1 = get_vn_dt(t, 1);
+			if (L) {
+				if (align_load(address + offs, ebytes, &data))
+					return 1;
+				elem_set(&rval_d1, &rval_d0, index, esize, data);
+				set_vn_dt(t, 0, rval_d0);
+				set_vn_dt(t, 1, rval_d1);
+			} else {
+				data = elem_get(rval_d1, rval_d0, index, esize);
+				if (align_store(address + offs, ebytes, data))
+					return 1;
+			}
+			offs += ebytes;
+			t = (t + 1) & 31;
+		}
+	}
+	if (wback) {
+		if (m != 31)
+			offs = regs_get_register(regs, m << 3);
+		if (n == 31)
+			regs->sp = address + offs;
+		else
+			pt_regs_write_reg(regs, n, address + offs);
+	}
 	return 0;
 }
 
@@ -1412,6 +1558,19 @@ static int align_ldst(u32 insn, struct pt_regs *regs)
 			/* simdfp */
 			return align_ldst_regoff_simdfp(insn, regs);
 		}
+	} else if ((op0 & 0xb) == 0 && op1 == 1 &&
+		  ((op2 == 2 && ((op3 & 0x1f) == 0)) || op2 == 3)) {
+		/*
+		 * |------+-----+-----+--------+-----+-------------------------------------------|
+		 * | op0  | op1 | op2 |    op3 | op4 |                                           |
+		 * |------+-----+-----+--------+-----+-------------------------------------------|
+		 * | 0x00 |   1 |  10 | x00000 |   - | Advanced SIMD load/store single structure |
+		 * | 0x00 |   1 |  11 |      - |   - | Advanced SIMD load/store single structure |
+		 * |      |     |     |        |     |   (post-indexed)                          |
+		 * |------+-----+-----+--------+-----+-------------------------------------------|
+		 */
+		return align_ldst_vector_single(insn, regs);
+
 	} else
 		return 1;
 }
