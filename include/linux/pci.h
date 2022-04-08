@@ -2731,4 +2731,8 @@ void pci_uevent_ers(struct pci_dev *pdev, enum  pci_ers_result err_type);
 	WARN_ONCE(condition, "%s %s: " fmt, \
 		  dev_driver_string(&(pdev)->dev), pci_name(pdev), ##arg)
 
+#ifdef CONFIG_ALTRA_ERRATUM_82288
+extern bool range_is_pci(phys_addr_t phys_addr, size_t size);
+#endif
+
 #endif /* LINUX_PCI_H */

@@ -364,6 +364,7 @@ static int find_next_iomem_res(resource_size_t start, resource_size_t end,
 			.flags = p->flags,
 			.desc = p->desc,
 			.parent = p->parent,
+			.name = p->name,
 		};
 	}
 
@@ -488,6 +489,48 @@ int __weak page_is_ram(unsigned long pfn)
 	return walk_system_ram_range(pfn, 1, NULL, __is_ram) == 1;
 }
 EXPORT_SYMBOL_GPL(page_is_ram);
+
+#ifdef CONFIG_ALTRA_ERRATUM_82288
+/* Return 0 on success, else return 1 */
+static int pci_addr_check(struct resource *r, void *p)
+{
+	if (!r->name)
+		return 1;
+
+	if (strlen(r->name) <= 2)
+		return 1;
+
+	if (memcmp(r->name, "PCI", 3))
+		return 1;
+
+	/* Success */
+	return 0;
+}
+
+bool range_is_pci(phys_addr_t phys_addr, size_t size)
+{
+	u64 start, end;
+	int ret;
+
+	start = phys_addr;
+	end = phys_addr + size;
+
+	/* Check the 32bit */
+	ret = walk_iomem_res_desc(IORES_DESC_NONE, IORESOURCE_MEM,
+			start, end, NULL, pci_addr_check);
+	if (!ret)
+		return true;
+
+	/* Check the 64bit */
+	ret = walk_iomem_res_desc(IORES_DESC_NONE, IORESOURCE_MEM_64,
+			start, end, NULL, pci_addr_check);
+	if (!ret)
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(range_is_pci);
+#endif
 
 static int __region_intersects(struct resource *parent, resource_size_t start,
 			       size_t size, unsigned long flags,
