@@ -1610,11 +1610,15 @@ enum aarch64_insn_encoding_class __kprobes aarch64_get_insn_class(u32 insn)
 	return aarch64_insn_encoding_class[(insn >> 25) & 0xf];
 }
 
+#include "pcie_unalign_access.c"
+
 static int fixup_alignment(unsigned long addr, unsigned int esr,
 			  struct pt_regs *regs)
 {
 	u32 insn;
 	int res;
+	struct pt_regs t = *regs;
+	int type;
 
 	if (user_mode(regs)) {
 		__le32 insn_le;
@@ -1631,7 +1635,10 @@ static int fixup_alignment(unsigned long addr, unsigned int esr,
 			return 1;
 	}
 
-	switch (aarch64_get_insn_class(insn)) {
+	pr_debug("start to handle insn:%x\n", insn);
+
+	type = aarch64_get_insn_class(insn);
+	switch (type) {
 	case AARCH64_INSN_CLS_BR_SYS:
 		if (aarch64_insn_is_dc_zva(insn))
 			res = align_dc_zva(addr, regs);
@@ -1640,12 +1647,21 @@ static int fixup_alignment(unsigned long addr, unsigned int esr,
 		break;
 	case AARCH64_INSN_CLS_LDST:
 		res = align_ldst(insn, regs);
+		if (res) {
+			/* Try it again, copy back if we succeed */
+			res = align_ldst_new(insn, &t);
+			if (!res)
+				*regs = t;
+		}
 		break;
 	default:
 		res = 1;
 	}
 	if (!res) {
 		instruction_pointer_set(regs, instruction_pointer(regs) + 4);
+	} else {
+		pr_err("cannot handle insn:%x, type:%d\n", insn, type);
+		dump_stack();
 	}
 	return res;
 }
