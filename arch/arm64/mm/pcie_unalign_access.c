@@ -30,6 +30,101 @@ static int ldst_type_pair(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
 		return align_ldst_pair(insn, regs);
 }
 
+static int align_ldst_imm_new(u32 insn, struct pt_regs *regs)
+{
+	const u32 SIZE = GENMASK(31, 30);
+	const u32 OPC = GENMASK(23, 22);
+
+	u32 size = FIELD_GET(SIZE, insn);
+	u32 opc = FIELD_GET(OPC, insn);
+	bool wback = !(insn & BIT(24)) && !!(insn & BIT(10));
+	bool postindex = wback && !(insn & BIT(11));
+	int scale = size;
+	u64 offset;
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	bool is_store;
+	bool is_signed;
+	int regsize;
+	int datasize;
+	u64 address;
+	u64 data;
+
+	if (!(insn & BIT(24))) {
+		u64 uoffset =
+			aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+		offset = sign_extend64(uoffset, 8);
+	} else {
+		offset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, insn);
+		offset <<= scale;
+	}
+
+	if ((opc & 0x2) == 0) {
+		/* store or zero-extending load */
+		is_store = !(opc & 0x1);
+		regsize = size == 0x3 ? 64 : 32;
+		is_signed = false;
+	} else {
+		if (size == 0x3) {
+			if (FIELD_GET(GENMASK(11, 10), insn) == 0 && (opc & 0x1) == 0) {
+				/* prefetch */
+				return 0;
+			} else {
+				/* undefined */
+				return 1;
+			}
+		} else {
+			/* sign-extending load */
+			is_store = false;
+			if (size == 0x2 && (opc & 0x1) == 0x1) {
+				/* undefined */
+				return 1;
+			}
+			regsize = (opc & 0x1) == 0x1 ? 32 : 64;
+			is_signed = true;
+		}
+	}
+
+	datasize = 8 << scale;
+
+	if (wback && n == t && n != 31)
+		return 1;
+
+	address = regs_get_register(regs, n << 3);
+
+	if (!postindex)
+		address += offset;
+	printk("{%s] addr:%llx, offset:%llx\n", __func__, address, offset);
+
+	if (is_store) {
+		data = pt_regs_read_reg(regs, t);
+		if (align_store(address, datasize / 8, data))
+			return 1;
+	} else {
+		if (align_load(address, datasize / 8, &data))
+			return 1;
+		if (is_signed) {
+			if (regsize == 32)
+				data = sign_extend32(data, datasize - 1);
+			else
+				data = sign_extend64(data, datasize - 1);
+		}
+		pt_regs_write_reg(regs, t, data);
+	}
+
+	if (wback) {
+		if (postindex)
+			address += offset;
+		if (n == 31)
+			regs->sp = address;
+		else
+			pt_regs_write_reg(regs, n, address);
+	}
+
+	return 0;
+}
+
 /*
  * |------+-----+-----+--------+-----+----------------------------------------------|
  * | op0  | op1 | op2 |    op3 | op4 | Decode group                                 |
@@ -46,7 +141,7 @@ static int ldst_type_imm(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
 	if (insn & BIT(26))
 		return align_ldst_imm_simdfp(insn, regs);
 	else
-		return align_ldst_imm(insn, regs);
+		return align_ldst_imm_new(insn, regs);
 }
 
 /*
