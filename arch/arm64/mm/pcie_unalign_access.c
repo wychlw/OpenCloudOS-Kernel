@@ -174,6 +174,308 @@ static int ldst_type_vector_single(struct ldst_filter *f, u32 insn, struct pt_re
 	return align_ldst_vector_single(insn, regs);
 }
 
+static int ldst_unpri_sttrb(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	data = pt_regs_read_reg(regs, t);
+
+	/* 3) store it now */
+	return align_store(address, 1, data);
+}
+
+static int ldst_unpri_ldtrb(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, 1, &data);
+	data = sign_extend64(data, 64 - 1);
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+
+static int ldst_unpri_ldtrsb_64(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+	int regsize = 64;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, 1, &data);
+
+	/* 64bit or 32 bit? check it with opc[0] */
+	if (insn & BIT(22))
+		regsize = 32;
+	data = sign_extend32(data, regsize - 1);
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+
+static int ldst_unpri_sttrh(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	data = pt_regs_read_reg(regs, t);
+
+	/* 3) store it now */
+	return align_store(address, 2, data);
+}
+
+static int ldst_unpri_ldtrh(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, 2, &data);
+	data = sign_extend64(data, 64 - 1);
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+
+static int ldst_unpri_ldtrsh(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+	int regsize = 64;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, 2, &data);
+
+	/* 64bit or 32 bit? check it with opc[0] */
+	if (insn & BIT(22))
+		regsize = 32;
+	data = sign_extend32(data, regsize - 1);
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+
+static int ldst_unpri_sttr(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data;
+	int scale;
+	int datasize;
+	const u32 SIZE = GENMASK(31, 30);
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	data = pt_regs_read_reg(regs, t);
+
+	/* 3) store it now */
+	scale = FIELD_GET(SIZE, insn);
+	datasize = 8 << scale;
+	return align_store(address, datasize / 8, data);
+}
+
+/* 0xf8400946 */
+static int ldst_unpri_ldtr(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+	int regsize = 64;
+	const u32 SIZE = GENMASK(31, 30);
+	int scale = FIELD_GET(SIZE, insn);
+	int datasize = 8 << scale;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, datasize / 8, &data);
+
+	/* 64bit or 32 bit? */
+	if (scale != 3)
+		regsize = 32;
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+
+static int ldst_unpri_ldtrsw(struct ldst_filter *f, u32 insn, struct pt_regs *regs)
+{
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+	u64 offset = sign_extend64(uoffset, 8);
+	u64 address;
+	u64 data = 0;
+
+	/* 1) Get the address */
+	address = regs_get_register(regs, n << 3);
+	address += offset;
+
+	/* 2) Get the data */
+	align_load(address, 4, &data);
+	data = sign_extend32(data, 64 - 1);
+
+	/* 3) store it now */
+	pt_regs_write_reg(regs, t, data);
+	return 0;
+}
+#define REG_UNPRI_MASK (BIT(31) | BIT(31) | BIT(26) | BIT(22) | BIT(23))
+static const struct ldst_filter ldst_reg_unpri[] = {
+	{
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = 0,
+		.name           = "STTRB",
+		.handler        = ldst_unpri_sttrb,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(22),
+		.name           = "LDTRB",
+		.handler        = ldst_unpri_ldtrb,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(23),
+		.name           = "LDTRSB - 64bit variant",
+		.handler        = ldst_unpri_ldtrsb_64,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(23) | BIT(22),
+		.name           = "LDTRSB - 32bit variant",
+		.handler        = ldst_unpri_ldtrsb_64,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(30),
+		.name           = "STTRH",
+		.handler        = ldst_unpri_sttrh,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(30) | BIT(22),
+		.name           = "LDTRH",
+		.handler        = ldst_unpri_ldtrh,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(30) | BIT(23),
+		.name           = "LDTRSH - 64bit variant",
+		.handler        = ldst_unpri_ldtrsh,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(30) | BIT(23) | BIT(22),
+		.name           = "LDTRSH - 32bit variant",
+		.handler        = ldst_unpri_ldtrsh,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(31),
+		.name           = "STTR - 32bit variant",
+		.handler        = ldst_unpri_sttr,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(31),
+		.name           = "LDTR - 32bit variant",
+		.handler        = ldst_unpri_ldtr,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(31) | BIT(23),
+		.name           = "LDTRSW",
+		.handler        = ldst_unpri_ldtrsw,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(31) | BIT(30),
+		.name           = "STTR - 64bit variant",
+		.handler        = ldst_unpri_sttr,
+	}, {
+		.mask           = REG_UNPRI_MASK,
+		.arm_code       = BIT(31) | BIT(30) | BIT(22),
+		.name           = "LDTR - 64bit variant",
+		.handler        = ldst_unpri_ldtr,
+	},
+};
+
+/* Return 0 on success, return 1 on failure. */
+static int ldst_reg_unprivileged(struct ldst_filter *of, u32 insn, struct pt_regs *regs)
+{
+	int i;
+	struct ldst_filter *f;
+
+	for (i = 0; i < ARRAY_SIZE(ldst_reg_unpri); i++) {
+		f = (struct ldst_filter *)&ldst_reg_unpri[i];
+
+		/* Find the correct hander */
+		if ((f->mask & insn) == f->arm_code) {
+			pr_debug("insn:%x, (%s)\n", insn, f->name);
+			return f->handler(f, insn, regs);
+		}
+	}
+	return 1;
+}
+
 /* Please see the C4.1.66 */
 static const struct ldst_filter ldst_filters[] = {
 	{
@@ -281,7 +583,7 @@ static const struct ldst_filter ldst_filters[] = {
 		.mask           = GENMASK(29, 28) | BIT(24) | BIT(21) | GENMASK(11, 10),
 		.arm_code       = BIT(29) | BIT(28) | BIT(11),
 		.name           = "Load/store register (unprivileged)",
-		.handler        = ldst_default,
+		.handler        = ldst_reg_unprivileged,
 	}, {
 		.mask           = GENMASK(29, 28) | BIT(24) | BIT(21) | GENMASK(11, 10),
 		.arm_code       = BIT(29) | BIT(28) | BIT(11) | BIT(10),
