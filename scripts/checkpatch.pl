@@ -2635,6 +2635,8 @@ sub process {
 
 	our $clean = 1;
 	my $signoff = 0;
+	my $tencentsign = 0;
+	my $tencentbackport = 0;
 	my $author = '';
 	my $authorsignoff = 0;
 	my $author_sob = '';
@@ -3006,6 +3008,15 @@ sub process {
 		if ($line =~ /^---$/) {
 			$has_patch_separator = 1;
 			$in_commit_log = 0;
+		}
+		if ($line =~ /^\s*signed-off-by: .*tencent.com/i) {
+			$tencentsign++;
+		}
+		if ($line =~ /^(\s*)commit [0-9a-z].* [a-z].*/i ||
+			$line =~ /^(\s*)[a-z\[].* commit [0-9a-z].*/i ||
+			$line =~ /^(\s*)Upstream commit:/i) {
+			#WARN("NO", "get a reference, $line\n");
+			$tencentbackport++;
 		}
 
 # Check if MAINTAINERS is being updated.  If so, there's probably no need to
@@ -7712,6 +7723,12 @@ sub process {
 				     "From:/Signed-off-by: email subaddress mismatch: $sob_msg\n");
 			}
 		}
+		if ($author !~ /tencent/ && $tencentsign != 0 && $tencentbackport == 0) {
+			# It's a backport commit, needs a cid reference
+			WARN("NO_BACKPORT_REF",
+				"Missing backport reference 'commit xxx upstream' ?\n");
+		}
+
 	}
 
 	print report_dump();
