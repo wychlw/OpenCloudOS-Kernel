@@ -3163,6 +3163,7 @@ static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpu
 }
 
 #ifdef CONFIG_CGROUPFS
+int cgroupfs_stat_show_cpuacct_info;
 extern int cpuacct_cgroupfs_cpu_usage(struct cgroup_subsys_state *css, int cpu, u64 *sys, u64 *user);
 int cpuset_cgroupfs_stat_cpuacct(struct cpuset *cs, struct seq_file *m, void *v, int max_cpu)
 {
@@ -3216,6 +3217,17 @@ int cpuset_cgroupfs_stat_cpuacct(struct cpuset *cs, struct seq_file *m, void *v,
 			res[k].sys = sys;
 			res[k].usr = usr;
 			res[k].idle = cpu_idle;
+		}
+	}
+
+	if (cgroupfs_stat_show_cpuacct_info == 2 && max_cpu < k) {
+		cpu_idle = max_cpu * (total_sys + total_usr + total_idle) / k
+				- total_sys - total_usr;
+		total_idle = cpu_idle;
+		for (i = 1; i <= max_cpu && i < num_cpu; i++) {
+			res[i].sys = total_sys / max_cpu;
+			res[i].usr = total_usr / max_cpu;
+			res[i].idle = total_idle / max_cpu;
 		}
 	}
 	css_put(css);
@@ -3278,7 +3290,6 @@ int cpuset_cgroupfs_stat_cpuacct(struct cpuset *cs, struct seq_file *m, void *v,
 	return 0;
 }
 
-int cgroupfs_stat_show_cpuacct_info;
 int cpuset_cgroupfs_stat_show(struct seq_file *m, void *v)
 {
 	int ret, max_cpu;
