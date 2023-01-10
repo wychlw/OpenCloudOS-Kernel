@@ -64,6 +64,7 @@
 #include <linux/userfaultfd_k.h>
 #include <linux/pid.h>
 #include <linux/blkdev.h>
+#include <linux/backing-dev.h>
 
 #include "../lib/kstrtox.h"
 
@@ -2677,6 +2678,17 @@ static struct ctl_table kern_table[] = {
 	{
 		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
 		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif
+#ifdef CONFIG_CGROUP_WRITEBACK
+	{
+		.procname	= "io_cgv1_buff_wb",
+		.data		= &sysctl_io_cgv1_buff_wb_enabled,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,

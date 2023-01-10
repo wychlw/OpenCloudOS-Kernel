@@ -6222,6 +6222,7 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
+#ifdef CONFIG_CGROUP_WRITEBACK
 static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 				char *buf, size_t nbytes, loff_t off)
 {
@@ -6231,7 +6232,7 @@ static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 	char *pbuf;
 	int ret;
 
-	if (!rue_io_enabled())
+	if (!buff_wb_enabled())
 		return -EPERM;
 
 	buf = strstrip(buf);
@@ -6293,6 +6294,7 @@ static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
 
 	return 0;
 }
+#endif
 
 static ssize_t mem_cgroup_sync_write(struct kernfs_open_file *of, char *buf,
 				     size_t nbytes, loff_t off)
@@ -9801,12 +9803,14 @@ static struct cftype memsw_files[] = {
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
 	},
+#ifdef CONFIG_CGROUP_WRITEBACK
 	{
 		.name = "bind_blkio",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.write = mem_cgroup_bind_blkio_write,
 		.seq_show = mem_cgroup_bind_blkio_show,
 	},
+#endif
 	{
 		.name = "sync",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -10310,7 +10314,10 @@ static void clean_each_dying_memcg(struct mem_cgroup *memcg)
 		if (ret)
 			goto next;
 
-		reap_slab(memcg);
+#ifdef CONFIG_CGROUP_WRITEBACK
+		if (buff_wb_enabled())
+#endif
+			reap_slab(memcg);
 
 		if (!drained) {
 			drain_all_stock(memcg);

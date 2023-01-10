@@ -43,7 +43,7 @@ struct blk_crypto_profile;
 extern const struct device_type disk_type;
 extern const struct device_type part_type;
 extern struct class block_class;
-extern unsigned int sysctl_io_qos_enabled;
+extern unsigned int sysctl_io_qos_enabled __read_mostly;
 
 /*
  * Maximum number of blkcg policies allowed to be registered concurrently.

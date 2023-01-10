@@ -62,6 +62,7 @@
 #include <net/sock.h>
 #include <linux/blk-cgroup.h>
 #include <linux/rue.h>
+#include <linux/backing-dev.h>
 
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
@@ -7376,6 +7377,13 @@ static int __init cgroup_disable(char *str)
 			static_branch_disable(cgroup_subsys_enabled_key[i]);
 			pr_info("Disabling %s control group subsystem\n",
 				ss->name);
+
+#ifdef CONFIG_CGROUP_WRITEBACK
+			if ((i == memory_cgrp_id) || (i == io_cgrp_id)) {
+				pr_info("Disable cgv1 buffer IO writeback\n");
+				sysctl_io_cgv1_buff_wb_enabled = 0;
+			}
+#endif
 		}
 
 		for (i = 0; i < OPT_FEATURE_COUNT; i++) {

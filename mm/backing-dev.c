@@ -511,6 +511,30 @@ static LIST_HEAD(offline_cgwbs);
 static void cleanup_offline_cgwbs_workfn(struct work_struct *work);
 static DECLARE_WORK(cleanup_offline_cgwbs_work, cleanup_offline_cgwbs_workfn);
 
+/*
+ * Support buffer IO writeback in cgroup v1
+ * Enable this will count buffer IO in memcg
+ */
+unsigned int sysctl_io_cgv1_buff_wb_enabled = 1;
+
+/**
+ * buff_wb_enabled - test whether buffer writeback is enabled
+ *
+ * Cgroup v1 not support counting buffer IO by default.
+ * Could bind memory and blkio cgroup to count buffer IO
+ * in cgroup v1.
+ *
+ * Need to enable io_qos and io_cgv1_buff_wb to use.
+ *
+ */
+bool buff_wb_enabled(void)
+{
+	return rue_io_enabled() && sysctl_io_cgv1_buff_wb_enabled &&
+	       !cgroup_subsys_on_dfl(memory_cgrp_subsys) &&
+	       !cgroup_subsys_on_dfl(io_cgrp_subsys);
+}
+EXPORT_SYMBOL(buff_wb_enabled);
+
 static void cgwb_free_rcu(struct rcu_head *rcu_head)
 {
 	struct bdi_writeback *wb = container_of(rcu_head,
