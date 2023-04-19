@@ -188,6 +188,12 @@ struct scan_control {
  */
 int vm_swappiness = 60;
 
+#ifdef CONFIG_EMM_FORCE_SWAPPINESS
+unsigned int sysctl_vm_force_swappiness __read_mostly;
+#else
+#define sysctl_vm_force_swappiness 0
+#endif
+
 LIST_HEAD(shrinker_list);
 DECLARE_RWSEM(shrinker_rwsem);
 
@@ -3047,8 +3053,11 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 	 * disable swapping for individual groups completely when
 	 * using the memory controller's swap limit feature would be
 	 * too expensive.
+	 *
+	 * If sysctl_vm_force_swappiness is set, don't reclaim anon
+	 * page even if the system may hit OOM.
 	 */
-	if (cgroup_reclaim(sc) && !swappiness) {
+	if ((sysctl_vm_force_swappiness || cgroup_reclaim(sc)) && !swappiness) {
 		scan_balance = SCAN_FILE;
 		goto out;
 	}

@@ -1278,4 +1278,19 @@ config ENHANCED_MM
 
 	  If unsure, say N.
 
+config EMM_FORCE_SWAPPINESS
+	bool "Prevent kswapd from reclaim any anon pages"
+	depends on ENHANCED_MM
+	depends on SWAP
+	default n
+	help
+	  This option will prevent kswapd from reclaim any anon pages when
+	  when swappiness is set to 0.
+
+	  By default, to prevent system-wide OOM, kswapd will reclaim anon
+	  pages for root cgroup even if swappiness is set to 0. This overrides
+	  this behaviour.
+
+	  If unsure say N.
+
 endmenu

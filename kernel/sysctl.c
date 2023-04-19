@@ -134,10 +134,15 @@ static enum sysctl_writes_mode sysctl_writes_strict = SYSCTL_WRITES_STRICT;
     defined(CONFIG_ARCH_WANT_DEFAULT_TOPDOWN_MMAP_LAYOUT)
 int sysctl_legacy_va_layout;
 #endif
+
 #ifdef CONFIG_CGROUPFS
 extern int container_cpuquota_aware;
 extern int cgroupfs_stat_show_cpuacct_info;
 int cgroupfs_mounted;
+#endif
+
+#ifdef CONFIG_EMM_FORCE_SWAPPINESS
+extern int sysctl_vm_force_swappiness;
 #endif
 
 #endif /* CONFIG_SYSCTL */
@@ -2257,6 +2262,17 @@ static struct ctl_table vm_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_TWO_HUNDRED,
 	},
+#ifdef CONFIG_EMM_FORCE_SWAPPINESS
+	{
+		.procname       = "force_swappiness",
+		.data           = &sysctl_vm_force_swappiness,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+#endif
 #ifdef CONFIG_NUMA
 	{
 		.procname	= "numa_stat",
