@@ -2802,6 +2802,11 @@ static int claim_swapfile(struct swap_info_struct *p, struct inode *inode)
 	int error;
 
 	if (S_ISBLK(inode->i_mode)) {
+#ifdef CONFIG_ENHANCED_MM
+		WARN(p->swap_file->f_mapping->a_ops->swap_activate,
+				"Swapping on block file over filesystem %s, file system operations may get bypassed unexpectedly and lead to data loss.\n",
+				p->swap_file->f_inode->i_sb->s_id);
+#endif
 		p->bdev = blkdev_get_by_dev(inode->i_rdev,
 				BLK_OPEN_READ | BLK_OPEN_WRITE, p, NULL);
 		if (IS_ERR(p->bdev)) {
