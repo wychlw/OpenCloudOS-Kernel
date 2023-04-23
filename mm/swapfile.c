@@ -3204,7 +3204,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 		}
 	}
 
-	error = init_swap_address_space(p->type, maxpages);
+	error = init_swap_address_space(p, maxpages);
 	if (error)
 		goto bad_swap_unlock_inode;
 
