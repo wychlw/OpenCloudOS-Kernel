@@ -194,6 +194,10 @@ unsigned int sysctl_vm_force_swappiness __read_mostly;
 #define sysctl_vm_force_swappiness 0
 #endif
 
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+unsigned int sysctl_vm_ramdisk_swaptune __read_mostly;
+#endif
+
 LIST_HEAD(shrinker_list);
 DECLARE_RWSEM(shrinker_rwsem);
 
@@ -1359,8 +1363,35 @@ static pageout_t pageout(struct folio *folio, struct address_space *mapping,
 
 		folio_set_reclaim(folio);
 		res = mapping->a_ops->writepage(&folio->page, &wbc);
-		if (res < 0)
+		if (res < 0) {
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+			if (mapping_ram_swap(mapping) &&
+				sysctl_vm_ramdisk_swaptune) {
+				/*
+				 * Return the page as activated so other
+				 * pages could be tried when the ramdisk
+				 * limit is hit (eg. ZRAM may then be
+				 * able to catch a few zero pages and
+				 * create more space), also don't leave
+				 * a error mark.
+				 *
+				 * try_to_free_swap will still set PageDirty
+				 * but nothing cleans PageReclaim if we return
+				 * here, so just in case, tidy up page flags.
+				 *
+				 * TODO: We may also implement
+				 * secondary fall back swap layer later.
+				 */
+				if (res == -ENOMEM) {
+					folio_set_dirty(folio);
+					folio_clear_reclaim(folio);
+
+					return PAGE_ACTIVATE;
+				}
+			}
+#endif
 			handle_write_error(mapping, folio, res);
+		}
 		if (res == AOP_WRITEPAGE_ACTIVATE) {
 			folio_clear_reclaim(folio);
 			return PAGE_ACTIVATE;

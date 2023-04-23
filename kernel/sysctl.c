@@ -145,6 +145,10 @@ int cgroupfs_mounted;
 extern int sysctl_vm_force_swappiness;
 #endif
 
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+extern int sysctl_vm_ramdisk_swaptune;
+#endif
+
 #endif /* CONFIG_SYSCTL */
 
 /*
@@ -2266,6 +2270,17 @@ static struct ctl_table vm_table[] = {
 	{
 		.procname       = "force_swappiness",
 		.data           = &sysctl_vm_force_swappiness,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+#endif
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+	{
+		.procname       = "ramdisk_swaptune",
+		.data           = &sysctl_vm_ramdisk_swaptune,
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec_minmax,
