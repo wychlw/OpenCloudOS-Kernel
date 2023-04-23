@@ -573,6 +573,9 @@ struct request_queue {
 #define QUEUE_FLAG_NOWAIT       29	/* device supports NOWAIT */
 #define QUEUE_FLAG_SQ_SCHED     30	/* single queue style io dispatch */
 #define QUEUE_FLAG_SKIP_TAGSET_QUIESCE	31 /* quiesce_tagset skip the queue*/
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+#define QUEUE_FLAG_RAMDISK	32	/* ramdisk requires runtime page alloc */
+#endif
 
 #define QUEUE_FLAG_MQ_DEFAULT	((1UL << QUEUE_FLAG_IO_STAT) |		\
 				 (1UL << QUEUE_FLAG_SAME_COMP) |	\
@@ -1563,5 +1566,16 @@ struct io_comp_batch {
 };
 
 #define DEFINE_IO_COMP_BATCH(name)	struct io_comp_batch name = { }
+
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+/*
+ * Check if a bdev is ramdisk based
+ */
+static inline bool bdev_ramdisk(struct block_device *bdev)
+{
+	return test_bit(QUEUE_FLAG_RAMDISK,
+			&bdev_get_queue(bdev)->queue_flags);
+}
+#endif
 
 #endif /* _LINUX_BLKDEV_H */

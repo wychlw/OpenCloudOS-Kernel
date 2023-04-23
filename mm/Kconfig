@@ -1293,4 +1293,15 @@ config EMM_FORCE_SWAPPINESS
 
 	  If unsure say N.
 
+config EMM_RAMDISK_SWAP
+	bool "Tune ramdisks based swaps"
+	depends on ENHANCED_MM
+	depends on SWAP
+	default n
+	help
+	  This option will enable a few tunes for ramdisk based swaps,
+	  and make swap work better with memcg bounded ramdisk.
+
+	  If unsure say N.
+
 endmenu

@@ -360,6 +360,9 @@ static int brd_alloc(int i)
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, disk->queue);
 	blk_queue_flag_set(QUEUE_FLAG_SYNCHRONOUS, disk->queue);
 	blk_queue_flag_set(QUEUE_FLAG_NOWAIT, disk->queue);
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+	blk_queue_flag_set(QUEUE_FLAG_RAMDISK, disk->queue);
+#endif
 	err = add_disk(disk);
 	if (err)
 		goto out_cleanup_disk;
