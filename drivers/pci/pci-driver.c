@@ -427,7 +427,9 @@ static int __pci_device_probe(struct pci_driver *drv, struct pci_dev *pci_dev)
 
 		id = pci_match_device(drv, pci_dev);
 		if (id) {
-			if ((pci_dev->class>>16) == PCI_BASE_CLASS_STORAGE && pci_dev->vendor != 0x1af4)
+			if ((pci_dev->class>>16) == PCI_BASE_CLASS_STORAGE &&
+			    pci_dev->vendor != 0x1af4 &&
+			    pci_dev->class != PCI_CLASS_STORAGE_EXPRESS)
 				storage_probe_delay(&pci_dev->dev);
 			error = pci_call_probe(drv, pci_dev, id);
 		}
