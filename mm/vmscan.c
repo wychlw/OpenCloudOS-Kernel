@@ -6298,6 +6298,43 @@ static int __init init_lru_gen(void)
 };
 late_initcall(init_lru_gen);
 
+#ifdef CONFIG_ENHANCED_MM
+static int __init parse_cmdlinelru_gen(char *s)
+{
+	int i, nid;
+	bool enable;
+
+	if (!strcmp(s, "1") || !strcmp(s, "y"))
+		enable = 1;
+	else if (!strcmp(s, "0") || !strcmp(s, "n"))
+		enable = 0;
+	else
+		return 1;
+
+	for_each_node(nid) {
+		struct lruvec *lruvec = get_lruvec(NULL, nid);
+
+		if (!lruvec)
+			continue;
+
+		VM_WARN_ON_ONCE(!seq_is_valid(lruvec));
+		VM_WARN_ON_ONCE(!state_is_valid(lruvec));
+
+		lruvec->lrugen.enabled = enable;
+	}
+
+	for (i = 0; i < NR_LRU_GEN_CAPS; i++) {
+		if (enable)
+			static_branch_enable(&lru_gen_caps[i]);
+		else
+			static_branch_disable(&lru_gen_caps[i]);
+	}
+
+	return 1;
+}
+__setup("lru_gen=", parse_cmdlinelru_gen);
+#endif
+
 #else /* !CONFIG_LRU_GEN */
 
 static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
