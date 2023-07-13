@@ -293,6 +293,9 @@ void cgroup1_check_for_release(struct cgroup *cgrp);
 int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param);
 int cgroup1_get_tree(struct fs_context *fc);
 int cgroup1_reconfigure(struct fs_context *ctx);
+ssize_t cgroup_priority_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off);
+int cgroup_priority_show(struct seq_file *seq, void *v);
 int cgroup_id_show(struct seq_file *seq, void *v);
 
 #endif /* __CGROUP_INTERNAL_H */
