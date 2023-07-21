@@ -7635,6 +7635,7 @@ static void __shrink_page_cache(gfp_t mask)
 		.priority = DEF_PRIORITY,
 		.may_unmap = 0,
 		.may_writepage = 0,
+		.may_deactivate = DEACTIVATE_FILE,
 		.target_mem_cgroup = NULL,
 		.reclaim_idx = MAX_NR_ZONES,
 	};
