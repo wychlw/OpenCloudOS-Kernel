@@ -153,7 +153,7 @@ BuildRequires: numactl-devel
 
 %if %{with_tools}
 BuildRequires: gettext ncurses-devel
-BuildRequires: pciutils-devel libcap-devel libnl3-devel
+BuildRequires: pciutils-devel libcap-devel libnl3-devel libtool
 %endif
 
 %if %{with_doc}
