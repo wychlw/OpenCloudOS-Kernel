@@ -555,6 +555,7 @@ struct sock {
 	struct rcu_head		sk_rcu;
 	netns_tracker		ns_tracker;
 	struct hlist_node	sk_bind2_node;
+	struct net_device	*in_dev;
 	pid_t pid;
 
 	/*VPC INFO*/

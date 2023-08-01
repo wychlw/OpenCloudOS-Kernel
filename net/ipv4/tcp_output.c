@@ -44,6 +44,7 @@
 #include <linux/gfp.h>
 #include <linux/module.h>
 #include <linux/static_key.h>
+#include <net/cls_cgroup.h>
 
 #include <trace/events/tcp.h>
 #include "netlat.h"
@@ -304,6 +305,13 @@ static u16 tcp_select_window(struct sock *sk)
 	else
 		new_win = min(new_win, (65535U << tp->rx_opt.rcv_wscale));
 
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	if (sysctl_net_qos_enable &&
+	    READ_ONCE(netcls_modfunc.cls_cgroup_adjust_wnd))
+		new_win = netcls_modfunc.cls_cgroup_adjust_wnd(sk, new_win,
+			    inet_csk(sk)->icsk_ack.rcv_mss,
+			    tp->rx_opt.rcv_wscale);
+#endif
 	/* RFC1323 scaling applied */
 	new_win >>= tp->rx_opt.rcv_wscale;
 

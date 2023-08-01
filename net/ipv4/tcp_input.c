@@ -80,6 +80,7 @@
 #include <linux/jump_label_ratelimit.h>
 #include <net/busy_poll.h>
 #include <net/mptcp.h>
+#include <net/cls_cgroup.h>
 #include "netlat.h"
 
 int sysctl_tcp_tw_ignore_syn_tsval_zero __read_mostly = 1;
@@ -730,6 +731,17 @@ void tcp_rcv_space_adjust(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	u32 copied;
 	int time;
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	bool is_low = 0;
+	int scale = 0;
+
+	if (sysctl_net_qos_enable &&
+	    READ_ONCE(netcls_modfunc.is_low_prio) &&
+	    READ_ONCE(netcls_modfunc.cls_cgroup_factor)) {
+		is_low = netcls_modfunc.is_low_prio(sk);
+		scale = netcls_modfunc.cls_cgroup_factor(sk);
+	}
+#endif
 
 	trace_tcp_rcv_space_adjust(sk);
 
@@ -759,7 +771,13 @@ void tcp_rcv_space_adjust(struct sock *sk)
 		/* minimal window to cope with packet losses, assuming
 		 * steady state. Add some cushion because of small variations.
 		 */
-		rcvwin = ((u64)copied << 1) + 16 * tp->advmss;
+#ifdef CONFIG_CGROUP_NET_CLASSID
+		if (is_low)
+			rcvwin = ((u64)copied * (WND_DIVISOR + scale))
+					>> WND_DIV_SHIFT;
+		else
+#endif
+			rcvwin = ((u64)copied << 1) + 16 * tp->advmss;
 
 		/* Accommodate for sender rate increase (eg. slow start) */
 		grow = rcvwin * (copied - tp->rcvq_space.space);

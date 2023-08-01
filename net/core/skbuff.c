@@ -1374,6 +1374,8 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 	new->tstamp		= old->tstamp;
 	/* We do not copy old->sk */
 	new->dev		= old->dev;
+	new->in_dev		= old->in_dev;
+	new->physical_flag	= old->physical_flag;
 	memcpy(new->cb, old->cb, sizeof(old->cb));
 	skb_dst_copy(new, old);
 	__skb_ext_copy(new, old);

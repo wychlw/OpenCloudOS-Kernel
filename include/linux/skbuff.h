@@ -272,6 +272,8 @@
 			 SKB_DATA_ALIGN(sizeof(struct sk_buff)) +	\
 			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
 
+#define NETDEV_PHYSICAL_MAGIC	0x5a5a5a5aa5a5a5a5
+
 struct ahash_request;
 struct net_device;
 struct scatterlist;
@@ -852,6 +854,7 @@ struct sk_buff {
 				 */
 				unsigned long		dev_scratch;
 			};
+			struct net_device	*in_dev;
 		};
 		struct rb_node		rbnode; /* used in netem, ip4 defrag, and tcp stack */
 		struct list_head	list;
@@ -871,6 +874,7 @@ struct sk_buff {
 	 * first. This is owned by whoever has the skb queued ATM.
 	 */
 	char			cb[48] __aligned(8);
+	unsigned long long	physical_flag;
 
 	union {
 		struct {
