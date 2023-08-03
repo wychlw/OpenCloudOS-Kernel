@@ -478,6 +478,10 @@
 #define X86_FEATURE_IBPB_BRTYPE		(20*32+28) /* "" MSR_PRED_CMD[IBPB] flushes all branch type predictions */
 #define X86_FEATURE_SRSO_NO		(20*32+29) /* "" CPU is not affected by SRSO */
 
+/* HYGON-defined CPU features, CPUID level 0x8c860000:0 (EDX), word 29 */
+#define X86_FEATURE_SM3			(29*32 + 1) /* SM3 instructions */
+#define X86_FEATURE_SM4			(29*32 + 2) /* SM4 instructions */
+
 /* VIA/Cyrix/Centaur-defined CPU features, CPUID level 0xC0000006, word 21 */
 #define X86_FEATURE_ZXPAUSE		(30*32 + 0) /* ZHAOXIN ZXPAUSE */
 
