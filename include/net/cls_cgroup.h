@@ -59,6 +59,9 @@ struct cgroup_cls_state {
 	struct cls_cgroup_stats tx_stats;
 	u32 classid;
 	u32 prio;
+	struct cls_token_bucket rx_bucket;
+	struct cls_token_bucket tx_bucket;
+	u16 rx_scale;
 };
 
 struct net_cls_module_function {
@@ -68,6 +71,12 @@ struct net_cls_module_function {
 			struct seq_file *sf);
 	void (*dump_rx_tb)(struct seq_file *m);
 	void (*dump_tx_tb)(struct seq_file *m);
+	void (*dump_rx_bps_limit_tb)(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+	void (*dump_tx_bps_limit_tb)(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+	void (*cgroup_set_rx_limit)(struct cls_token_bucket *tb, u64 rate);
+	void (*cgroup_set_tx_limit)(struct cls_token_bucket *tb, u64 rate);
 	int (*write_rx_bps_minmax)(int ifindex, u64 min, u64 max);
 	int (*write_tx_bps_minmax)(int ifindex, u64 min, u64 max);
 	int (*write_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
@@ -91,6 +100,12 @@ extern int p_read_tx_stat(struct cgroup_subsys_state *css,
 			struct seq_file *sf);
 extern void p_dump_rx_tb(struct seq_file *m);
 extern void p_dump_tx_tb(struct seq_file *m);
+extern void p_dump_rx_bps_limit_tb(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+extern void p_dump_tx_bps_limit_tb(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+extern void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate);
+extern void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate);
 extern int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max);
 extern int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max);
 extern int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,

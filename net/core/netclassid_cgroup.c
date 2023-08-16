@@ -47,6 +47,28 @@ void p_dump_tx_tb(struct seq_file *m)
 }
 EXPORT_SYMBOL_GPL(p_dump_tx_tb);
 
+void
+p_dump_rx_bps_limit_tb(struct cgroup_subsys_state *css, struct seq_file *sf)
+{
+}
+EXPORT_SYMBOL_GPL(p_dump_rx_bps_limit_tb);
+
+void
+p_dump_tx_bps_limit_tb(struct cgroup_subsys_state *css, struct seq_file *sf)
+{
+}
+EXPORT_SYMBOL_GPL(p_dump_tx_bps_limit_tb);
+
+void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate)
+{
+}
+EXPORT_SYMBOL_GPL(p_cgroup_set_rx_limit);
+
+void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate)
+{
+}
+EXPORT_SYMBOL_GPL(p_cgroup_set_tx_limit);
+
 int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max)
 {
 	return 0;
@@ -157,6 +179,7 @@ static int cgrp_css_online(struct cgroup_subsys_state *css)
 
 	cls_cgroup_stats_init(&cs->rx_stats);
 	cls_cgroup_stats_init(&cs->tx_stats);
+	cs->rx_scale = WND_DIVISOR;
 	return 0;
 }
 
@@ -252,6 +275,63 @@ static int write_classid(struct cgroup_subsys_state *css, struct cftype *cft,
 	css_task_iter_end(&it);
 
 	return 0;
+}
+
+static int read_bps_limit(struct seq_file *sf, void *v)
+{
+	struct cgroup_cls_state *cs = css_cls_state(seq_css(sf));
+	u64 tx_rate = (cs->tx_bucket.rate << 3) / NET_MSCALE;
+	u64 rx_rate = (cs->rx_bucket.rate << 3) / NET_MSCALE;
+
+	seq_printf(sf, "tx_bps=%llu rx_bps=%llu\n",
+		   tx_rate, rx_rate);
+	return 0;
+}
+
+static ssize_t write_bps_limit(struct kernfs_open_file *of,
+			       char *buf, size_t nbytes, loff_t off)
+{
+	struct cgroup_cls_state *cs = css_cls_state(of_css(of));
+	char tok[27] = {0};
+	long tx_rate = -1, rx_rate = -1;
+	int len;
+	int ret = -EINVAL;
+
+	while (true) {
+		char *p;
+		unsigned long val = 0;
+
+		if (sscanf(buf, "%26s%n", tok, &len) != 1)
+			break;
+		if (tok[0] == '\0')
+			break;
+		buf += len;
+
+		p = tok;
+		strsep(&p, "=");
+		if (!p || kstrtoul(p, 10, &val))
+			goto out_finish;
+
+		if (!strcmp(tok, "rx_bps") && val >= 0)
+			rx_rate = val;
+		else if (!strcmp(tok, "tx_bps") && val >= 0)
+			tx_rate = val;
+		else
+			goto out_finish;
+	}
+
+	if (!rx_rate)
+		cs->rx_scale = WND_DIVISOR;
+
+	if (rx_rate != -1 && READ_ONCE(netcls_modfunc.cgroup_set_rx_limit))
+		netcls_modfunc.cgroup_set_rx_limit(&cs->rx_bucket, rx_rate);
+
+	if (tx_rate != -1 && READ_ONCE(netcls_modfunc.cgroup_set_tx_limit))
+		netcls_modfunc.cgroup_set_tx_limit(&cs->tx_bucket, tx_rate);
+	ret = nbytes;
+
+out_finish:
+	return ret;
 }
 
 int net_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
@@ -432,6 +512,18 @@ int tx_dump(struct seq_file *sf, void *v)
 	return 0;
 }
 
+int bps_limit_dump(struct seq_file *sf, void *v)
+{
+	struct cgroup_subsys_state *css = seq_css(sf);
+
+	if (READ_ONCE(netcls_modfunc.dump_rx_bps_limit_tb) &&
+	    READ_ONCE(netcls_modfunc.dump_tx_bps_limit_tb)) {
+		netcls_modfunc.dump_rx_bps_limit_tb(css, sf);
+		netcls_modfunc.dump_tx_bps_limit_tb(css, sf);
+	}
+	return 0;
+}
+
 static struct cftype ss_files[] = {
 	{
 		.name		= "classid",
@@ -464,6 +556,17 @@ static struct cftype ss_files[] = {
 		.name		= "tx_dump",
 		.flags		= CFTYPE_ONLY_ON_ROOT,
 		.seq_show	= tx_dump,
+	},
+	{
+		.name		= "limit_dump",
+		.flags		= CFTYPE_NOT_ON_ROOT,
+		.seq_show	= bps_limit_dump,
+	},
+	{
+		.name		= "limit",
+		.flags		= CFTYPE_NOT_ON_ROOT,
+		.seq_show	= read_bps_limit,
+		.write		= write_bps_limit,
 	},
 	{ }	/* terminate */
 };
