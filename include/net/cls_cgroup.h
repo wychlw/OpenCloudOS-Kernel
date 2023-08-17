@@ -62,6 +62,8 @@ struct cgroup_cls_state {
 	struct cls_token_bucket rx_bucket;
 	struct cls_token_bucket tx_bucket;
 	u16 rx_scale;
+	unsigned long *whitelist_lports;
+	unsigned long *whitelist_rports;
 };
 
 struct net_cls_module_function {

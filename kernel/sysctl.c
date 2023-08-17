@@ -1633,6 +1633,182 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 	return err;
 }
 
+static int netcls_put_char(void **buf, size_t *size, char c)
+{
+	if (*size) {
+		char **buffer = (char **)buf;
+
+		memcpy(*buffer, &c, 1);
+		(*size)--, (*buffer)++;
+		*buf = *buffer;
+	}
+	return 0;
+}
+
+static int netcls_put_long(void **buf, size_t *size, unsigned long val,
+			  bool neg)
+{
+	int len;
+	char tmp[22], *p = tmp;
+
+	sprintf(p, "%s%lu", neg ? "-" : "", val);
+	len = strlen(tmp);
+	if (len > *size)
+		len = *size;
+	memcpy(*buf, tmp, len);
+	*size -= len;
+	*buf += len;
+	return 0;
+}
+
+int netcls_do_large_bitmap(struct ctl_table *table, int write,
+			 void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int err = 0;
+	bool first = 1;
+	size_t left = *lenp;
+	unsigned long bitmap_len = table->maxlen;
+	unsigned long *bitmap = *(unsigned long **) table->data;
+	unsigned long *tmp_bitmap = NULL;
+	char tr_a[] = { '-', ',', '\n' }, tr_b[] = { ',', '\n', 0 }, c;
+
+	if (!bitmap || !bitmap_len || !left || (*ppos && !write)) {
+		*lenp = 0;
+		return 0;
+	}
+
+	if (write) {
+		char *kbuf, *p;
+		size_t skipped = 0;
+
+		if (left > PAGE_SIZE - 1) {
+			left = PAGE_SIZE - 1;
+			/* How much of the buffer we'll skip this pass */
+			skipped = *lenp - left;
+		}
+
+		p = kbuf = buffer;
+		if (IS_ERR(kbuf))
+			return PTR_ERR(kbuf);
+
+		tmp_bitmap = bitmap_zalloc(bitmap_len, GFP_KERNEL);
+		if (!tmp_bitmap)
+			return -ENOMEM;
+
+		proc_skip_char(&p, &left, '\n');
+		while (!err && left) {
+			unsigned long val_a, val_b;
+			bool neg;
+			size_t saved_left;
+
+			/* In case we stop parsing mid-number, we can reset */
+			saved_left = left;
+			err = proc_get_long(&p, &left, &val_a, &neg, tr_a,
+					     sizeof(tr_a), &c);
+			/*
+			 * If we consumed the entirety of a truncated buffer or
+			 * only one char is left (may be a "-"), then stop here,
+			 * reset, & come back for more.
+			 */
+			if ((left <= 1) && skipped) {
+				left = saved_left;
+				break;
+			}
+
+			if (err)
+				break;
+			if (val_a >= bitmap_len || neg) {
+				err = -EINVAL;
+				break;
+			}
+
+			val_b = val_a;
+			if (left) {
+				p++;
+				left--;
+			}
+
+			if (c == '-') {
+				err = proc_get_long(&p, &left, &val_b,
+						     &neg, tr_b, sizeof(tr_b),
+						     &c);
+				/*
+				 * If we consumed all of a truncated buffer or
+				 * then stop here, reset, & come back for more.
+				 */
+				if (!left && skipped) {
+					left = saved_left;
+					break;
+				}
+
+				if (err)
+					break;
+				if (val_b >= bitmap_len || neg ||
+				    val_a > val_b) {
+					err = -EINVAL;
+					break;
+				}
+				if (left) {
+					p++;
+					left--;
+				}
+			}
+
+			bitmap_set(tmp_bitmap, val_a, val_b - val_a + 1);
+			first = 0;
+			proc_skip_char(&p, &left, '\n');
+		}
+		left += skipped;
+	} else {
+		unsigned long bit_a, bit_b = 0;
+
+		while (left) {
+			bit_a = find_next_bit(bitmap, bitmap_len, bit_b);
+			if (bit_a >= bitmap_len)
+				break;
+			bit_b = find_next_zero_bit(bitmap, bitmap_len,
+						   bit_a + 1) - 1;
+
+			if (!first) {
+				err = netcls_put_char(&buffer, &left, ',');
+				if (err)
+					break;
+			}
+			err = netcls_put_long(&buffer, &left, bit_a, false);
+			if (err)
+				break;
+			if (bit_a != bit_b) {
+				err = netcls_put_char(&buffer, &left, '-');
+				if (err)
+					break;
+				err = netcls_put_long(&buffer, &left,
+							bit_b, false);
+				if (err)
+					break;
+			}
+
+			first = 0; bit_b++;
+		}
+		if (!err)
+			err = netcls_put_char(&buffer, &left, '\n');
+	}
+
+	if (!err) {
+		if (write) {
+			if (*ppos)
+				bitmap_or(bitmap, bitmap, tmp_bitmap,
+						bitmap_len);
+			else
+				bitmap_copy(bitmap, tmp_bitmap, bitmap_len);
+		}
+		*lenp -= left;
+		*ppos += *lenp;
+	}
+
+	bitmap_free(tmp_bitmap);
+	return err;
+}
+
 #else /* CONFIG_PROC_SYSCTL */
 
 int proc_dostring(struct ctl_table *table, int write,

@@ -177,6 +177,16 @@ static int cgrp_css_online(struct cgroup_subsys_state *css)
 		cs->classid = parent->classid;
 	}
 
+	cs->whitelist_lports = kzalloc(65536 / 8, GFP_KERNEL);
+	if (!cs->whitelist_lports)
+		return -ENOMEM;
+
+	cs->whitelist_rports = kzalloc(65536 / 8, GFP_KERNEL);
+	if (!cs->whitelist_rports) {
+		kfree(cs->whitelist_lports);
+		return -ENOMEM;
+	}
+
 	cls_cgroup_stats_init(&cs->rx_stats);
 	cls_cgroup_stats_init(&cs->tx_stats);
 	cs->rx_scale = WND_DIVISOR;
@@ -193,7 +203,11 @@ static void cgrp_css_offline(struct cgroup_subsys_state *css)
 
 static void cgrp_css_free(struct cgroup_subsys_state *css)
 {
-	kfree(css_cls_state(css));
+	struct cgroup_cls_state *cs = css_cls_state(css);
+
+	kfree(cs->whitelist_lports);
+	kfree(cs->whitelist_rports);
+	kfree(cs);
 }
 
 /*
@@ -331,6 +345,135 @@ static ssize_t write_bps_limit(struct kernfs_open_file *of,
 	ret = nbytes;
 
 out_finish:
+	return ret;
+}
+
+static int read_whitelist_port(struct seq_file *sf, void *v)
+{
+	loff_t off = 0;
+	int ret = 0;
+	struct ctl_table table;
+	size_t max_len = 4096;
+	char *lports_buf, *rports_buf;
+	struct cgroup_cls_state *cs = css_cls_state(seq_css(sf));
+
+	lports_buf = kzalloc(max_len, GFP_KERNEL);
+	if (!lports_buf)
+		return -ENOMEM;
+
+	rports_buf = kzalloc(max_len, GFP_KERNEL);
+	if (!rports_buf) {
+		ret = -ENOMEM;
+		goto out_free_lports;
+	}
+
+	table.maxlen = 65536;
+	table.data = &cs->whitelist_lports;
+	netcls_do_large_bitmap(&table, 0, lports_buf, &max_len, &off);
+
+	off = 0;
+	max_len = 4096;
+	table.maxlen = 65536;
+	table.data = &cs->whitelist_rports;
+	netcls_do_large_bitmap(&table, 0, rports_buf, &max_len, &off);
+
+	if (strlen(lports_buf) == 1) {
+		lports_buf[0] = '0';
+		lports_buf[1] = '\n';
+	}
+
+	if (strlen(rports_buf) == 1) {
+		rports_buf[0] = '0';
+		rports_buf[1] = '\n';
+	}
+	seq_printf(sf, "lports=%srports=%s", lports_buf, rports_buf);
+
+	kfree(rports_buf);
+out_free_lports:
+	kfree(lports_buf);
+	return ret;
+}
+
+static int get_port_config(char *buf, char *lports, char *rports)
+{
+	int len;
+	int ret = -1;
+	char *tok = kzalloc(4096, GFP_KERNEL);
+
+	if (!tok)
+		return -ENOMEM;
+
+	while (true) {
+		char *p;
+
+		if (sscanf(buf, "%4095s%n", tok, &len) != 1)
+			break;
+		if (tok[0] == '\0')
+			break;
+		buf += len;
+		p = tok;
+		strsep(&p, "=");
+		if (!p)
+			goto out_finish;
+
+		if (!strcmp(tok, "lports"))
+			memcpy(lports, p, strlen(p));
+		else if (!strcmp(tok, "rports"))
+			memcpy(rports, p, strlen(p));
+		else
+			goto out_finish;
+	}
+	ret = 0;
+
+out_finish:
+	kfree(tok);
+	return ret;
+}
+
+static ssize_t write_whitelist_port(struct kernfs_open_file *of,
+				    char *buf, size_t nbytes, loff_t off)
+{
+	struct ctl_table table;
+	int ret = -EINVAL;
+	size_t max_len = 4096;
+	size_t buf_len;
+	char *lports_buf, *rports_buf;
+	struct cgroup_cls_state *cs = css_cls_state(of_css(of));
+
+	lports_buf = kzalloc(max_len, GFP_KERNEL);
+	if (!lports_buf)
+		return -ENOMEM;
+
+	rports_buf = kzalloc(max_len, GFP_KERNEL);
+	if (!rports_buf) {
+		ret = -ENOMEM;
+		goto out_free_lports;
+	}
+
+	table.maxlen = 65536;
+	if (nbytes >= max_len)
+		goto out_finish;
+
+	if (get_port_config(buf, lports_buf, rports_buf))
+		goto out_finish;
+
+	table.data = &cs->whitelist_lports;
+	buf_len = strlen(lports_buf);
+	if (netcls_do_large_bitmap(&table, 1, lports_buf, &buf_len, &off))
+		goto out_finish;
+
+	off = 0;
+	table.maxlen = 65536;
+	table.data = &cs->whitelist_rports;
+	buf_len = strlen(rports_buf);
+	if (netcls_do_large_bitmap(&table, 1, rports_buf, &buf_len, &off))
+		goto out_finish;
+
+	ret = nbytes;
+out_finish:
+	kfree(rports_buf);
+out_free_lports:
+	kfree(lports_buf);
 	return ret;
 }
 
@@ -567,6 +710,12 @@ static struct cftype ss_files[] = {
 		.flags		= CFTYPE_NOT_ON_ROOT,
 		.seq_show	= read_bps_limit,
 		.write		= write_bps_limit,
+	},
+	{
+		.name		= "whitelist_ports",
+		.flags		= CFTYPE_NOT_ON_ROOT,
+		.seq_show	= read_whitelist_port,
+		.write		= write_whitelist_port,
 	},
 	{ }	/* terminate */
 };
