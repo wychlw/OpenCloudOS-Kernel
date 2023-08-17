@@ -87,6 +87,44 @@ int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all)
 }
 EXPORT_SYMBOL_GPL(p_write_tx_bps_minmax);
 
+int p_write_rx_online_bps_max(int ifindex, u64 max)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_write_rx_online_bps_max);
+
+int p_write_tx_online_bps_max(int ifindex, u64 max)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_write_tx_online_bps_max);
+
+int
+p_write_rx_online_bps_min(struct cgroup_cls_state *cs, int ifindex, u64 rate)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_write_rx_online_bps_min);
+
+int
+p_write_tx_online_bps_min(struct cgroup_cls_state *cs, int ifindex, u64 rate)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_write_tx_online_bps_min);
+
+int p_rx_online_list_del(struct cgroup_cls_state *cs)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_rx_online_list_del);
+
+int p_tx_online_list_del(struct cgroup_cls_state *cs)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(p_tx_online_list_del);
+
 int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 			     struct cftype *cft, u64 value)
 {
@@ -120,6 +158,12 @@ EXPORT_SYMBOL_GPL(p_is_low_prio);
 
 struct dev_limit_config limit_bw_config[MAX_NIC_SUPPORT];
 EXPORT_SYMBOL_GPL(limit_bw_config);
+
+struct dev_bw_config online_max_config[MAX_NIC_SUPPORT];
+EXPORT_SYMBOL_GPL(online_max_config);
+
+struct dev_limit_config online_min_config[MAX_NIC_SUPPORT];
+EXPORT_SYMBOL_GPL(online_min_config);
 
 struct cgroup_cls_state *task_cls_state(struct task_struct *p)
 {
@@ -200,8 +244,12 @@ static int cgrp_css_online(struct cgroup_subsys_state *css)
 	cls_cgroup_stats_init(&cs->rx_stats);
 	cls_cgroup_stats_init(&cs->tx_stats);
 	cs->rx_scale = WND_DIVISOR;
-	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+	for (i = 0; i < MAX_NIC_SUPPORT; i++) {
 		cs->rx_dev_scale[i] = WND_DIVISOR;
+		cs->rx_online_scale[i] = WND_DIVISOR;
+	}
+	INIT_LIST_HEAD(&cs->rx_list);
+	INIT_LIST_HEAD(&cs->tx_list);
 
 	return 0;
 }
@@ -212,6 +260,11 @@ static void cgrp_css_offline(struct cgroup_subsys_state *css)
 
 	cls_cgroup_stats_destroy(&cs->rx_stats);
 	cls_cgroup_stats_destroy(&cs->tx_stats);
+	if (READ_ONCE(netcls_modfunc.rx_online_list_del) &&
+	    READ_ONCE(netcls_modfunc.tx_online_list_del)) {
+		netcls_modfunc.rx_online_list_del(cs);
+		netcls_modfunc.tx_online_list_del(cs);
+	}
 }
 
 static void cgrp_css_free(struct cgroup_subsys_state *css)
@@ -606,6 +659,216 @@ int net_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
 	return 0;
 }
 
+static int read_dev_online_bps_max(struct seq_file *sf, void *v)
+{
+	int i;
+
+	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+		if ((online_max_config[i].rx_bps_max ||
+		     online_max_config[i].tx_bps_max) &&
+		    online_max_config[i].name)
+			seq_printf(sf, "%s rx_bps=%lu tx_bps=%lu\n",
+				   online_max_config[i].name,
+				   online_max_config[i].rx_bps_max,
+				   online_max_config[i].tx_bps_max);
+	return 0;
+}
+
+static ssize_t write_dev_online_bps_max(struct kernfs_open_file *of,
+					char *buf, size_t nbytes, loff_t off)
+{
+	int len, ifindex = -1;
+	struct net_device *dev;
+	struct net *net = current->nsproxy->net_ns;
+	char tok[27] = {0};
+	long rx_rate = -1, tx_rate = -1;
+	int ret = -EINVAL;
+	char *dev_name = NULL;
+	char *name = NULL;
+
+	if (sscanf(buf, "%16s%n", tok, &len) != 1)
+		return ret;
+	buf += len;
+
+	dev = dev_get_by_name(net, tok);
+	if (!dev) {
+		pr_err("Netdev name %s not found!\n", tok);
+		return -ENODEV;
+	}
+
+	if (dev->ifindex >= MAX_NIC_SUPPORT) {
+		pr_err("Netdev %s index(%d) too large!\n", tok, dev->ifindex);
+		goto out_finish;
+	}
+	ifindex = dev->ifindex;
+	dev_name = dev->name;
+
+	while (true) {
+		char *p;
+		unsigned long val = 0;
+
+		if (sscanf(buf, "%26s%n", tok, &len) != 1)
+			break;
+		if (tok[0] == '\0')
+			break;
+		buf += len;
+
+		p = tok;
+		strsep(&p, "=");
+		if (!p || kstrtoul(p, 10, &val) || val < 0)
+			goto out_finish;
+
+		if (!strcmp(tok, "disable") && val == 1) {
+			rx_rate = 0;
+			tx_rate = 0;
+		} else if (!strcmp(tok, "rx_bps")) {
+			rx_rate = val;
+		} else if (!strcmp(tok, "tx_bps")) {
+			tx_rate = val;
+		} else {
+			goto out_finish;
+		}
+	}
+
+	if (rx_rate < -1 || tx_rate < -1 || (rx_rate < 0 && tx_rate < 0))
+		goto out_finish;
+
+	len = strlen(dev_name) + 1;
+	name = kzalloc(len, GFP_KERNEL);
+	if (!name) {
+		pr_err("Netdev %s index(%d) alloc name failed!\n",
+		       dev_name, ifindex);
+		goto out_finish;
+	}
+
+	/* release old config info */
+	kfree(online_max_config[ifindex].name);
+
+	online_max_config[ifindex].name = name;
+	strncpy(online_max_config[ifindex].name, dev_name, strlen(dev_name));
+
+	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.write_rx_online_bps_max)) {
+		online_max_config[ifindex].rx_bps_max = rx_rate;
+		netcls_modfunc.write_rx_online_bps_max(ifindex,
+			online_max_config[ifindex].rx_bps_max);
+	}
+	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.write_tx_online_bps_max)) {
+		online_max_config[ifindex].tx_bps_max = tx_rate;
+		netcls_modfunc.write_tx_online_bps_max(ifindex,
+			online_max_config[ifindex].tx_bps_max);
+	}
+	ret = nbytes;
+
+out_finish:
+	dev_put(dev);
+	return ret;
+}
+
+static int read_dev_online_bps_min(struct seq_file *sf, void *v)
+{
+	int i;
+	u64 rx_rate, tx_rate;
+	struct cgroup_cls_state *cs = css_cls_state(seq_css(sf));
+
+	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+		if ((cs->rx_online_bucket[i].rate ||
+		     cs->tx_online_bucket[i].rate) &&
+		    online_min_config[i].name) {
+			rx_rate = (cs->rx_online_bucket[i].rate << 3)
+					/ NET_MSCALE;
+			tx_rate = (cs->tx_online_bucket[i].rate << 3)
+					/ NET_MSCALE;
+			seq_printf(sf, "%s rx_bps=%llu tx_bps=%llu\n",
+				   online_min_config[i].name, rx_rate, tx_rate);
+		}
+	return 0;
+}
+
+static ssize_t write_dev_online_bps_min(struct kernfs_open_file *of,
+					char *buf, size_t nbytes, loff_t off)
+{
+	struct cgroup_cls_state *cs = css_cls_state(of_css(of));
+	int len, ifindex = -1;
+	struct net_device *dev;
+	struct net *net = current->nsproxy->net_ns;
+	char tok[27] = {0};
+	long rx_rate = -1, tx_rate = -1;
+	int ret = -EINVAL;
+	char *dev_name = NULL;
+	char *name = NULL;
+
+	if (sscanf(buf, "%16s%n", tok, &len) != 1)
+		return ret;
+	buf += len;
+
+	dev = dev_get_by_name(net, tok);
+	if (!dev) {
+		pr_err("Netdev name %s not found!\n", tok);
+		return -ENODEV;
+	}
+
+	if (dev->ifindex >= MAX_NIC_SUPPORT) {
+		pr_err("Netdev %s index(%d) too large!\n", tok, dev->ifindex);
+		goto out_finish;
+	}
+	ifindex = dev->ifindex;
+	dev_name = dev->name;
+
+	while (true) {
+		char *p;
+		unsigned long val = 0;
+
+		if (sscanf(buf, "%26s%n", tok, &len) != 1)
+			break;
+		if (tok[0] == '\0')
+			break;
+		buf += len;
+
+		p = tok;
+		strsep(&p, "=");
+		if (!p || kstrtoul(p, 10, &val) || val < 0)
+			goto out_finish;
+
+		if (!strcmp(tok, "disable") && val == 1) {
+			rx_rate = 0;
+			tx_rate = 0;
+		} else if (!strcmp(tok, "rx_bps")) {
+			rx_rate = val;
+		} else if (!strcmp(tok, "tx_bps")) {
+			tx_rate = val;
+		} else {
+			goto out_finish;
+		}
+	}
+
+	if (rx_rate < -1 || tx_rate < -1 || (rx_rate < 0 && tx_rate < 0))
+		goto out_finish;
+
+	len = strlen(dev_name) + 1;
+	name = kzalloc(len, GFP_KERNEL);
+	if (!name) {
+		pr_err("Netdev %s index(%d) alloc name failed!\n",
+		       dev_name, ifindex);
+		goto out_finish;
+	}
+
+	/* release old config info */
+	kfree(online_min_config[ifindex].name);
+
+	online_min_config[ifindex].name = name;
+	strncpy(online_min_config[ifindex].name, dev_name, strlen(dev_name));
+
+	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.write_rx_online_bps_min))
+		netcls_modfunc.write_rx_online_bps_min(cs, ifindex, rx_rate);
+	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.write_tx_online_bps_min))
+		netcls_modfunc.write_tx_online_bps_min(cs, ifindex, tx_rate);
+	ret = nbytes;
+
+out_finish:
+	dev_put(dev);
+	return ret;
+}
+
 static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 				    char *buf, size_t nbytes, loff_t off)
 {
@@ -776,6 +1039,12 @@ int netqos_notifier(struct notifier_block *this,
 
 		kfree(limit_bw_config[dev->ifindex].name);
 		limit_bw_config[dev->ifindex].name = NULL;
+
+		kfree(online_max_config[dev->ifindex].name);
+		online_max_config[dev->ifindex].name = NULL;
+
+		kfree(online_min_config[dev->ifindex].name);
+		online_min_config[dev->ifindex].name = NULL;
 		break;
 	}
 
@@ -848,6 +1117,18 @@ static struct cftype ss_files[] = {
 		.flags		= CFTYPE_ONLY_ON_ROOT,
 		.seq_show	= read_dev_bps_config,
 		.write		= write_dev_bps_config,
+	},
+	{
+		.name		= "dev_online_bps_max",
+		.flags		= CFTYPE_ONLY_ON_ROOT,
+		.seq_show	= read_dev_online_bps_max,
+		.write		= write_dev_online_bps_max,
+	},
+	{
+		.name		= "dev_online_bps_min",
+		.flags		= CFTYPE_NOT_ON_ROOT,
+		.seq_show	= read_dev_online_bps_min,
+		.write		= write_dev_online_bps_min,
 	},
 	{
 		.name		= "rx_min_rwnd_segs",

@@ -67,8 +67,13 @@ struct cgroup_cls_state {
 	struct cls_token_bucket tx_bucket;
 	struct cls_token_bucket rx_dev_bucket[MAX_NIC_SUPPORT];
 	struct cls_token_bucket tx_dev_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket rx_online_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket tx_online_bucket[MAX_NIC_SUPPORT];
 	u16 rx_scale;
 	u16 rx_dev_scale[MAX_NIC_SUPPORT];
+	u16 rx_online_scale[MAX_NIC_SUPPORT];
+	struct list_head rx_list;
+	struct list_head tx_list;
 	unsigned long *whitelist_lports;
 	unsigned long *whitelist_rports;
 };
@@ -88,6 +93,14 @@ struct net_cls_module_function {
 	void (*cgroup_set_tx_limit)(struct cls_token_bucket *tb, u64 rate);
 	int (*write_rx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
 	int (*write_tx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
+	int (*write_rx_online_bps_max)(int ifindex, u64 max);
+	int (*write_tx_online_bps_max)(int ifindex, u64 max);
+	int (*write_rx_online_bps_min)(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+	int (*write_tx_online_bps_min)(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+	int (*rx_online_list_del)(struct cgroup_cls_state *cs);
+	int (*tx_online_list_del)(struct cgroup_cls_state *cs);
 	int (*write_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
 				  struct cftype *cft, u64 value);
 	u64 (*read_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
@@ -104,6 +117,8 @@ extern int tx_throttle_all_enabled;
 extern struct net_cls_module_function netcls_modfunc;
 extern struct dev_bw_config bw_config[];
 extern struct dev_limit_config limit_bw_config[];
+extern struct dev_bw_config online_max_config[];
+extern struct dev_limit_config online_min_config[];
 extern int netqos_notifier(struct notifier_block *this,
 			   unsigned long event, void *ptr);
 extern int p_read_rx_stat(struct cgroup_subsys_state *css,
@@ -120,6 +135,14 @@ extern void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate);
 extern void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate);
 extern int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max, int all);
 extern int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all);
+extern int p_write_rx_online_bps_max(int ifindex, u64 max);
+extern int p_write_tx_online_bps_max(int ifindex, u64 max);
+extern int p_write_rx_online_bps_min(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+extern int p_write_tx_online_bps_min(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+extern int p_rx_online_list_del(struct cgroup_cls_state *cs);
+extern int p_tx_online_list_del(struct cgroup_cls_state *cs);
 extern int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 				  struct cftype *cft, u64 value);
 extern u64 p_read_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
