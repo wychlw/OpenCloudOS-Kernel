@@ -118,6 +118,9 @@ bool p_is_low_prio(struct sock *sk)
 }
 EXPORT_SYMBOL_GPL(p_is_low_prio);
 
+struct dev_limit_config limit_bw_config[MAX_NIC_SUPPORT];
+EXPORT_SYMBOL_GPL(limit_bw_config);
+
 struct cgroup_cls_state *task_cls_state(struct task_struct *p)
 {
 	return css_cls_state(task_css_check(p, net_cls_cgrp_id,
@@ -177,6 +180,7 @@ static int cgrp_css_online(struct cgroup_subsys_state *css)
 {
 	struct cgroup_cls_state *cs = css_cls_state(css);
 	struct cgroup_cls_state *parent = css_cls_state(css->parent);
+	int i;
 
 	if (parent) {
 		cs->prio = parent->prio;
@@ -196,6 +200,9 @@ static int cgrp_css_online(struct cgroup_subsys_state *css)
 	cls_cgroup_stats_init(&cs->rx_stats);
 	cls_cgroup_stats_init(&cs->tx_stats);
 	cs->rx_scale = WND_DIVISOR;
+	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+		cs->rx_dev_scale[i] = WND_DIVISOR;
+
 	return 0;
 }
 
@@ -351,6 +358,114 @@ static ssize_t write_bps_limit(struct kernfs_open_file *of,
 	ret = nbytes;
 
 out_finish:
+	return ret;
+}
+
+static int read_bps_dev_limit(struct seq_file *sf, void *v)
+{
+	struct cgroup_cls_state *cs = css_cls_state(seq_css(sf));
+	u64 tx_rate, rx_rate;
+	int i;
+
+	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+		if ((cs->tx_dev_bucket[i].rate || cs->rx_dev_bucket[i].rate) &&
+		    limit_bw_config[i].name) {
+			tx_rate = (cs->tx_dev_bucket[i].rate << 3) / NET_MSCALE;
+			rx_rate = (cs->rx_dev_bucket[i].rate << 3) / NET_MSCALE;
+			seq_printf(sf, "%s tx_bps=%llu rx_bps=%llu\n",
+				   limit_bw_config[i].name, tx_rate, rx_rate);
+		}
+	return 0;
+}
+
+static ssize_t write_bps_dev_limit(struct kernfs_open_file *of,
+				   char *buf, size_t nbytes, loff_t off)
+{
+	struct cgroup_cls_state *cs = css_cls_state(of_css(of));
+	int len, ifindex = -1;
+	struct net_device *dev;
+	struct net *net = current->nsproxy->net_ns;
+	char tok[27] = {0};
+	long rx_rate = -1, tx_rate = -1;
+	int ret = -EINVAL;
+	char *dev_name = NULL;
+	char *name = NULL;
+
+	if (sscanf(buf, "%16s%n", tok, &len) != 1)
+		return ret;
+	buf += len;
+
+	dev = dev_get_by_name(net, tok);
+	if (!dev) {
+		pr_err("Netdev name %s not found!\n", tok);
+		return -ENODEV;
+	}
+
+	if (dev->ifindex >= MAX_NIC_SUPPORT) {
+		pr_err("Netdev %s index(%d) too large!\n", tok, dev->ifindex);
+		goto out_finish;
+	}
+	ifindex = dev->ifindex;
+	dev_name = dev->name;
+
+	while (true) {
+		char *p;
+		unsigned long val = 0;
+
+		if (sscanf(buf, "%26s%n", tok, &len) != 1)
+			break;
+		if (tok[0] == '\0')
+			break;
+		buf += len;
+
+		p = tok;
+		strsep(&p, "=");
+		if (!p || kstrtoul(p, 10, &val) || val < 0)
+			goto out_finish;
+
+		if (!strcmp(tok, "disable") && val == 1) {
+			rx_rate = 0;
+			tx_rate = 0;
+		} else if (!strcmp(tok, "rx_bps")) {
+			rx_rate = val;
+		} else if (!strcmp(tok, "tx_bps")) {
+			tx_rate = val;
+		} else {
+			goto out_finish;
+		}
+	}
+
+	if (rx_rate < -1 || tx_rate < -1 || (rx_rate < 0 && tx_rate < 0))
+		goto out_finish;
+
+	len = strlen(dev_name) + 1;
+	name = kzalloc(len, GFP_KERNEL);
+	if (!name) {
+		pr_err("Netdev %s index(%d) alloc name failed!\n",
+		       dev_name, ifindex);
+		goto out_finish;
+	}
+
+	/* release old config info */
+	kfree(limit_bw_config[ifindex].name);
+
+	limit_bw_config[ifindex].name = name;
+	strncpy(limit_bw_config[ifindex].name, dev_name, strlen(dev_name));
+
+	if (!rx_rate)
+		cs->rx_dev_scale[ifindex] = WND_DIVISOR;
+
+	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.cgroup_set_rx_limit))
+		netcls_modfunc.cgroup_set_rx_limit(&cs->rx_dev_bucket[ifindex],
+						   rx_rate);
+
+	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.cgroup_set_tx_limit))
+		netcls_modfunc.cgroup_set_tx_limit(&cs->tx_dev_bucket[ifindex],
+						   tx_rate);
+	ret = nbytes;
+
+out_finish:
+	dev_put(dev);
 	return ret;
 }
 
@@ -653,11 +768,14 @@ int netqos_notifier(struct notifier_block *this,
 
 	switch (event) {
 	case NETDEV_UNREGISTER:
-		if (dev->ifindex < MAX_NIC_SUPPORT &&
-		    bw_config[dev->ifindex].name) {
-			kfree(bw_config[dev->ifindex].name);
-			bw_config[dev->ifindex].name = NULL;
-		}
+		if (dev->ifindex >= MAX_NIC_SUPPORT)
+			break;
+
+		kfree(bw_config[dev->ifindex].name);
+		bw_config[dev->ifindex].name = NULL;
+
+		kfree(limit_bw_config[dev->ifindex].name);
+		limit_bw_config[dev->ifindex].name = NULL;
 		break;
 	}
 
@@ -762,6 +880,12 @@ static struct cftype ss_files[] = {
 		.flags		= CFTYPE_NOT_ON_ROOT,
 		.seq_show	= read_bps_limit,
 		.write		= write_bps_limit,
+	},
+	{
+		.name		= "dev_limit",
+		.flags		= CFTYPE_NOT_ON_ROOT,
+		.seq_show	= read_bps_dev_limit,
+		.write		= write_bps_dev_limit,
 	},
 	{
 		.name		= "whitelist_ports",

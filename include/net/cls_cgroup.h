@@ -38,6 +38,10 @@ struct dev_bw_config {
 	unsigned long tx_bps_max;
 };
 
+struct dev_limit_config {
+	char *name;
+};
+
 struct cls_token_bucket {
 	s64 depth;		/* depth in bytes. */
 	s64 max_ticks;		/* bound of time diff. */
@@ -61,7 +65,10 @@ struct cgroup_cls_state {
 	u32 prio;
 	struct cls_token_bucket rx_bucket;
 	struct cls_token_bucket tx_bucket;
+	struct cls_token_bucket rx_dev_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket tx_dev_bucket[MAX_NIC_SUPPORT];
 	u16 rx_scale;
+	u16 rx_dev_scale[MAX_NIC_SUPPORT];
 	unsigned long *whitelist_lports;
 	unsigned long *whitelist_rports;
 };
@@ -96,6 +103,7 @@ extern int rx_throttle_all_enabled;
 extern int tx_throttle_all_enabled;
 extern struct net_cls_module_function netcls_modfunc;
 extern struct dev_bw_config bw_config[];
+extern struct dev_limit_config limit_bw_config[];
 extern int netqos_notifier(struct notifier_block *this,
 			   unsigned long event, void *ptr);
 extern int p_read_rx_stat(struct cgroup_subsys_state *css,
