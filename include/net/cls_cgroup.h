@@ -79,8 +79,8 @@ struct net_cls_module_function {
 				struct seq_file *sf);
 	void (*cgroup_set_rx_limit)(struct cls_token_bucket *tb, u64 rate);
 	void (*cgroup_set_tx_limit)(struct cls_token_bucket *tb, u64 rate);
-	int (*write_rx_bps_minmax)(int ifindex, u64 min, u64 max);
-	int (*write_tx_bps_minmax)(int ifindex, u64 min, u64 max);
+	int (*write_rx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
+	int (*write_tx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
 	int (*write_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
 				  struct cftype *cft, u64 value);
 	u64 (*read_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
@@ -92,8 +92,10 @@ struct net_cls_module_function {
 };
 
 extern int sysctl_net_qos_enable;
+extern int rx_throttle_all_enabled;
+extern int tx_throttle_all_enabled;
 extern struct net_cls_module_function netcls_modfunc;
-extern struct dev_bw_config bw_config[MAX_NIC_SUPPORT];
+extern struct dev_bw_config bw_config[];
 extern int netqos_notifier(struct notifier_block *this,
 			   unsigned long event, void *ptr);
 extern int p_read_rx_stat(struct cgroup_subsys_state *css,
@@ -108,8 +110,8 @@ extern void p_dump_tx_bps_limit_tb(struct cgroup_subsys_state *css,
 				struct seq_file *sf);
 extern void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate);
 extern void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate);
-extern int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max);
-extern int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max);
+extern int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max, int all);
+extern int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all);
 extern int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 				  struct cftype *cft, u64 value);
 extern u64 p_read_rx_min_rwnd_segs(struct cgroup_subsys_state *css,

@@ -18,11 +18,17 @@
 int sysctl_net_qos_enable __read_mostly;
 EXPORT_SYMBOL_GPL(sysctl_net_qos_enable);
 
+int rx_throttle_all_enabled;
+EXPORT_SYMBOL_GPL(rx_throttle_all_enabled);
+
+int tx_throttle_all_enabled;
+EXPORT_SYMBOL_GPL(tx_throttle_all_enabled);
+
 struct net_cls_module_function netcls_modfunc;
 EXPORT_SYMBOL_GPL(netcls_modfunc);
 
-/* one more for space */
-struct dev_bw_config bw_config[MAX_NIC_SUPPORT];
+/* the last one more for all_dev config */
+struct dev_bw_config bw_config[MAX_NIC_SUPPORT + 1];
 EXPORT_SYMBOL_GPL(bw_config);
 
 int p_read_rx_stat(struct cgroup_subsys_state *css, struct seq_file *sf)
@@ -69,13 +75,13 @@ void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate)
 }
 EXPORT_SYMBOL_GPL(p_cgroup_set_tx_limit);
 
-int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max)
+int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max, int all)
 {
 	return 0;
 }
 EXPORT_SYMBOL_GPL(p_write_rx_bps_minmax);
 
-int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max)
+int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all)
 {
 	return 0;
 }
@@ -488,26 +494,38 @@ int net_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
 static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 				    char *buf, size_t nbytes, loff_t off)
 {
+	int len, ifindex = -1;
 	struct net_device *dev;
 	struct net *net = current->nsproxy->net_ns;
 	char tok[27] = {0};
-	unsigned long v[4] = {0};
-	int len;
+	long v[4] = {-1, -1, -1, -1};
 	int ret = -EINVAL;
+	char *dev_name = NULL;
+	bool set_all_dev = false;
+	char *name = NULL;
 
 	if (sscanf(buf, "%16s%n", tok, &len) != 1)
 		return ret;
 	buf += len;
 
-	dev = dev_get_by_name(net, tok);
-	if (!dev) {
-		pr_err("Netdev name %s not found!\n", tok);
-		return -ENODEV;
-	}
+	if (strlen(tok) == 3 && !strcmp(tok, "all")) {
+		dev_name = "all";
+		ifindex = MAX_NIC_SUPPORT;
+		set_all_dev = true;
+	} else {
+		dev = dev_get_by_name(net, tok);
+		if (!dev) {
+			pr_err("Netdev name %s not found!\n", tok);
+			return -ENODEV;
+		}
 
-	if (dev->ifindex >= MAX_NIC_SUPPORT) {
-		pr_err("Netdev %s index(%d) too large!\n", tok, dev->ifindex);
-		goto out_finish;
+		if (dev->ifindex >= MAX_NIC_SUPPORT) {
+			pr_err("Netdev %s index(%d) too large!\n", tok,
+			       dev->ifindex);
+			goto out_finish;
+		}
+		ifindex = dev->ifindex;
+		dev_name = dev->name;
 	}
 
 	while (true) {
@@ -522,13 +540,17 @@ static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 
 		p = tok;
 		strsep(&p, "=");
-		if (!p || kstrtoul(p, 10, &val) || !val)
+		if (!p || kstrtoul(p, 10, &val) || val < 0)
 			goto out_finish;
 
 		if (!strcmp(tok, "disable") && val == 1) {
-			kfree(bw_config[dev->ifindex].name);
-			bw_config[dev->ifindex].name = NULL;
+			kfree(bw_config[ifindex].name);
+			bw_config[ifindex].name = NULL;
 			ret = nbytes;
+			if (set_all_dev) {
+				tx_throttle_all_enabled = 0;
+				rx_throttle_all_enabled = 0;
+			}
 			goto out_finish;
 		} else if (!strcmp(tok, "rx_bps_min")) {
 			v[0] = val;
@@ -543,34 +565,64 @@ static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 		}
 	}
 
-	if (v[0] && v[1] && v[2] && v[3]) {
-		if (v[0] < 0 || v[0] > v[1] || v[2] < 0 || v[2] > v[3])
+	if ((v[0] > -1 && v[1] > -1) || (v[2] > -1 && v[3] > -1)) {
+		if (v[0] < -1 || v[0] > v[1] || v[2] < -1 || v[2] > v[3])
 			goto out_finish;
+
+		if ((v[0] == -1 || v[1] == -1) && (v[0] > -1 || v[1] > -1))
+			goto out_finish;
+
+		if ((v[2] == -1 || v[3] == -1) && (v[2] > -1 || v[3] > -1))
+			goto out_finish;
+
+		len = strlen(dev_name) + 1;
+		name = kzalloc(len, GFP_KERNEL);
+		if (!name) {
+			pr_err("Netdev %s index(%d) alloc name failed!\n",
+			       dev_name, ifindex);
+			goto out_finish;
+		}
+
 		/* release old config info */
-		kfree(bw_config[dev->ifindex].name);
+		kfree(bw_config[ifindex].name);
 
-		len = strlen(dev->name) + 1;
-		bw_config[dev->ifindex].name = kzalloc(len, GFP_KERNEL);
-		strncpy(bw_config[dev->ifindex].name, dev->name,
-			strlen(dev->name));
+		bw_config[ifindex].name = name;
+		strncpy(bw_config[ifindex].name, dev_name, strlen(dev_name));
 
-		bw_config[dev->ifindex].rx_bps_min = v[0];
-		bw_config[dev->ifindex].rx_bps_max = v[1];
-		bw_config[dev->ifindex].tx_bps_min = v[2];
-		bw_config[dev->ifindex].tx_bps_max = v[3];
+		if (v[0] > -1 && v[1] > -1 &&
+		    READ_ONCE(netcls_modfunc.write_rx_bps_minmax)) {
+			bw_config[ifindex].rx_bps_min = v[0];
+			bw_config[ifindex].rx_bps_max = v[1];
+			netcls_modfunc.write_rx_bps_minmax(ifindex,
+					bw_config[ifindex].rx_bps_min,
+					bw_config[ifindex].rx_bps_max,
+					set_all_dev);
+		}
 
-		if (READ_ONCE(netcls_modfunc.write_rx_bps_minmax) &&
+		if (v[2] > -1 && v[3] > -1 &&
 		    READ_ONCE(netcls_modfunc.write_tx_bps_minmax)) {
-			netcls_modfunc.write_rx_bps_minmax(dev->ifindex,
-						v[0], v[1]);
-			netcls_modfunc.write_tx_bps_minmax(dev->ifindex,
-						v[2], v[3]);
+			bw_config[ifindex].tx_bps_min = v[2];
+			bw_config[ifindex].tx_bps_max = v[3];
+			netcls_modfunc.write_tx_bps_minmax(ifindex,
+					bw_config[ifindex].tx_bps_min,
+					bw_config[ifindex].tx_bps_max,
+					set_all_dev);
+		}
+
+		if (set_all_dev) {
+			if (bw_config[ifindex].rx_bps_min &&
+			    bw_config[ifindex].rx_bps_max)
+				rx_throttle_all_enabled = 1;
+			if (bw_config[ifindex].tx_bps_min &&
+			    bw_config[ifindex].tx_bps_max)
+				tx_throttle_all_enabled = 1;
 		}
 		ret = nbytes;
 	}
 
 out_finish:
-	dev_put(dev);
+	if (!set_all_dev)
+		dev_put(dev);
 	return ret;
 }
 
@@ -578,7 +630,7 @@ static int read_dev_bps_config(struct seq_file *sf, void *v)
 {
 	int i;
 
-	for (i = 0; i < MAX_NIC_SUPPORT; i++)
+	for (i = 0; i <= MAX_NIC_SUPPORT; i++)
 		if (bw_config[i].name)
 			seq_printf(sf,
 				   "%s rx_bps_min=%lu rx_bps_max=%lu tx_bps_min=%lu tx_bps_max=%lu\n",
