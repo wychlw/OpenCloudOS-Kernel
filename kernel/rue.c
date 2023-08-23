@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#include <linux/cpu.h>
+#include <linux/sched.h>
+#include <linux/mutex.h>
+#include <linux/rcupdate.h>
+#include <linux/delay.h>
+#include <linux/rue.h>
+
+bool rue_installed;
+DEFINE_PER_CPU(long, nr_rue_calls);
+struct rue_ops *rue_mod_ops;
+DEFINE_MUTEX(rue_mutex);
+
+static bool rue_used(void)
+{
+	int cpu;
+	long total = 0;
+
+	for_each_possible_cpu(cpu)
+		total += per_cpu(nr_rue_calls, cpu);
+
+	pr_info("RUE: cpu %d sees the sum of nr_rue_calls %ld\n",
+		smp_processor_id(), total);
+
+	return !!total;
+}
+
+static int check_patch_state(struct rue_ops *ops)
+{
+	int ret = 0;
+
+	if (ops) {
+		/* check if patching */
+	} else {
+		/* check if unpatching */
+	}
+	return ret;
+}
+
+int register_rue_ops(struct rue_ops *ops)
+{
+	int ret = 0;
+
+	cpus_read_lock();
+	mutex_lock(&rue_mutex);
+	if (rue_used()) {
+		ret =  -EBUSY;
+		pr_warn("RUE: system corrupted, "
+			"failed to register rue_ops");
+		goto out;
+	}
+	ret = check_patch_state(ops);
+	if (ret)
+		goto out;
+	WRITE_ONCE(rue_mod_ops, ops);
+out:
+	WRITE_ONCE(rue_installed, !ret);
+	mutex_unlock(&rue_mutex);
+	cpus_read_unlock();
+
+	return ret;
+}
+EXPORT_SYMBOL(register_rue_ops);
+
+int try_unregister_rue_ops(void)
+{
+	int ret = 0;
+
+	cpus_read_lock();
+	mutex_lock(&rue_mutex);
+	ret = check_patch_state(NULL);
+	if (ret)
+		goto out;
+	WRITE_ONCE(rue_mod_ops, NULL);
+	synchronize_rcu();
+	while (rue_used()) {
+		if (!cond_resched())
+			cpu_relax();
+	}
+out:
+	WRITE_ONCE(rue_installed, !!ret);
+	mutex_unlock(&rue_mutex);
+	cpus_read_unlock();
+
+	return ret;
+}
+EXPORT_SYMBOL(try_unregister_rue_ops);
