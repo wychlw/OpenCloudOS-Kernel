@@ -10,9 +10,16 @@ struct rue_ops {
 #ifdef CONFIG_CGROUP_NET_CLASSID
 	struct rue_net_ops *net;
 #endif
+
+#ifdef CONFIG_MEMCG
+	struct rue_mem_ops *mem;
+#endif
 };
 
 extern int sysctl_net_qos_enable;
+
+extern int sysctl_vm_memory_qos;
+extern struct rue_mem_ops mem_ops;
 
 extern bool rue_installed;
 extern struct rue_ops *rue_mod_ops;
@@ -24,6 +31,10 @@ int try_unregister_rue_ops(void);
 
 #ifdef CONFIG_CGROUP_NET_CLASSID
 #define RUE_NET_FUNC(ops, func) ops->net->func  /* RUE NET OPs */
+#endif
+
+#ifdef CONFIG_MEMCG
+#define RUE_MEM_FUNC(ops, func) ops->mem->func  /* RUE MEM OPs */
 #endif
 
 #define RUE_FUNC(subsys, ops, func) RUE_##subsys##_FUNC(ops, func)

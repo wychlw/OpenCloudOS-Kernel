@@ -38,12 +38,29 @@ static int check_net_patch_state(struct rue_ops *ops, bool state)
 	return 0;
 }
 
+static int check_mem_patch_state(struct rue_ops *ops, bool state)
+{
+#ifdef CONFIG_MEMCG
+	if (state && !ops->mem)
+		return -EINVAL;
+
+	if (!state)
+		sysctl_vm_memory_qos = 0;
+#endif
+
+	return 0;
+}
+
 static int check_patch_state(struct rue_ops *ops)
 {
 	int ret = 0;
 	bool state = !!ops; /* true: patch, false: unpatch */
 
 	ret = check_net_patch_state(ops, state);
+	if (ret)
+		return ret;
+
+	ret = check_mem_patch_state(ops, state);
 	if (ret)
 		return ret;
 

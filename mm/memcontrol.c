@@ -81,6 +81,7 @@
 #include <linux/uaccess.h>
 
 #include <trace/events/vmscan.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_MEMCG_ZRAM
 bool zram_memcg_nocharge;
@@ -110,6 +111,20 @@ static bool cgroup_memory_nobpf __ro_after_init;
 #ifdef CONFIG_CGROUP_WRITEBACK
 static DECLARE_WAIT_QUEUE_HEAD(memcg_cgwb_frn_waitq);
 #endif
+
+int sysctl_vm_memory_qos;
+/* default has none reclaim priority */
+int sysctl_vm_qos_highest_reclaim_prio = CGROUP_PRIORITY_MAX;
+
+static unsigned long rmem_wmark_limit;
+static unsigned long rmem_wmark_setpoint;
+static unsigned long rmem_wmark_freerun;
+static long memcg_pos_ratio;
+static atomic_long_t memcg_allocated_count;
+static atomic_long_t memcg_reclaimed_count;
+static unsigned long memcg_reclaim_goal;
+static int memcg_cur_reclaim_prio = CGROUP_PRIORITY_MAX;
+static DEFINE_SPINLOCK(memcg_reclaim_prio_lock);
 
 /* Whether legacy memory+swap accounting is active */
 static bool do_memsw_account(void)
@@ -2701,6 +2716,146 @@ out:
 	css_put(&memcg->css);
 }
 
+static struct task_struct *memcg_priod;
+static struct task_struct *memcg_priod_async;
+static DECLARE_WAIT_QUEUE_HEAD(memcg_prio_reclaim_wq);
+
+static void wakeup_memcg_priod(void)
+{
+	/* XXX check if necessary */
+	if (!waitqueue_active(&memcg_prio_reclaim_wq))
+		return;
+	wake_up_interruptible(&memcg_prio_reclaim_wq);
+}
+
+void memory_qos_update(void)
+{
+	spin_lock(&memcg_reclaim_prio_lock);
+	if (memcg_cur_reclaim_prio > CGROUP_PRIORITY_MAX - 1)
+		memcg_cur_reclaim_prio = CGROUP_PRIORITY_MAX - 1;
+	if (memcg_cur_reclaim_prio < sysctl_vm_qos_highest_reclaim_prio)
+		memcg_cur_reclaim_prio = sysctl_vm_qos_highest_reclaim_prio;
+	spin_unlock(&memcg_reclaim_prio_lock);
+
+	wakeup_memcg_priod();
+}
+
+unsigned long prio_reclaim_bytes = MEM_128M * 8;
+unsigned int sysctl_vm_qos_prio_reclaim_ratio;
+
+int memory_qos_prio_reclaim_ratio_update(void)
+{
+	u64 mem_total = totalram_pages() * PAGE_SIZE;
+	unsigned long new;
+
+	new = (mem_total * sysctl_vm_qos_prio_reclaim_ratio) / 100;
+	if (new < MEM_128M) {
+		pr_warn("mem qos: reserve mem too small\n");
+		return -EINVAL;
+	}
+	prio_reclaim_bytes = new;
+	wakeup_memcg_priod();
+
+	return 0;
+}
+
+static struct memcg_priority {
+	struct list_head head;
+	spinlock_t lock;
+	atomic_long_t count;
+} memcg_prios[CGROUP_PRIORITY_MAX];
+
+static struct memcg_global_reclaim {
+	struct list_head list;
+	struct mutex mutex;
+} memcg_global_reclaim_list;
+
+static int memcg_prio_hierarchy_count[CGROUP_PRIORITY_MAX + 1];
+static DEFINE_RWLOCK(memcg_prio_hierarchy_lock);
+
+static int memcg_get_prio(struct mem_cgroup *memcg)
+{
+	return cgroup_priority(&memcg->css);
+}
+
+static int memcg_prio_reclaimd_run(void);
+
+static int memcg_get_prio_hierarchy_count(int prio)
+{
+	int ret;
+
+	read_lock(&memcg_prio_hierarchy_lock);
+	ret = memcg_prio_hierarchy_count[prio];
+	read_unlock(&memcg_prio_hierarchy_lock);
+
+	return ret;
+}
+
+static bool memcg_reclaim_prio_exist(void)
+{
+	return !!memcg_get_prio_hierarchy_count(
+			sysctl_vm_qos_highest_reclaim_prio);
+}
+
+static int memcg_notify_prio_change(struct mem_cgroup *memcg,
+				unsigned int old_prio, unsigned int new_prio)
+{
+	struct memcg_priority *p;
+	int i;
+
+	if (!memcg)
+		return 0;
+
+	if (old_prio) {
+		p = &memcg_prios[old_prio];
+		spin_lock(&p->lock);
+		list_del(&memcg->prio_list);
+		spin_unlock(&p->lock);
+
+		atomic_long_dec(&p->count);
+		write_lock(&memcg_prio_hierarchy_lock);
+		for (i = 1; i <= old_prio; i++)
+			memcg_prio_hierarchy_count[i]--;
+		write_unlock(&memcg_prio_hierarchy_lock);
+	}
+
+	if (new_prio) {
+		p = &memcg_prios[new_prio];
+		spin_lock(&p->lock);
+		list_add(&memcg->prio_list, &p->head);
+		spin_unlock(&p->lock);
+
+		atomic_long_inc(&p->count);
+		write_lock(&memcg_prio_hierarchy_lock);
+		for (i = 1; i <= new_prio; i++)
+			memcg_prio_hierarchy_count[i]++;
+		write_unlock(&memcg_prio_hierarchy_lock);
+
+		wakeup_memcg_priod();
+	}
+
+	if (old_prio == 0 && new_prio > 0) {
+		mutex_lock(&memcg_global_reclaim_list.mutex);
+		list_add_tail_rcu(&memcg->prio_list_async,
+				  &memcg_global_reclaim_list.list);
+		mutex_unlock(&memcg_global_reclaim_list.mutex);
+	} else if (old_prio > 0 && new_prio == 0) {
+		mutex_lock(&memcg_global_reclaim_list.mutex);
+		list_del_rcu(&memcg->prio_list_async);
+		mutex_unlock(&memcg_global_reclaim_list.mutex);
+	}
+
+	return 0;
+}
+
+int mem_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
+				  u16 old_prio, u16 new_prio)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg_notify_prio_change(memcg, old_prio, new_prio);
+}
+
 static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 			unsigned int nr_pages)
 {
@@ -2714,6 +2869,7 @@ static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 	bool drained = false;
 	bool raised_max_event = false;
 	unsigned long pflags;
+	bool need_reclaim = sysctl_vm_memory_qos && memcg_reclaim_prio_exist();
 #ifdef CONFIG_CGROUP_SLI
 	u64 start;
 #endif
@@ -2734,6 +2890,7 @@ retry:
 		reclaim_options &= ~MEMCG_RECLAIM_MAY_SWAP;
 	}
 
+retry_failed_reclaim:
 	if (batch > nr_pages) {
 		batch = nr_pages;
 		goto retry;
@@ -2767,6 +2924,10 @@ retry:
 	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
 #endif
 	psi_memstall_leave(&pflags);
+
+	need_reclaim = need_reclaim && RUE_CALL_TYPE(MEM,
+				mem_cgroup_notify_reclaim, bool,
+				mem_over_limit, nr_reclaimed);
 
 	if (mem_cgroup_margin(mem_over_limit) >= nr_pages)
 		goto retry;
@@ -2844,11 +3005,28 @@ force:
 	if (do_memsw_account())
 		page_counter_charge(&memcg->memsw, nr_pages);
 
+	if (sysctl_vm_memory_qos && memcg_reclaim_prio_exist())
+		RUE_CALL_VOID(MEM, mem_cgroup_notify_alloc, mem_over_limit, nr_pages);
+
 	return 0;
 
 done_restock:
+	if (need_reclaim) {
+		need_reclaim = RUE_CALL_TYPE(MEM, mem_cgroup_prio_need_reclaim, bool, memcg);
+		if (need_reclaim) {
+			mem_over_limit = memcg;
+			page_counter_uncharge(&memcg->memory, batch);
+			if (do_memsw_account())
+				page_counter_uncharge(&memcg->memsw, batch);
+			goto retry_failed_reclaim;
+		}
+	}
+
 	if (batch > nr_pages)
 		refill_stock(memcg, batch - nr_pages);
+
+	if (sysctl_vm_memory_qos && memcg_reclaim_prio_exist())
+		RUE_CALL_VOID(MEM, mem_cgroup_notify_alloc, memcg, batch);
 
 	/*
 	 * If the hierarchy is above the normal consumption range, schedule
@@ -6027,6 +6205,9 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		static_branch_inc(&memcg_bpf_enabled_key);
 #endif
 
+	INIT_LIST_HEAD(&memcg->prio_list);
+	INIT_LIST_HEAD(&memcg->prio_list_async);
+
 	return &memcg->css;
 }
 
@@ -6068,6 +6249,8 @@ static int mem_cgroup_css_online(struct cgroup_subsys_state *css)
 	idr_replace(&mem_cgroup_idr, memcg, memcg->id.id);
 	spin_unlock(&memcg_idr_lock);
 
+	memcg_notify_prio_change(memcg, 0, memcg_get_prio(memcg));
+
 	return 0;
 offline_kmem:
 	memcg_offline_kmem(memcg);
@@ -6081,6 +6264,8 @@ static void mem_cgroup_css_offline(struct cgroup_subsys_state *css)
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 	struct mem_cgroup_event *event, *tmp;
 
+	/* XXX no direct number */
+	memcg_notify_prio_change(memcg, memcg_get_prio(memcg), 0);
 	/*
 	 * Unregister events and notify userspace.
 	 * Notify userspace about cgroup removing only after rmdir of cgroup
@@ -7481,6 +7666,7 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.attach = mem_cgroup_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.post_attach = mem_cgroup_move_task,
+	.css_priority_change = mem_cgroup_notify_prio_change,
 	.dfl_cftypes = memory_files,
 	.legacy_cftypes = mem_cgroup_legacy_files,
 	.early_init = 0,
@@ -8038,6 +8224,10 @@ static int __init cgroup_memory(char *s)
 }
 __setup("cgroup.memory=", cgroup_memory);
 
+#define DEFAULT_SPAN_PERCENT   10
+#define MAX_SPAN_SIZE          (10ull * SZ_1G)
+#define MIN_SPAN_SIZE          (2ull * SZ_1G)
+
 /*
  * subsys_initcall() for memory controller.
  *
@@ -8075,6 +8265,19 @@ static int __init mem_cgroup_init(void)
 		spin_lock_init(&rtpn->lock);
 		soft_limit_tree.rb_tree_per_node[node] = rtpn;
 	}
+
+{
+	int i;
+
+	memcg_prio_reclaimd_run();
+	for (i = 0; i < CGROUP_PRIORITY_MAX; i++) {
+		INIT_LIST_HEAD(&memcg_prios[i].head);
+		spin_lock_init(&memcg_prios[i].lock);
+	}
+
+	INIT_LIST_HEAD(&memcg_global_reclaim_list.list);
+	mutex_init(&memcg_global_reclaim_list.mutex);
+}
 
 	return 0;
 }
@@ -8593,3 +8796,284 @@ static int __init mem_cgroup_swap_init(void)
 subsys_initcall(mem_cgroup_swap_init);
 
 #endif /* CONFIG_SWAP */
+
+#define RMEM_UPDATE_FREQ           10
+
+static void memcg_rmem_update_wmark(unsigned long rmem_size)
+{
+	unsigned long limit = totalram_pages() << PAGE_SHIFT;
+	unsigned long setpoint;
+
+	/* XXX fix error case */
+	if (limit < rmem_size)
+		return;
+
+	setpoint = limit - rmem_size;
+	if (rmem_wmark_setpoint == setpoint)
+		return;
+
+	rmem_wmark_setpoint = setpoint;
+	if (setpoint >= rmem_size) {
+		rmem_wmark_freerun = setpoint - rmem_size;
+		rmem_wmark_limit = limit;
+	} else {
+		rmem_wmark_freerun = 0;
+		rmem_wmark_limit = setpoint + setpoint;
+	}
+}
+
+static void memcg_rmem_wmark_adjust(void)
+{
+	memcg_rmem_update_wmark(prio_reclaim_bytes);
+}
+
+/*
+ *                           usage - setpoint 3
+ *        f(usage) := 1.0 + (----------------)
+ *                           limit - setpoint
+ *
+ * it's a 3rd order polynomial that subjects to
+ *
+ * (1) f(limit)    = 2.0
+ * (2) f(setpoint) = 1.0
+ * (3) f(freerun)  = 0
+ */
+#define POS_RATIO_SETPOINT_VAL    1024l
+#define POS_RATIO_WARN_OFFSET     16l
+#define RATELIMIT_CALC_SHIFT   10
+static long long pos_ratio_polynom(unsigned long setpoint,
+				   unsigned long usage,
+				   unsigned long limit)
+{
+	long long pos_ratio;
+	long x;
+
+	x = div64_s64(((s64)usage - (s64)setpoint) << RATELIMIT_CALC_SHIFT,
+		      (limit - setpoint) | 1);
+	pos_ratio = x;
+	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
+	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
+	pos_ratio += 1 << RATELIMIT_CALC_SHIFT;
+
+	return clamp(pos_ratio, 0LL, 2LL << RATELIMIT_CALC_SHIFT);
+}
+
+static void memcg_rmem_calc_pos_ratio(void)
+{
+	unsigned long mem_used;
+
+	mem_used = (totalram_pages() - global_zone_page_state(NR_FREE_PAGES))
+		   << PAGE_SHIFT;
+
+	if (mem_used <= rmem_wmark_freerun) {
+		memcg_pos_ratio = 0;
+	} else {
+		memcg_pos_ratio = pos_ratio_polynom(rmem_wmark_setpoint,
+						(mem_used > rmem_wmark_limit) ?
+						rmem_wmark_limit : mem_used,
+						rmem_wmark_limit);
+	}
+}
+
+static void memcg_expand_reclaim_prio(void)
+{
+	while (memcg_cur_reclaim_prio > sysctl_vm_qos_highest_reclaim_prio) {
+		memcg_cur_reclaim_prio--;
+		if (atomic_long_read(
+			&memcg_prios[memcg_cur_reclaim_prio].count))
+			break;
+	}
+}
+
+static void memcg_shrink_reclaim_prio(void)
+{
+	while (memcg_cur_reclaim_prio < CGROUP_PRIORITY_MAX - 1) {
+		memcg_cur_reclaim_prio++;
+		if (atomic_long_read(
+			&memcg_prios[memcg_cur_reclaim_prio].count))
+			break;
+	}
+}
+
+static void memcg_update_reclaim_prio(void)
+{
+	static long last_pos_ratio;
+
+	spin_lock(&memcg_reclaim_prio_lock);
+	if (memcg_pos_ratio > POS_RATIO_SETPOINT_VAL + POS_RATIO_WARN_OFFSET &&
+	    memcg_pos_ratio > last_pos_ratio) {
+		memcg_expand_reclaim_prio();
+	} else if (memcg_pos_ratio <
+		   POS_RATIO_SETPOINT_VAL - POS_RATIO_WARN_OFFSET &&
+		   memcg_pos_ratio < last_pos_ratio) {
+		memcg_shrink_reclaim_prio();
+	}
+	last_pos_ratio = memcg_pos_ratio;
+	spin_unlock(&memcg_reclaim_prio_lock);
+}
+
+static int max_retry_times = 5;
+static long memcg_prio_reclaim_async(void)
+{
+	struct mem_cgroup *memcg;
+	int prio;
+	bool reclaim_succeed = false;
+	int nr_reclaimed;
+	int retry_times = 0;
+	int nr_reclaim_memcg, zero_reclaim_memcg;
+
+	if (atomic_long_read(&memcg_reclaimed_count) >= memcg_reclaim_goal)
+		return HZ;
+
+retry:
+	retry_times++;
+	nr_reclaim_memcg = 0;
+	zero_reclaim_memcg = 0;
+	rcu_read_lock();
+	list_for_each_entry_rcu(memcg, &memcg_global_reclaim_list.list,
+				prio_list_async) {
+		prio = memcg_get_prio(memcg);
+		if (prio < memcg_cur_reclaim_prio)
+			continue;
+
+		if (memcg_reclaim_goal > 0) {
+			nr_reclaim_memcg++;
+			nr_reclaimed = try_to_free_mem_cgroup_pages(memcg,
+					memcg_reclaim_goal, GFP_KERNEL, true);
+			if (!RUE_CALL_TYPE(MEM, mem_cgroup_notify_reclaim, bool,
+					   memcg, nr_reclaimed))
+				break;
+
+			if (nr_reclaimed == 0)
+				zero_reclaim_memcg++;
+			if (atomic_long_read(&memcg_reclaimed_count) >
+				memcg_reclaim_goal) {
+				reclaim_succeed = true;
+				break;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	if (reclaim_succeed)
+		return HZ / 2;
+
+	if (nr_reclaim_memcg == zero_reclaim_memcg) {
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		io_schedule_timeout(HZ/10);
+		return HZ;
+	}
+
+	if (retry_times <= max_retry_times)
+		goto retry;
+
+	return HZ / 10;
+}
+
+static int memcg_prio_reclaimd_async(void *data)
+{
+	DEFINE_WAIT(wait_async);
+	// XXX  simplify kthread
+	for ( ; ; ) {
+		long timeout;
+
+		timeout = memcg_prio_reclaim_async();
+		prepare_to_wait(&memcg_prio_reclaim_wq, &wait_async,
+				TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule_timeout(timeout);
+		else {
+			finish_wait(&memcg_prio_reclaim_wq, &wait_async);
+			break;
+		}
+		finish_wait(&memcg_prio_reclaim_wq, &wait_async);
+	}
+
+	return 0;
+}
+
+static long memcg_prio_strategy(void)
+{
+#define RMEM_CHECK_PERIOD_MS		100
+#define STRATEG_UPDATE_PERIOD_MS	1000
+	long timeout = MAX_SCHEDULE_TIMEOUT;
+	unsigned long alloc, goal = 0;
+	static unsigned long last_time;
+
+	if (!sysctl_vm_memory_qos || !memcg_reclaim_prio_exist())
+		goto out;
+
+	memcg_rmem_wmark_adjust();
+	memcg_rmem_calc_pos_ratio();
+
+	alloc = atomic_long_xchg(&memcg_allocated_count, 0);
+
+	if (memcg_pos_ratio <= 0) {
+		timeout = HZ / 2;
+		goto out;
+	} else {
+		timeout = msecs_to_jiffies(RMEM_CHECK_PERIOD_MS);
+	}
+
+	memcg_update_reclaim_prio();
+
+	if (time_after(jiffies, last_time + HZ))
+		alloc = 1;
+	goal = (alloc * memcg_pos_ratio) >> RATELIMIT_CALC_SHIFT;
+	atomic_long_xchg(&memcg_reclaimed_count, 0);
+out:
+	memcg_reclaim_goal = goal;
+	last_time = jiffies;
+	return timeout;
+}
+
+static int memcg_prio_reclaimd(void *data)
+{
+	DEFINE_WAIT(wait);
+	// XXX  simplify kthread
+	for ( ; ; ) {
+		long timeout;
+
+		timeout = memcg_prio_strategy();
+		prepare_to_wait(&memcg_prio_reclaim_wq, &wait,
+				TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule_timeout(timeout);
+		else {
+			finish_wait(&memcg_prio_reclaim_wq, &wait);
+			break;
+		}
+		finish_wait(&memcg_prio_reclaim_wq, &wait);
+	}
+
+	return 0;
+}
+
+static int memcg_prio_reclaimd_run(void)
+{
+	int ret = 0;
+
+	if (!memcg_priod) {
+		memcg_priod = kthread_run(memcg_prio_reclaimd,
+					  NULL, "memcg_priod");
+		if (IS_ERR(memcg_priod)) {
+			pr_err("Failed to start memcg_prio_reclaimd thread\n");
+			ret = PTR_ERR(memcg_priod);
+			memcg_priod = NULL;
+		}
+	}
+
+	if (!memcg_priod_async) {
+		memcg_priod_async = kthread_run(memcg_prio_reclaimd_async,
+						NULL, "memcg_priod_async");
+		if (IS_ERR(memcg_priod_async)) {
+			pr_err("Failed to start memcg_prio_reclaimd_async thread\n");
+			ret = PTR_ERR(memcg_priod_async);
+			memcg_priod_async = NULL;
+		}
+	}
+
+	return ret;
+}

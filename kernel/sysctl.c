@@ -68,6 +68,7 @@
 
 #include <linux/uaccess.h>
 #include <asm/processor.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_X86
 #include <asm/nmi.h>
@@ -92,6 +93,16 @@ EXPORT_SYMBOL_GPL(sysctl_long_vals);
 
 #ifdef CONFIG_RQM
 extern int sysctl_qos_mbuf_enable;
+#endif
+
+#ifdef CONFIG_MEMCG
+extern int sysctl_vm_memory_qos;
+extern int sysctl_vm_qos_highest_reclaim_prio;
+extern unsigned int sysctl_vm_qos_prio_reclaim_ratio;
+extern void memory_qos_update(void);
+extern int memory_qos_prio_reclaim_ratio_update(void);
+static int vm_lowest_prio = CGROUP_PRIORITY_MAX;
+static int twenty = 20;
 #endif
 
 /* Constants used for minimum and maximum */
@@ -1949,6 +1960,77 @@ int proc_do_static_key(struct ctl_table *table, int write,
 	return ret;
 }
 
+#ifdef CONFIG_MEMCG
+int memory_qos_sysctl_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int error;
+
+	mutex_lock(&rue_mutex);
+	if (write && !READ_ONCE(rue_installed)) {
+		error = -EBUSY;
+		pr_info("RUE: rue kernel module is not enabled or installed.");
+		goto out;
+	}
+
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		goto out;
+
+	if (write)
+		memory_qos_update();
+
+	mutex_unlock(&rue_mutex);
+	return 0;
+
+out:
+	mutex_unlock(&rue_mutex);
+	return error;
+}
+
+int memory_qos_sysctl_highest_reclaim_prio_handler(struct ctl_table *table,
+				int write, void __user *buffer,
+				size_t *lenp, loff_t *ppos)
+{
+	int error;
+
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		return error;
+
+	if (write)
+		memory_qos_update();
+
+	return 0;
+}
+
+int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
+				int write, void __user *buffer,
+				size_t *lenp, loff_t *ppos)
+{
+	int error;
+	unsigned int old;
+
+	old = sysctl_vm_qos_prio_reclaim_ratio;
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		return error;
+
+	if (old == sysctl_vm_qos_prio_reclaim_ratio)
+		return 0;
+
+	if (write) {
+		error = memory_qos_prio_reclaim_ratio_update();
+		if (error) {
+			sysctl_vm_qos_prio_reclaim_ratio = old;
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_RPS
 DECLARE_STATIC_KEY_TRUE(rps_using_pvipi);
 #endif
@@ -2811,6 +2893,35 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif /* CONFIG_PAGECACHE_LIMIT */
+#ifdef CONFIG_MEMCG
+	{
+		.procname		= "memory_qos",
+		.data			= &sysctl_vm_memory_qos,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_handler,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "qos_highest_reclaim_prio",
+		.data			= &sysctl_vm_qos_highest_reclaim_prio,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_highest_reclaim_prio_handler,
+		.extra1			= SYSCTL_ONE,
+		.extra2			= &vm_lowest_prio,
+	},
+	{
+		.procname		= "qos_prio_reclaim_ratio",
+		.data			= &sysctl_vm_qos_prio_reclaim_ratio,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_prio_reclaim_ratio_handler,
+		.extra1			= SYSCTL_ONE,
+		.extra2			= &twenty,
+	},
+#endif
 	{ }
 };
 

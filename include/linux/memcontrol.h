@@ -66,6 +66,18 @@ struct mem_cgroup_reclaim_cookie {
 
 #define MEM_CGROUP_ID_SHIFT	16
 
+#define MEM_128M		(128 * 1024 * 1024)
+#define MEM_128M_PAGES	(MEM_128M / PAGE_SIZE)
+#define PRIORITY_RECLAIM_RETRY_MAX	3
+
+struct rue_mem_ops {
+	bool (*mem_cgroup_prio_need_reclaim)(struct mem_cgroup *memcg);
+	void (*mem_cgroup_notify_alloc)(struct mem_cgroup *memcg,
+					unsigned int nr_pages);
+	bool (*mem_cgroup_notify_reclaim)(struct mem_cgroup *memcg,
+					unsigned int nr_pages);
+};
+
 struct mem_cgroup_id {
 	int id;
 	refcount_t ref;
@@ -316,6 +328,10 @@ struct mem_cgroup {
 #endif
 
 	CACHELINE_PADDING(_pad2_);
+
+	int reclaim_failed;
+	struct list_head	prio_list;
+	struct list_head	prio_list_async;
 
 	/*
 	 * set > 0 if pages under this cgroup are moving to other cgroup.
