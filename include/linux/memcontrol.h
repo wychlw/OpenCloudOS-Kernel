@@ -338,6 +338,12 @@ struct mem_cgroup {
 	int reclaim_failed;
 	struct list_head	prio_list;
 	struct list_head	prio_list_async;
+	/* per cgroup memory async reclaim */
+	unsigned int		async_wmark;
+	unsigned int		async_distance_factor;
+	int			async_wmark_delta;
+	unsigned int		async_distance_delta;
+	struct work_struct	async_work;
 
 	/*
 	 * set > 0 if pages under this cgroup are moving to other cgroup.

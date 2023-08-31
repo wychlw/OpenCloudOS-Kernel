@@ -125,6 +125,11 @@ static atomic_long_t memcg_reclaimed_count;
 static unsigned long memcg_reclaim_goal;
 static int memcg_cur_reclaim_prio = CGROUP_PRIORITY_MAX;
 static DEFINE_SPINLOCK(memcg_reclaim_prio_lock);
+/* workqueue for async reclaim */
+struct workqueue_struct *memcg_async_reclaim_wq;
+#define ASYNC_DISTANCE_DIV	1000000
+#define ASYNC_RATIO_DIV		100
+#define ASYNC_DISTANCE_DEF	1
 
 /* Whether legacy memory+swap accounting is active */
 static bool do_memsw_account(void)
@@ -1875,6 +1880,10 @@ static void memcg_stat_format(struct mem_cgroup *memcg, struct seq_buf *s)
 		       memcg_events(memcg, PGSTEAL_KSWAPD) +
 		       memcg_events(memcg, PGSTEAL_DIRECT) +
 		       memcg_events(memcg, PGSTEAL_KHUGEPAGED));
+	seq_buf_printf(s, "pgscan_in_background %lu\n",
+		       memcg_events(memcg, PGSCAN_KSWAPD));
+	seq_buf_printf(s, "pgsteal_in_background %lu\n",
+		       memcg_events(memcg, PGSTEAL_KSWAPD));
 
 	for (i = 0; i < ARRAY_SIZE(memcg_vm_event_stat); i++) {
 		if (memcg_vm_event_stat[i] == PGPGIN ||
@@ -2652,6 +2661,32 @@ static int memcg_hotplug_cpu_dead(unsigned int cpu)
 	return 0;
 }
 
+static bool need_memcg_async_reclaim(struct mem_cgroup *memcg)
+{
+	if (!sysctl_vm_memory_qos)
+		return false;
+
+	return page_counter_read(&memcg->memory) > memcg->memory.async_high;
+}
+
+static void async_reclaim_func(struct work_struct *work)
+{
+	struct mem_cgroup *memcg;
+	unsigned long nr_pages;
+
+	memcg = container_of(work, struct mem_cgroup, async_work);
+	nr_pages = page_counter_read(&memcg->memory) - memcg->memory.async_low;
+
+	if (nr_pages <= 0)
+		return;
+
+	nr_pages = min(nr_pages,
+			(memcg->memory.async_high - memcg->memory.async_low));
+	memcg_memory_event(memcg, MEMCG_HIGH);
+	try_to_free_mem_cgroup_pages(memcg, nr_pages, GFP_KERNEL, true);
+
+}
+
 static unsigned long reclaim_high(struct mem_cgroup *memcg,
 				  unsigned int nr_pages,
 				  gfp_t gfp_mask)
@@ -2915,6 +2950,47 @@ out:
 	css_put(&memcg->css);
 }
 
+static void setup_async_wmark(struct mem_cgroup *memcg)
+{
+	unsigned long high_throttle, low_throttle, distance;
+	unsigned long high = cgroup_subsys_on_dfl(memory_cgrp_subsys) ?
+				memcg->memory.high : memcg->memory.max;
+
+	if (memcg->async_wmark) {
+		high_throttle = (memcg->async_wmark * high) / ASYNC_RATIO_DIV;
+		distance = mult_frac(high,
+			memcg->async_distance_factor, ASYNC_DISTANCE_DIV);
+		if (distance >= high_throttle)
+			low_throttle = memcg->memory.low;
+		else
+			low_throttle = high_throttle - distance;
+	} else {
+		high_throttle = PAGE_COUNTER_MAX;
+		low_throttle = PAGE_COUNTER_MAX;
+	}
+	page_counter_set_async_high(&memcg->memory, high_throttle);
+	page_counter_set_async_low(&memcg->memory, low_throttle);
+}
+
+static void async_reclaim_reset_factor(struct mem_cgroup *memcg,
+					unsigned int new_prio)
+{
+	unsigned int wmark, distance;
+
+	if (memcg->async_wmark_delta < 0)
+		return;
+
+	wmark = ASYNC_RATIO_DIV -
+		(CGROUP_PRIORITY_MAX - new_prio) * memcg->async_wmark_delta;
+	xchg(&memcg->async_wmark, wmark);
+	distance = memcg->async_distance_delta * (new_prio + 1);
+	xchg(&memcg->async_distance_factor, distance);
+
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+}
+
 static struct task_struct *memcg_priod;
 static struct task_struct *memcg_priod_async;
 static DECLARE_WAIT_QUEUE_HEAD(memcg_prio_reclaim_wq);
@@ -3052,6 +3128,7 @@ int mem_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 
+	async_reclaim_reset_factor(memcg, new_prio);
 	return memcg_notify_prio_change(memcg, old_prio, new_prio);
 }
 
@@ -3238,6 +3315,12 @@ done_restock:
 	 */
 	do {
 		bool mem_high, swap_high;
+
+		if (need_memcg_async_reclaim(memcg)) {
+			/* Kick off per memory cgroup async reclaim */
+			queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+			break;
+		}
 
 		mem_high = page_counter_read(&memcg->memory) >
 			READ_ONCE(memcg->memory.high);
@@ -3972,8 +4055,14 @@ static int mem_cgroup_resize_max(struct mem_cgroup *memcg,
 		}
 	} while (true);
 
-	if (!ret && enlarge)
-		memcg_oom_recover(memcg);
+	if (!ret) {
+		setup_async_wmark(memcg);
+		if (need_memcg_async_reclaim(memcg))
+			queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
+		if (enlarge)
+			memcg_oom_recover(memcg);
+	}
 
 	return ret;
 }
@@ -4175,6 +4264,8 @@ enum {
 	RES_MAX_USAGE,
 	RES_FAILCNT,
 	RES_SOFT_LIMIT,
+	ASYNC_HIGH_LIMIT,
+	ASYNC_LOW_LIMIT,
 };
 
 static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
@@ -4215,6 +4306,10 @@ static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
 		return counter->failcnt;
 	case RES_SOFT_LIMIT:
 		return (u64)READ_ONCE(memcg->soft_limit) * PAGE_SIZE;
+	case ASYNC_HIGH_LIMIT:
+		return (u64)counter->async_high * PAGE_SIZE;
+	case ASYNC_LOW_LIMIT:
+		return (u64)counter->async_low * PAGE_SIZE;
 	default:
 		BUG();
 	}
@@ -4656,6 +4751,11 @@ static void memcg1_stat_format(struct mem_cgroup *memcg, struct seq_buf *s)
 		seq_buf_printf(s, "file_cost %lu\n", file_cost);
 	}
 #endif
+
+	seq_buf_printf(s, "pgscan_in_background %lu\n",
+		       memcg_events(memcg, PGSCAN_KSWAPD));
+	seq_buf_printf(s, "pgsteal_in_background %lu\n",
+		       memcg_events(memcg, PGSTEAL_KSWAPD));
 }
 
 #ifdef CONFIG_TEXT_UNEVICTABLE
@@ -5898,6 +5998,74 @@ static int mem_cgroup_unevictable_percent_write(struct cgroup_subsys_state *css,
 }
 #endif
 
+static int memory_async_reclaim_wmark_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_wmark));
+
+	return 0;
+}
+
+static ssize_t memory_async_reclaim_wmark_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, wmark;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &wmark);
+	if (ret)
+		return ret;
+
+	if (wmark > 100)
+		return -EINVAL;
+
+	xchg(&memcg->async_wmark, wmark);
+
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
+	return nbytes;
+}
+
+static int memory_async_distance_factor_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_distance_factor));
+
+	return 0;
+}
+
+static ssize_t memory_async_distance_factor_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, factor;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &factor);
+	if (ret)
+		return ret;
+
+	if ((factor > 150000) || (factor < 1))
+		return -EINVAL;
+
+	xchg(&memcg->async_distance_factor, factor);
+
+	setup_async_wmark(memcg);
+
+	return nbytes;
+}
+
 static int memory_oom_group_show(struct seq_file *m, void *v);
 static ssize_t memory_oom_group_write(struct kernfs_open_file *of,
 				      char *buf, size_t nbytes, loff_t off);
@@ -5971,6 +6139,30 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_NS_DELEGATABLE,
 		.seq_show = memory_oom_group_show,
 		.write = memory_oom_group_write,
+	},
+	{
+		.name = "async_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_reclaim_wmark_show,
+		.write = memory_async_reclaim_wmark_write,
+	},
+	{
+		.name = "async_high",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.private = MEMFILE_PRIVATE(_MEM, ASYNC_HIGH_LIMIT),
+		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "async_low",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.private = MEMFILE_PRIVATE(_MEM, ASYNC_LOW_LIMIT),
+		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "async_distance_factor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_factor_show,
+		.write = memory_async_distance_factor_write,
 	},
 	{
 		.name = "cgroup.event_control",		/* XXX: for compat */
@@ -6352,6 +6544,7 @@ static struct mem_cgroup *mem_cgroup_alloc(struct mem_cgroup *parent)
 		goto fail;
 
 	INIT_WORK(&memcg->high_work, high_work_func);
+	INIT_WORK(&memcg->async_work, async_reclaim_func);
 	INIT_LIST_HEAD(&memcg->oom_notify);
 	mutex_init(&memcg->thresholds_lock);
 	spin_lock_init(&memcg->move_lock);
@@ -6413,6 +6606,12 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 #endif
 		WRITE_ONCE(memcg->swappiness, mem_cgroup_swappiness(parent));
 		WRITE_ONCE(memcg->oom_kill_disable, READ_ONCE(parent->oom_kill_disable));
+		memcg->async_wmark = parent->async_wmark;
+		memcg->async_distance_factor = parent->async_distance_factor ?
+						: ASYNC_DISTANCE_DEF;
+		memcg->async_wmark_delta = parent->async_wmark_delta;
+		memcg->async_distance_delta = parent->async_distance_delta ?
+						: ASYNC_DISTANCE_DEF;
 #ifdef CONFIG_MEMCG_ZRAM
 		memcg->zram_prio = parent->zram_prio;
 #endif
@@ -6426,7 +6625,12 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		page_counter_init(&memcg->swap, NULL);
 		page_counter_init(&memcg->kmem, NULL);
 		page_counter_init(&memcg->tcpmem, NULL);
+	}
 
+	setup_async_wmark(memcg);
+
+	if (!parent) {
+		memcg->async_wmark_delta = -1;
 		root_mem_cgroup = memcg;
 		return &memcg->css;
 	}
@@ -6483,6 +6687,7 @@ static int mem_cgroup_css_online(struct cgroup_subsys_state *css)
 	idr_replace(&mem_cgroup_idr, memcg, memcg->id.id);
 	spin_unlock(&memcg_idr_lock);
 
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
 	memcg_notify_prio_change(memcg, 0, memcg_get_prio(memcg));
 
 	return 0;
@@ -6514,6 +6719,8 @@ static void mem_cgroup_css_offline(struct cgroup_subsys_state *css)
 
 	page_counter_set_min(&memcg->memory, 0);
 	page_counter_set_low(&memcg->memory, 0);
+	page_counter_set_async_high(&memcg->memory, PAGE_COUNTER_MAX);
+	page_counter_set_async_low(&memcg->memory, PAGE_COUNTER_MAX);
 
 	memcg_offline_kmem(memcg);
 	reparent_shrinker_deferred(memcg);
@@ -6557,6 +6764,7 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);
+	cancel_work_sync(&memcg->async_work);
 	mem_cgroup_remove_from_trees(memcg);
 	free_shrinker_info(memcg);
 	mem_cgroup_free(memcg);
@@ -6585,6 +6793,8 @@ static void mem_cgroup_css_reset(struct cgroup_subsys_state *css)
 	page_counter_set_max(&memcg->tcpmem, PAGE_COUNTER_MAX);
 	page_counter_set_min(&memcg->memory, 0);
 	page_counter_set_low(&memcg->memory, 0);
+	page_counter_set_async_high(&memcg->memory, PAGE_COUNTER_MAX);
+	page_counter_set_async_low(&memcg->memory, PAGE_COUNTER_MAX);
 	page_counter_set_high(&memcg->memory, PAGE_COUNTER_MAX);
 	WRITE_ONCE(memcg->soft_limit, PAGE_COUNTER_MAX);
 	page_counter_set_high(&memcg->swap, PAGE_COUNTER_MAX);
@@ -7587,6 +7797,10 @@ static ssize_t memory_high_write(struct kernfs_open_file *of,
 			break;
 	}
 
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
 	memcg_wb_domain_size_changed(memcg);
 	return nbytes;
 }
@@ -7639,6 +7853,10 @@ static ssize_t memory_max_write(struct kernfs_open_file *of,
 		if (!mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0))
 			break;
 	}
+
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
 
 	memcg_wb_domain_size_changed(memcg);
 	return nbytes;
@@ -7817,6 +8035,84 @@ static ssize_t memory_reclaim(struct kernfs_open_file *of, char *buf,
 	return nbytes;
 }
 
+static int memory_async_high_wmark_show(struct seq_file *m, void *v)
+{
+	return seq_puts_memcg_tunable(m,
+		READ_ONCE(mem_cgroup_from_seq(m)->memory.async_high));
+}
+
+static int memory_async_low_wmark_show(struct seq_file *m, void *v)
+{
+	return seq_puts_memcg_tunable(m,
+		READ_ONCE(mem_cgroup_from_seq(m)->memory.async_low));
+}
+
+static int memory_async_distance_delta_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_distance_delta));
+
+	return 0;
+}
+
+static ssize_t memory_async_distance_delta_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, delta;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &delta);
+	if (ret)
+		return ret;
+
+	if ((delta > 50) || (delta < 1))
+		return -EINVAL;
+
+	xchg(&memcg->async_distance_delta, delta);
+
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
+
+	return nbytes;
+}
+
+static int memory_async_wmark_delta_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_wmark_delta));
+
+	return 0;
+}
+
+static ssize_t memory_async_wmark_delta_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, delta;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &delta);
+	if (ret)
+		return ret;
+
+	if (((delta > 10) || (delta < 1)) && (delta != -1))
+		return -EINVAL;
+
+	xchg(&memcg->async_wmark_delta, delta);
+
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
+
+	return nbytes;
+}
+
 static struct cftype memory_files[] = {
 	{
 		.name = "current",
@@ -7889,6 +8185,40 @@ static struct cftype memory_files[] = {
 		.name = "reclaim",
 		.flags = CFTYPE_NS_DELEGATABLE,
 		.write = memory_reclaim,
+	},
+	{
+		.name = "async_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_reclaim_wmark_show,
+		.write = memory_async_reclaim_wmark_write,
+	},
+	{
+		.name = "async_high",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_high_wmark_show,
+	},
+	{
+		.name = "async_low",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_low_wmark_show,
+	},
+	{
+		.name = "async_distance_factor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_factor_show,
+		.write = memory_async_distance_factor_write,
+	},
+	{
+		.name = "async_ratio_delta",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_wmark_delta_show,
+		.write = memory_async_wmark_delta_write,
+	},
+	{
+		.name = "async_distance_delta",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_delta_show,
+		.write = memory_async_distance_delta_write,
 	},
 	{ }	/* terminate */
 };
@@ -8478,6 +8808,13 @@ __setup("cgroup.memory=", cgroup_memory);
 static int __init mem_cgroup_init(void)
 {
 	int cpu, node;
+
+	memcg_async_reclaim_wq = alloc_workqueue("memcg_async_reclaim",
+				WQ_MEM_RECLAIM | WQ_UNBOUND | WQ_FREEZABLE,
+				WQ_UNBOUND_MAX_ACTIVE);
+
+	if (!memcg_async_reclaim_wq)
+		return -ENOMEM;
 
 	/*
 	 * Currently s32 type (can refer to struct batched_lruvec_stat) is

@@ -1163,6 +1163,24 @@ static int reclaimer_offset(void)
 	return PGSTEAL_DIRECT - PGSTEAL_KSWAPD;
 }
 
+static int rue_reclaimer_offset(struct scan_control *sc)
+{
+	BUILD_BUG_ON(PGSTEAL_DIRECT - PGSTEAL_KSWAPD !=
+			PGDEMOTE_DIRECT - PGDEMOTE_KSWAPD);
+	BUILD_BUG_ON(PGSTEAL_DIRECT - PGSTEAL_KSWAPD !=
+			PGSCAN_DIRECT - PGSCAN_KSWAPD);
+	BUILD_BUG_ON(PGSTEAL_KHUGEPAGED - PGSTEAL_KSWAPD !=
+			PGDEMOTE_KHUGEPAGED - PGDEMOTE_KSWAPD);
+	BUILD_BUG_ON(PGSTEAL_KHUGEPAGED - PGSTEAL_KSWAPD !=
+			PGSCAN_KHUGEPAGED - PGSCAN_KSWAPD);
+
+	if (current_is_kswapd() || (cgroup_reclaim(sc) && current_work()))
+		return 0;
+	if (current_is_khugepaged())
+		return PGSTEAL_KHUGEPAGED - PGSTEAL_KSWAPD;
+	return PGSTEAL_DIRECT - PGSTEAL_KSWAPD;
+}
+
 static inline int is_page_cache_freeable(struct folio *folio)
 {
 	/*
@@ -2676,7 +2694,7 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
 				     &nr_scanned, sc, lru);
 
 	__mod_node_page_state(pgdat, NR_ISOLATED_ANON + file, nr_taken);
-	item = PGSCAN_KSWAPD + reclaimer_offset();
+	item = PGSCAN_KSWAPD + rue_reclaimer_offset(sc);
 	if (!cgroup_reclaim(sc))
 		__count_vm_events(item, nr_scanned);
 	__count_memcg_events(lruvec_memcg(lruvec), item, nr_scanned);
@@ -2693,7 +2711,7 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
 	move_folios_to_lru(lruvec, &folio_list);
 
 	__mod_node_page_state(pgdat, NR_ISOLATED_ANON + file, -nr_taken);
-	item = PGSTEAL_KSWAPD + reclaimer_offset();
+	item = PGSTEAL_KSWAPD + rue_reclaimer_offset(sc);
 	if (!cgroup_reclaim(sc))
 		__count_vm_events(item, nr_reclaimed);
 	__count_memcg_events(lruvec_memcg(lruvec), item, nr_reclaimed);
@@ -5200,7 +5218,7 @@ static int scan_folios(struct lruvec *lruvec, struct scan_control *sc,
 			break;
 	}
 
-	item = PGSCAN_KSWAPD + reclaimer_offset();
+	item = PGSCAN_KSWAPD + rue_reclaimer_offset(sc);
 	if (!cgroup_reclaim(sc)) {
 		__count_vm_events(item, isolated);
 		__count_vm_events(PGREFILL, sorted);
@@ -5390,7 +5408,7 @@ retry:
 	if (walk && walk->batched)
 		reset_batch_size(lruvec, walk);
 
-	item = PGSTEAL_KSWAPD + reclaimer_offset();
+	item = PGSTEAL_KSWAPD + rue_reclaimer_offset(sc);
 	if (!cgroup_reclaim(sc))
 		__count_vm_events(item, reclaimed);
 	__count_memcg_events(memcg, item, reclaimed);
@@ -6716,6 +6734,12 @@ static void shrink_node_memcgs(pg_data_t *pgdat, struct scan_control *sc)
 			vmpressure(sc->gfp_mask, memcg, false,
 				   sc->nr_scanned - scanned,
 				   sc->nr_reclaimed - reclaimed);
+
+		if (cgroup_reclaim(sc) &&
+		    ((sc->nr_reclaimed >= sc->nr_to_reclaim))) {
+			mem_cgroup_iter_break(target_memcg, memcg);
+			break;
+		}
 
 	} while ((memcg = mem_cgroup_iter(target_memcg, memcg, NULL)));
 }

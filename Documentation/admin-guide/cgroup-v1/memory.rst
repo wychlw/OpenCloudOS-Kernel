@@ -109,6 +109,13 @@ Brief summary of control files.
  memory.kmem.tcp.failcnt             show the number of tcp buf memory usage
 				     hits limits
  memory.kmem.tcp.max_usage_in_bytes  show max tcp buf memory usage recorded
+ memory.async_ratio                  ratio setting for async reclaim wmark
+ memory.async_high                   high limit for start async reclaim
+ memory.async_low                    low limit to strop async reclaim
+ memory.async_distance_factor        the distance between async_high and async_low, valid
+                                     value is from 1 to 150000, the unit is in fractions
+                                     of 1000000
+
 ==================================== ==========================================
 
 1. History
@@ -971,7 +978,19 @@ Test:
    (Expect a bunch of notifications, and eventually, the oom-killer will
    trigger.)
 
-12. TODO
+12. Async reclaim
+=================
+
+Add memory usage water mark for async reclaim, memory.async_ratio. Valid
+value is from 0 to 100, which represents percentage of memory.limit, the
+actual value of percentage * memory.limit will be asigned to memory.async_high.
+When charge pages to memory cgroup, it will schedule a work to reclaim
+pages when the memory usage exceed the memory.async_high, and the work
+will stop when the reclaim reachs memory.async_low. memory.async_ratio = 0
+means async reclaim is disabled, both async_low and async_high
+would be max, which is the default value.
+
+13. TODO
 ========
 
 1. Make per-cgroup scanner reclaim not-shared pages first
