@@ -909,7 +909,7 @@ static void sli_iolat_stat_end_check(u64 rq_alloc_time_ns, u64 rq_io_start_time_
 #endif
 
 #ifdef CONFIG_BLK_CGROUP_DISKSTATS
-static void blkcg_account_io_completion(struct request *req, struct bio *bio,
+void blkcg_account_io_completion(struct request *req, struct bio *bio,
 					unsigned int bytes)
 {
 	if (blk_do_io_stat(req)) {
@@ -929,8 +929,9 @@ static void blkcg_account_io_completion(struct request *req, struct bio *bio,
 		part_stat_unlock_rcu();
 	}
 }
+EXPORT_SYMBOL(blkcg_account_io_completion);
 
-static void blkcg_account_io_done(struct request *req, struct bio *bio)
+void blkcg_account_io_done(struct request *req, struct bio *bio)
 {
 	/*
 	 * Account IO completion.  flush_rq isn't accounted as a
@@ -949,6 +950,7 @@ static void blkcg_account_io_done(struct request *req, struct bio *bio)
 		part_stat_unlock_rcu();
 	}
 }
+EXPORT_SYMBOL(blkcg_account_io_done);
 #endif /* CONFIG_BLK_CGROUP_DISKSTATS */
 
 /**
