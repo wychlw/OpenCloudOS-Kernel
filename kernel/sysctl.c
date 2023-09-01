@@ -592,8 +592,6 @@ static int do_proc_dointvec(struct ctl_table *table, int write,
 			buffer, lenp, ppos, conv, data);
 }
 
-#ifdef CONFIG_PAGECACHE_LIMIT
-#define ADDITIONAL_RECLAIM_RATIO 2
 static int setup_pagecache_limit(void)
 {
 	/* reclaim ADDITIONAL_RECLAIM_PAGES more than limit. */
@@ -661,7 +659,6 @@ static int pc_limit_async_handler(struct ctl_table *table, int write,
 
 	return ret;
 }
-#endif /* CONFIG_PAGECACHE_LIMIT */
 
 static int do_proc_douintvec_w(unsigned int *tbl_data,
 			       struct ctl_table *table,
@@ -2609,6 +2606,8 @@ static struct ctl_table kern_table[] = {
 	{ }
 };
 
+unsigned long vm_pagecache_system_usage;
+
 static struct ctl_table vm_table[] = {
 	{
 		.procname	= "overcommit_memory",
@@ -2852,7 +2851,6 @@ static struct ctl_table vm_table[] = {
 		.extra2		= (void *)&mmap_rnd_compat_bits_max,
 	},
 #endif
-#ifdef CONFIG_PAGECACHE_LIMIT
 	{
 		.procname	= "pagecache_limit_ratio",
 		.data		= &vm_pagecache_limit_ratio,
@@ -2892,8 +2890,32 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
-#endif /* CONFIG_PAGECACHE_LIMIT */
 #ifdef CONFIG_MEMCG
+	{
+		.procname	= "pagecache_limit_global",
+		.data		= &vm_pagecache_limit_global,
+		.maxlen		= sizeof(vm_pagecache_limit_global),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "pagecache_limit_retry_times",
+		.data		= &vm_pagecache_limit_retry_times,
+		.maxlen		= sizeof(vm_pagecache_limit_retry_times),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_MAXOLDUID,
+	},
+	{
+		.procname	= "pagecache_system_usage",
+		.data		= &vm_pagecache_system_usage,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0444,
+		.proc_handler	= proc_pagecache_system_usage,
+	},
 	{
 		.procname		= "memory_qos",
 		.data			= &sysctl_vm_memory_qos,

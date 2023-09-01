@@ -407,15 +407,19 @@ extern unsigned long zone_reclaimable_pages(struct zone *zone);
 extern unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 					gfp_t gfp_mask, nodemask_t *mask);
 
-#ifdef CONFIG_PAGECACHE_LIMIT
+#define ADDITIONAL_RECLAIM_RATIO 2
 extern int vm_pagecache_limit_ratio;
 extern int vm_pagecache_limit_reclaim_ratio;
 extern unsigned long vm_pagecache_limit_pages;
 extern unsigned long vm_pagecache_limit_reclaim_pages;
 extern unsigned int vm_pagecache_ignore_dirty;
 extern unsigned int vm_pagecache_limit_async;
+extern unsigned int vm_pagecache_limit_global;
 extern unsigned int vm_pagecache_ignore_slab;
 
+extern long shrink_page_cache_memcg(gfp_t mask, struct mem_cgroup *memcg,
+				    unsigned long nr_pages);
+extern unsigned long __pagecache_over_limit(void);
 extern unsigned long pagecache_over_limit(void);
 extern int kpagecache_limitd_run(void);
 extern void kpagecache_limitd_stop(void);
@@ -424,15 +428,6 @@ static inline bool pagecache_limit_should_shrink(void)
 {
 	return unlikely(vm_pagecache_limit_pages) && pagecache_over_limit();
 }
-#else
-extern inline void shrink_page_cache(gfp_t mask, struct page *page)
-{
-}
-static inline bool pagecache_limit_should_shrink(void)
-{
-	return 0;
-}
-#endif
 
 #define MEMCG_RECLAIM_MAY_SWAP (1 << 1)
 #define MEMCG_RECLAIM_PROACTIVE (1 << 2)

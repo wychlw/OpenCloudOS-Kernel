@@ -68,6 +68,7 @@
 #include <linux/swapops.h>
 #include <linux/balloon_compaction.h>
 #include <linux/sched/sysctl.h>
+#include <linux/cpumask.h>
 
 #include "internal.h"
 #include "swap.h"
@@ -505,6 +506,24 @@ static bool writeback_throttling_sane(struct scan_control *sc)
 	return false;
 }
 #else
+
+#define sysctl_vm_memory_qos 0
+
+/*
+ * Iteration constructs for visiting all cgroups (under a tree).  If
+ * loops are exited prematurely (break), mem_cgroup_iter_break() must
+ * be used for reference counting.
+ */
+#define for_each_mem_cgroup_tree(iter, root)		\
+	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(root, iter, NULL))
+
+#define for_each_mem_cgroup(iter)			\
+	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(NULL, iter, NULL))
+
 static int prealloc_memcg_shrinker(struct shrinker *shrinker)
 {
 	return -ENOSYS;
@@ -7400,69 +7419,97 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 EXPORT_SYMBOL_GPL(try_to_free_mem_cgroup_pages);
 #endif
 
-#ifdef CONFIG_PAGECACHE_LIMIT
 int vm_pagecache_limit_ratio __read_mostly;
 int vm_pagecache_limit_reclaim_ratio __read_mostly;
 unsigned long vm_pagecache_limit_pages __read_mostly;
 unsigned long vm_pagecache_limit_reclaim_pages __read_mostly;
 unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
 unsigned int vm_pagecache_limit_async __read_mostly;
+unsigned int vm_pagecache_limit_global __read_mostly;
 unsigned int vm_pagecache_ignore_slab __read_mostly = 1;
 static struct task_struct *kpclimitd;
 static bool kpclimitd_context;
 
+extern unsigned long vm_pagecache_system_usage;
+
+unsigned long __pagecache_over_limit(void)
+{
+	unsigned long pgcache_lru_pages = 0;
+	/*
+	 * We only want to limit unmapped and non-shmem page cache pages,
+	 * normally all shmem pages are mapped as well.
+	 */
+	unsigned long pgcache_pages = global_node_page_state(NR_FILE_PAGES)
+				    - max_t(unsigned long,
+					    global_node_page_state(NR_FILE_MAPPED),
+					    global_node_page_state(NR_SHMEM));
+
+	/*
+	 * We certainly can't free more than what's on the LRU lists
+	 * minus the dirty ones.
+	 */
+	if (vm_pagecache_ignore_slab)
+		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
+				  + global_node_page_state(NR_INACTIVE_FILE);
+	else
+		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
+				  + global_node_page_state(NR_INACTIVE_FILE)
+				  + global_node_page_state_pages(NR_SLAB_RECLAIMABLE_B)
+				  + global_node_page_state_pages(NR_SLAB_UNRECLAIMABLE_B);
+
+	if (vm_pagecache_ignore_dirty != 0)
+		pgcache_lru_pages -= global_node_page_state(NR_FILE_DIRTY) /
+				     vm_pagecache_ignore_dirty;
+
+	/* Paranoia */
+	if (unlikely(pgcache_lru_pages > LONG_MAX))
+		return 0;
+
+	/* Limit it to 94% of LRU (not all there might be unmapped). */
+	pgcache_lru_pages -= pgcache_lru_pages / 16;
+	if (vm_pagecache_ignore_slab)
+		pgcache_pages = min_t(unsigned long, pgcache_pages, pgcache_lru_pages);
+	else
+		pgcache_pages = pgcache_lru_pages;
+
+	return pgcache_pages;
+}
+
+int proc_pagecache_system_usage(struct ctl_table *table, int write,
+				  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	vm_pagecache_system_usage = __pagecache_over_limit();
+
+	return proc_doulongvec_minmax(table, write, buffer, lenp, ppos);
+}
+
 /*
  * Returns a number that's positive if the pagecache is above
- * the set limit
+ * the set limit.
  */
 unsigned long pagecache_over_limit(void)
 {
 	unsigned long should_reclaim_pages = 0;
 	unsigned long overlimit_pages = 0;
 	unsigned long delta_pages = 0;
-	unsigned long pgcache_lru_pages = 0;
-	/* We only want to limit unmapped and non-shmem page cache pages;
-	 * normally all shmem pages are mapped as well*/
-	unsigned long pgcache_pages = global_node_page_state(NR_FILE_PAGES)
-				    - max_t(unsigned long,
-					    global_node_page_state(NR_FILE_MAPPED),
-					    global_node_page_state(NR_SHMEM));
-	/* We certainly can't free more than what's on the LRU lists
-	 * minus the dirty ones*/
-	if (vm_pagecache_ignore_slab)
-		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
-					+ global_node_page_state(NR_INACTIVE_FILE);
-	else
-		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
-					+ global_node_page_state(NR_INACTIVE_FILE)
-					+ global_node_page_state(NR_SLAB_RECLAIMABLE_B)
-					+ global_node_page_state(NR_SLAB_UNRECLAIMABLE_B);
+	unsigned long pgcache_pages = 0;
 
-	if (vm_pagecache_ignore_dirty != 0)
-		pgcache_lru_pages -= global_node_page_state(NR_FILE_DIRTY)
-				     /vm_pagecache_ignore_dirty;
-	/* Paranoia */
-	if (unlikely(pgcache_lru_pages > LONG_MAX))
-		return 0;
-
-	/* Limit it to 94% of LRU (not all there might be unmapped) */
-	pgcache_lru_pages -= pgcache_lru_pages/16;
-	if (vm_pagecache_ignore_slab)
-		pgcache_pages = min_t(unsigned long, pgcache_pages, pgcache_lru_pages);
-	else
-		pgcache_pages = pgcache_lru_pages;
+	pgcache_pages = __pagecache_over_limit();
 
 	/*
-	*delta_pages: we should reclaim at least 2% more pages than overlimit_page, values get from
-	*		/proc/vm/pagecache_limit_reclaim_pages
-	*should_reclaim_pages: the real pages we will reclaim, but it should less than pgcache_pages;
-	*/
+	 * delta_pages: we should reclaim at least 2% more pages than overlimit_page,
+	 * values get from /proc/vm/pagecache_limit_reclaim_pages.
+	 * should_reclaim_pages: the real pages we will reclaim,
+	 * but it should less than pgcache_pages.
+	 */
 	if (pgcache_pages > vm_pagecache_limit_pages) {
 		overlimit_pages = pgcache_pages - vm_pagecache_limit_pages;
 		delta_pages = vm_pagecache_limit_reclaim_pages - vm_pagecache_limit_pages;
-		should_reclaim_pages = min_t(unsigned long, delta_pages, vm_pagecache_limit_pages) + overlimit_pages;
+		should_reclaim_pages = min_t(unsigned long, delta_pages, vm_pagecache_limit_pages)
+				     + overlimit_pages;
 		return should_reclaim_pages;
 	}
+
 	return 0;
 }
 
@@ -7648,7 +7695,8 @@ out:
  * This function is similar to shrink_all_memory, except that it may never
  * swap out mapped pages and only does four passes.
  */
-static void __shrink_page_cache(gfp_t mask)
+static unsigned long __shrink_page_cache(gfp_t mask, struct mem_cgroup *memcg,
+					 unsigned long nr_pages)
 {
 	unsigned long ret = 0;
 	int pass = 0;
@@ -7660,11 +7708,10 @@ static void __shrink_page_cache(gfp_t mask)
 		.may_unmap = 0,
 		.may_writepage = 0,
 		.may_deactivate = DEACTIVATE_FILE,
-		.target_mem_cgroup = NULL,
+		.target_mem_cgroup = memcg,
 		.reclaim_idx = MAX_NR_ZONES,
 	};
 	struct reclaim_state *old_rs = current->reclaim_state;
-	long nr_pages;
 
 	/* We might sleep during direct reclaim so make atomic context
 	 * is certainly a bug.
@@ -7672,9 +7719,6 @@ static void __shrink_page_cache(gfp_t mask)
 	BUG_ON(!(mask & __GFP_RECLAIM));
 
 retry:
-	/* How many pages are we over the limit?*/
-	nr_pages = pagecache_over_limit();
-
 	/*
 	 * Return early if there's no work to do.
 	 * Wake up reclaimers that couldn't scan any zone due to congestion.
@@ -7682,7 +7726,7 @@ retry:
 	 * This makes sure that no sleeping reclaimer will stay behind.
 	 * Allow breaching the limit if the task is on the way out.
 	 */
-	if (nr_pages <= 0 || fatal_signal_pending(current)) {
+	if (nr_pages == 0 || fatal_signal_pending(current)) {
 		wake_up_interruptible(&pagecache_reclaim_wq);
 		goto out;
 	}
@@ -7719,9 +7763,10 @@ retry:
 				goto out;
 
 			for_each_online_node(nid) {
-				struct mem_cgroup *memcg = NULL;
-				while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)) != NULL)
-					shrink_slab(mask, nid, memcg, sc.priority);
+				struct mem_cgroup *iter;
+
+				for_each_mem_cgroup_tree(iter, memcg)
+					shrink_slab(mask, nid, iter, sc.priority);
 			}
 			ret += reclaim_state.reclaimed;
 			reclaim_state.reclaimed = 0;
@@ -7741,7 +7786,10 @@ retry:
 
 out:
 	current->reclaim_state = old_rs;
+	return sc.nr_reclaimed;
 }
+
+void batch_shrink_page_cache(gfp_t mask);
 
 static int kpagecache_limitd(void *data)
 {
@@ -7755,7 +7803,9 @@ static int kpagecache_limitd(void *data)
 		wake_up_interruptible(&pagecache_reclaim_wq);
 
 	for (;;) {
-		__shrink_page_cache(GFP_KERNEL);
+		if (pagecache_limit_should_shrink())
+			batch_shrink_page_cache(GFP_KERNEL);
+
 		prepare_to_wait(&kpagecache_limitd_wq, &wait, TASK_INTERRUPTIBLE);
 
 		if (!kthread_should_stop())
@@ -7777,12 +7827,64 @@ static void wakeup_kpclimitd(gfp_t mask)
 	wake_up_interruptible(&kpagecache_limitd_wq);
 }
 
+void batch_shrink_page_cache(gfp_t mask)
+{
+	int reclaim_ratio, goal, retry_limit = 10, retry = 0;
+	unsigned long goals, currents, batchs, reclaims, reclaimed;
+	int tmp_reclaim_ratio = vm_pagecache_limit_reclaim_ratio;
+	int tmp_limit_ratio = vm_pagecache_limit_ratio;
+
+	reclaim_ratio = max_t(int, tmp_reclaim_ratio - tmp_limit_ratio,
+						ADDITIONAL_RECLAIM_RATIO);
+	goal = tmp_limit_ratio - reclaim_ratio;
+	if (goal <= 0)
+		return;
+
+	reclaims = reclaim_ratio * totalram_pages() / 100;
+	if (vm_pagecache_limit_async == 0)
+		batchs = reclaims / num_online_cpus();
+	else
+		batchs = reclaims;
+	goals = goal * totalram_pages() / 100;
+	currents = __pagecache_over_limit();
+
+	while (currents > goals) {
+		if (fatal_signal_pending(current))
+			break;
+
+		reclaimed = __shrink_page_cache(mask, NULL, batchs);
+		if (reclaimed == 0) {
+			io_schedule_timeout(HZ/10);
+			retry++;
+		} else
+			retry = 0;
+
+		if (retry > retry_limit)
+			break;
+
+		currents = __pagecache_over_limit();
+		cond_resched();
+	}
+}
+
 void shrink_page_cache(gfp_t mask, struct page *page)
 {
-	if (0 == vm_pagecache_limit_async)
-		__shrink_page_cache(mask);
+	if (!sysctl_vm_memory_qos || !vm_pagecache_limit_global)
+		return;
+
+	if (vm_pagecache_limit_async == 0)
+		batch_shrink_page_cache(mask);
 	else
 		wakeup_kpclimitd(mask);
+}
+
+long shrink_page_cache_memcg(gfp_t mask, struct mem_cgroup *memcg,
+			     unsigned long nr_pages)
+{
+	if (!vm_pagecache_limit_global)
+		return __shrink_page_cache(mask, memcg, nr_pages);
+
+	return -EINVAL;
 }
 
 int kpagecache_limitd_run(void)
@@ -7809,7 +7911,6 @@ void kpagecache_limitd_stop(void)
 		kpclimitd = NULL;
 	}
 }
-#endif /* CONFIG_PAGECACHE_LIMIT */
 
 static void kswapd_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 {
@@ -8053,6 +8154,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
 		.order = order,
 		.may_unmap = 1,
 	};
+	unsigned long nr_pages;
 
 	set_task_reclaim_state(current, &sc.reclaim_state);
 	psi_memstall_enter(&pflags);
@@ -8060,11 +8162,12 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
 
 	count_vm_event(PAGEOUTRUN);
 
-#ifdef CONFIG_PAGECACHE_LIMIT
 	/* This reclaims from all zones so don't count to sc.nr_reclaimed */
-	if (pagecache_limit_should_shrink())
-		__shrink_page_cache(GFP_KERNEL);
-#endif /* CONFIG_PAGECACHE_LIMIT */
+	if (pagecache_limit_should_shrink()) {
+		nr_pages = pagecache_over_limit();
+		if (nr_pages)
+			shrink_page_cache(GFP_KERNEL, NULL);
+	}
 
 	/*
 	 * Account for the reclaim boost. Note that the zone boost is left in

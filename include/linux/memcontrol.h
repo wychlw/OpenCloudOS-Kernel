@@ -55,6 +55,8 @@ enum memcg_memory_event {
 	MEMCG_SWAP_HIGH,
 	MEMCG_SWAP_MAX,
 	MEMCG_SWAP_FAIL,
+	MEMCG_PAGECACHE_MAX,
+	MEMCG_PAGECACHE_OOM,
 	MEMCG_NR_MEMORY_EVENTS,
 };
 
@@ -237,6 +239,10 @@ struct mem_cgroup {
 		struct page_counter memsw;	/* v1 only */
 	};
 
+	struct page_counter pagecache;
+	u64 pagecache_reclaim_ratio;
+	u32 pagecache_max_ratio;
+
 	/* Legacy consumer-oriented counters */
 	struct page_counter kmem;		/* v1 only */
 	struct page_counter tcpmem;		/* v1 only */
@@ -402,6 +408,21 @@ struct mem_cgroup {
  * workload.
  */
 #define MEMCG_CHARGE_BATCH 64U
+
+/*
+ * Iteration constructs for visiting all cgroups (under a tree).  If
+ * loops are exited prematurely (break), mem_cgroup_iter_break() must
+ * be used for reference counting.
+ */
+#define for_each_mem_cgroup_tree(iter, root)		\
+	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(root, iter, NULL))
+
+#define for_each_mem_cgroup(iter)			\
+	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(NULL, iter, NULL))
 
 extern struct mem_cgroup *root_mem_cgroup;
 
@@ -1841,6 +1862,12 @@ int alloc_shrinker_info(struct mem_cgroup *memcg);
 void free_shrinker_info(struct mem_cgroup *memcg);
 void set_shrinker_bit(struct mem_cgroup *memcg, int nid, int shrinker_id);
 void reparent_shrinker_deferred(struct mem_cgroup *memcg);
+
+extern int sysctl_vm_memory_qos;
+extern unsigned int vm_pagecache_limit_retry_times;
+extern void
+mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
+
 #else
 #define mem_cgroup_sockets_enabled 0
 static inline void mem_cgroup_sk_alloc(struct sock *sk) { };

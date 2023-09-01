@@ -848,6 +848,9 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 	int huge = folio_test_hugetlb(folio);
 	bool charged = false;
 	long nr = 1;
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+#endif
 
 	VM_BUG_ON_FOLIO(!folio_test_locked(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_swapbacked(folio), folio);
@@ -861,6 +864,14 @@ noinline int __filemap_add_folio(struct address_space *mapping,
 		charged = true;
 		xas_set_order(&xas, index, folio_order(folio));
 		nr = folio_nr_pages(folio);
+
+#ifdef CONFIG_MEMCG
+		/* For a successful charge, folio->memcg_data must be set. */
+		memcg = folio_memcg(folio);
+
+		for (; memcg; memcg = parent_mem_cgroup(memcg))
+			mem_cgroup_shrink_pagecache(memcg, gfp);
+#endif
 	}
 
 	gfp &= GFP_RECLAIM_MASK;

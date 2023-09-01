@@ -1271,14 +1271,6 @@ config LOCK_MM_AND_FIND_VMA
 
 source "mm/damon/Kconfig"
 
-config PAGECACHE_LIMIT
-	bool "Page cache limit"
-	help
-	  This options allow user to set a limit for the page cache.
-	  For details, see Documentation/mm/pagecache-limit.
-
-	  If unsure, say N.
-
 config ENHANCED_MM
 	bool "Enable enhanced mm support (EMM)"
 	depends on MEMCG
