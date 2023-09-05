@@ -105,6 +105,8 @@ static int vm_lowest_prio = CGROUP_PRIORITY_MAX;
 static int twenty = 20;
 #endif
 
+extern unsigned long sysctl_async_mem_free_pages;
+
 /* Constants used for minimum and maximum */
 
 #ifdef CONFIG_PERF_EVENTS
@@ -2603,6 +2605,13 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif
+	{
+		.procname	= "async_mem_free_pages",
+		.data		= &sysctl_async_mem_free_pages,
+		.maxlen		= sizeof(sysctl_async_mem_free_pages),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
 	{ }
 };
 

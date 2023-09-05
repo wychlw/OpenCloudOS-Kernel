@@ -77,6 +77,11 @@
 #include <asm/unistd.h>
 #include <asm/mmu_context.h>
 #include <linux/hook_frame.h>
+#include <linux/sched.h>
+#include <linux/limits.h>
+
+extern int sysctl_vm_memory_qos;
+unsigned long sysctl_async_mem_free_pages = ULONG_MAX;
 
 extern void data_release(struct kref *ref);
 
@@ -572,7 +577,14 @@ static void exit_mm(void)
 	task_unlock(current);
 	mmap_read_unlock(mm);
 	mm_update_next_owner(mm);
-	mmput(mm);
+
+#ifdef CONFIG_MEMCG
+	if (sysctl_vm_memory_qos && (get_mm_rss(mm) > sysctl_async_mem_free_pages))
+		mmput_async(mm);
+	else
+#endif
+		mmput(mm);
+
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
 }
