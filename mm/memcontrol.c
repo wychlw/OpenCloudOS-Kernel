@@ -121,6 +121,11 @@ int sysctl_vm_memory_qos;
 /* default has none reclaim priority */
 int sysctl_vm_qos_highest_reclaim_prio = CGROUP_PRIORITY_MAX;
 
+unsigned int sysctl_clean_dying_memcg_async;
+unsigned int sysctl_clean_dying_memcg_threshold = 100;
+static struct task_struct *kclean_dying_memcg;
+DECLARE_WAIT_QUEUE_HEAD(kclean_dying_memcg_wq);
+
 static unsigned long rmem_wmark_limit;
 static unsigned long rmem_wmark_setpoint;
 static unsigned long rmem_wmark_freerun;
@@ -2607,7 +2612,7 @@ static void refill_stock(struct mem_cgroup *memcg, unsigned int nr_pages)
  * Drains all per-CPU charge caches for given root_memcg resp. subtree
  * of the hierarchy under it.
  */
-static void drain_all_stock(struct mem_cgroup *root_memcg)
+void drain_all_stock(struct mem_cgroup *root_memcg)
 {
 	int cpu, curcpu;
 
@@ -7107,10 +7112,43 @@ remove_id:
 	return -ENOMEM;
 }
 
+atomic_long_t dying_memcgs_count;
+
+void wakeup_kclean_dying_memcg(void)
+{
+	if (!waitqueue_active(&kclean_dying_memcg_wq)) /* .. */
+		return;
+
+	wake_up_interruptible(&kclean_dying_memcg_wq);
+}
+
+void charge_dying_memcgs(struct mem_cgroup *memcg)
+{
+	if (sysctl_vm_memory_qos == 0)
+		return;
+
+	if (sysctl_clean_dying_memcg_async == 0)
+		return;
+
+	if (sysctl_clean_dying_memcg_threshold == 0)
+		return;
+
+	if (atomic_long_read(&dying_memcgs_count) >=
+			sysctl_clean_dying_memcg_threshold) {
+		atomic_long_set(&dying_memcgs_count, 0);
+		wakeup_kclean_dying_memcg();
+	}
+
+	memcg->offline_times = jiffies;
+	atomic_long_add(1, &dying_memcgs_count);
+}
+
 static void mem_cgroup_css_offline(struct cgroup_subsys_state *css)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 	struct mem_cgroup_event *event, *tmp;
+
+	charge_dying_memcgs(memcg);
 
 	/* XXX no direct number */
 	memcg_notify_prio_change(memcg, memcg_get_prio(memcg), 0);
@@ -10084,4 +10122,128 @@ static int memcg_prio_reclaimd_run(void)
 	}
 
 	return ret;
+}
+
+extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
+				struct mem_cgroup *memcg,
+				 int priority);
+
+void reap_slab(struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *parent;
+
+	/*
+	 * Offline memcg's kmem_cache had been moved to its parent memcg.
+	 * so we must shrink its parent memcg.
+	 */
+	parent = parent_mem_cgroup(memcg);
+	if (parent) {
+		int nid;
+		unsigned long freed, count;
+
+		for_each_online_node(nid) {
+			freed = count = 0;
+
+			do {
+				count++;
+				freed = shrink_slab(GFP_KERNEL, nid, parent, 0);
+			} while (freed > 10 && count < 10);
+		}
+	}
+}
+
+static void clean_each_dying_memcg(struct mem_cgroup *memcg)
+{
+	unsigned long current_pages;
+	int drained = 0;
+	unsigned int jiff_dirty_exp = HZ * dirty_expire_interval / 100;
+
+	if ((memcg_page_state(memcg, NR_WRITEBACK) +
+			memcg_page_state(memcg, NR_FILE_DIRTY))
+			&& time_after(memcg->offline_times +
+					jiff_dirty_exp, jiffies)) {
+		return;
+	}
+
+	current_pages = page_counter_read(&memcg->memory);
+	while (current_pages) {
+		unsigned int ret;
+
+		ret = try_to_free_mem_cgroup_pages(memcg, current_pages,
+							GFP_KERNEL, true);
+		if (ret)
+			goto next;
+
+		reap_slab(memcg);
+
+		if (!drained) {
+			drain_all_stock(memcg);
+			drained = 1;
+		} else
+			break;
+next:
+		current_pages = page_counter_read(&memcg->memory);
+	}
+}
+
+static void clean_all_dying_memcgs(void)
+{
+	struct mem_cgroup *memcg;
+
+	for_each_mem_cgroup_tree(memcg, NULL) {
+		if (!mem_cgroup_online(memcg))
+			clean_each_dying_memcg(memcg);
+
+		cond_resched();
+	}
+}
+
+static int kclean_dying_memcgs(void *data)
+{
+	DEFINE_WAIT(wait);
+
+	if (waitqueue_active(&kclean_dying_memcg_wq)) /* .. */
+		wake_up_interruptible(&kclean_dying_memcg_wq);
+
+	for ( ; ; ) {
+		clean_all_dying_memcgs();
+		prepare_to_wait(&kclean_dying_memcg_wq,
+					&wait, TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule();
+		else {
+			finish_wait(&kclean_dying_memcg_wq, &wait);
+			break;
+		}
+		finish_wait(&kclean_dying_memcg_wq, &wait);
+	}
+
+	return 0;
+}
+
+int kclean_dying_memcg_run(void)
+{
+	int ret = 0;
+
+	if (kclean_dying_memcg)
+		return 0;
+
+	kclean_dying_memcg = kthread_run(kclean_dying_memcgs,
+					NULL, "kclean_dying_memcgs");
+	if (IS_ERR(kclean_dying_memcg)) {
+		pr_err("Failed to start kclean_dying_memcgs kthread.\n");
+		ret = PTR_ERR(kclean_dying_memcgs);
+		kclean_dying_memcg = NULL;
+	}
+
+	return ret;
+}
+
+void kclean_dying_memcg_stop(void)
+{
+	if (kclean_dying_memcg) {
+		kthread_stop(kclean_dying_memcg);
+		kclean_dying_memcg = NULL;
+	}
 }

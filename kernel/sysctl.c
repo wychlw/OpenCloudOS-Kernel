@@ -68,6 +68,7 @@
 
 #include <linux/uaccess.h>
 #include <asm/processor.h>
+#include <linux/memcontrol.h>
 #include <linux/rue.h>
 
 #ifdef CONFIG_X86
@@ -99,6 +100,7 @@ extern int sysctl_qos_mbuf_enable;
 extern int sysctl_vm_memory_qos;
 extern int sysctl_vm_qos_highest_reclaim_prio;
 extern unsigned int sysctl_vm_qos_prio_reclaim_ratio;
+extern unsigned int sysctl_clean_dying_memcg_async;
 extern void memory_qos_update(void);
 extern int memory_qos_prio_reclaim_ratio_update(void);
 static int vm_lowest_prio = CGROUP_PRIORITY_MAX;
@@ -2028,6 +2030,50 @@ int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
 
 	return 0;
 }
+
+static int clean_dying_memcg_async_handler(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (write && (sysctl_vm_memory_qos == 0 ||
+			 sysctl_clean_dying_memcg_threshold == 0))
+		return -EINVAL;
+
+	if (write && !ret) {
+		if (sysctl_clean_dying_memcg_async > 0) {
+			if (kclean_dying_memcg_run()) {
+				sysctl_clean_dying_memcg_async = 0;
+				return -EINVAL;
+			}
+		} else
+			kclean_dying_memcg_stop();
+	}
+
+	return ret;
+}
+
+static int clean_dying_memcg_threshold_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int old_val = sysctl_clean_dying_memcg_threshold;
+	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (write && (sysctl_vm_memory_qos == 0))
+		return -EINVAL;
+
+	if (write && !ret) {
+		if (old_val != sysctl_clean_dying_memcg_threshold) {
+			if (atomic_long_read(&dying_memcgs_count) >=
+					sysctl_clean_dying_memcg_threshold) {
+				atomic_long_set(&dying_memcgs_count, 0);
+				wakeup_kclean_dying_memcg();
+			}
+		}
+	}
+
+	return ret;
+}
 #endif
 
 #ifdef CONFIG_RPS
@@ -2971,6 +3017,22 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= memory_qos_sysctl_prio_reclaim_ratio_handler,
 		.extra1			= SYSCTL_ONE,
 		.extra2			= &twenty,
+	},
+	{
+		.procname		= "clean_dying_memcg_async",
+		.data			= &sysctl_clean_dying_memcg_async,
+		.maxlen			= sizeof(sysctl_clean_dying_memcg_async),
+		.mode			= 0644,
+		.proc_handler	= clean_dying_memcg_async_handler,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "clean_dying_memcg_threshold",
+		.data			= &sysctl_clean_dying_memcg_threshold,
+		.maxlen			= sizeof(sysctl_clean_dying_memcg_threshold),
+		.mode			= 0644,
+		.proc_handler	= clean_dying_memcg_threshold_handler,
 	},
 #endif
 	{ }

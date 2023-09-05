@@ -31,6 +31,12 @@ struct mm_struct;
 struct kmem_cache;
 struct oom_control;
 
+extern int kclean_dying_memcg_run(void);
+extern unsigned int sysctl_clean_dying_memcg_threshold;
+extern void kclean_dying_memcg_stop(void);
+extern void wakeup_kclean_dying_memcg(void);
+extern atomic_long_t dying_memcgs_count;
+
 /* Cgroup-specific page state, on top of universal node page state */
 enum memcg_stat_item {
 	MEMCG_SWAP = NR_VM_NODE_STAT_ITEMS,
@@ -205,6 +211,8 @@ struct memcg_cgwb_frn {
 	struct wb_completion done;	/* tracks in-flight foreign writebacks */
 };
 
+void drain_all_stock(struct mem_cgroup *root_memcg);
+
 /*
  * Bucket for arbitrarily byte-sized objects charged to a memory
  * cgroup. The bucket can be reparented in one piece when the cgroup
@@ -241,6 +249,7 @@ struct mem_cgroup {
 		struct page_counter memsw;	/* v1 only */
 	};
 
+	unsigned long offline_times;
 	struct page_counter pagecache;
 	u64 pagecache_reclaim_ratio;
 	u32 pagecache_max_ratio;
