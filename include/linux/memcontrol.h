@@ -37,6 +37,10 @@ enum memcg_stat_item {
 	MEMCG_KMEM,
 	MEMCG_ZSWAP_B,
 	MEMCG_ZSWAPPED,
+#ifdef CONFIG_MEMCG_ZRAM
+	MEMCG_ZRAM_B,
+	MEMCG_ZRAMED,
+#endif
 	MEMCG_NR_STAT,
 };
 
@@ -229,6 +233,11 @@ struct mem_cgroup {
 
 #if defined(CONFIG_MEMCG_KMEM) && defined(CONFIG_ZSWAP)
 	unsigned long zswap_max;
+#endif
+
+#ifdef CONFIG_MEMCG_ZRAM
+	unsigned long zram_max;
+	unsigned short zram_prio;
 #endif
 
 	unsigned long soft_limit;

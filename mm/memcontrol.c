@@ -87,7 +87,8 @@ EXPORT_PER_CPU_SYMBOL_GPL(int_active_memcg);
 static bool cgroup_memory_nosocket __ro_after_init;
 
 /* Kernel memory accounting disabled? */
-static bool cgroup_memory_nokmem __ro_after_init = IS_ENABLED(CONFIG_MEMCG_KMEM_DEFAULT_OFF);
+bool cgroup_memory_nokmem __ro_after_init = IS_ENABLED(CONFIG_MEMCG_KMEM_DEFAULT_OFF);
+EXPORT_SYMBOL(cgroup_memory_nokmem);
 
 /* BPF memory accounting disabled? */
 static bool cgroup_memory_nobpf __ro_after_init;
@@ -1528,6 +1529,10 @@ static const struct memory_stat memory_stats[] = {
 	{ "zswap",			MEMCG_ZSWAP_B			},
 	{ "zswapped",			MEMCG_ZSWAPPED			},
 #endif
+#ifdef CONFIG_MEMCG_ZRAM
+	{ "zram",			MEMCG_ZRAM_B },
+	{ "zrammed",			MEMCG_ZRAMED },
+#endif
 	{ "file_mapped",		NR_FILE_MAPPED			},
 	{ "file_dirty",			NR_FILE_DIRTY			},
 	{ "file_writeback",		NR_WRITEBACK			},
@@ -1563,6 +1568,7 @@ static int memcg_page_state_unit(int item)
 	switch (item) {
 	case MEMCG_PERCPU_B:
 	case MEMCG_ZSWAP_B:
+	case MEMCG_ZRAM_B:
 	case NR_SLAB_RECLAIMABLE_B:
 	case NR_SLAB_UNRECLAIMABLE_B:
 	case WORKINGSET_REFAULT_ANON:
@@ -3699,6 +3705,10 @@ static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 			global_node_page_state(NR_ANON_MAPPED);
 		if (swap)
 			val += total_swap_pages - get_nr_swap_pages();
+#ifdef CONFIG_MEMCG_ZRAM
+		else
+			val += memcg_page_state(memcg, MEMCG_ZRAM_B) / PAGE_SIZE;
+#endif
 	} else {
 		if (!swap)
 			val = page_counter_read(&memcg->memory);
@@ -5794,11 +5804,16 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 #if defined(CONFIG_MEMCG_KMEM) && defined(CONFIG_ZSWAP)
 	memcg->zswap_max = PAGE_COUNTER_MAX;
 #endif
+#ifdef CONFIG_MEMCG_ZRAM
+	memcg->zram_max = PAGE_COUNTER_MAX;
+#endif
 	page_counter_set_high(&memcg->swap, PAGE_COUNTER_MAX);
 	if (parent) {
 		WRITE_ONCE(memcg->swappiness, mem_cgroup_swappiness(parent));
 		WRITE_ONCE(memcg->oom_kill_disable, READ_ONCE(parent->oom_kill_disable));
-
+#ifdef CONFIG_MEMCG_ZRAM
+		memcg->zram_prio = parent->zram_prio;
+#endif
 		page_counter_init(&memcg->memory, &parent->memory);
 		page_counter_init(&memcg->swap, &parent->swap);
 		page_counter_init(&memcg->kmem, &parent->kmem);

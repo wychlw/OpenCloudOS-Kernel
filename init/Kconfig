@@ -969,6 +969,11 @@ config MEMCG_KMEM_DEFAULT_OFF
 
 	  If unsure, say N.
 
+config MEMCG_ZRAM
+	bool
+	depends on MEMCG && SWAP
+	default y
+
 config BLK_CGROUP
 	bool "IO controller"
 	depends on BLOCK
