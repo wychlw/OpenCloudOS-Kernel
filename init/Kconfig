@@ -958,6 +958,17 @@ config MEMCG_KMEM
 	depends on MEMCG
 	default y
 
+config MEMCG_KMEM_DEFAULT_OFF
+	bool "Disable kernel memory cgroup accounting by default"
+	depends on MEMCG_KMEM
+	help
+	  Disable kernel memory cgroup accounting by default, since it
+	  have extra overhead. User may override this at boot time
+	  kmem by passing cgroup.memory=nokmem or cgroup.memory=kmem
+	  to kernel cmdline.
+
+	  If unsure, say N.
+
 config BLK_CGROUP
 	bool "IO controller"
 	depends on BLOCK

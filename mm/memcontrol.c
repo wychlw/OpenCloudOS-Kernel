@@ -87,7 +87,7 @@ EXPORT_PER_CPU_SYMBOL_GPL(int_active_memcg);
 static bool cgroup_memory_nosocket __ro_after_init;
 
 /* Kernel memory accounting disabled? */
-static bool cgroup_memory_nokmem __ro_after_init;
+static bool cgroup_memory_nokmem __ro_after_init = IS_ENABLED(CONFIG_MEMCG_KMEM_DEFAULT_OFF);
 
 /* BPF memory accounting disabled? */
 static bool cgroup_memory_nobpf __ro_after_init;
@@ -7795,6 +7795,8 @@ static int __init cgroup_memory(char *s)
 			cgroup_memory_nokmem = true;
 		if (!strcmp(token, "nobpf"))
 			cgroup_memory_nobpf = true;
+		if (!strcmp(token, "kmem"))
+			cgroup_memory_nokmem = false;
 	}
 	return 1;
 }
