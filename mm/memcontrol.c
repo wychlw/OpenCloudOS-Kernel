@@ -6322,11 +6322,52 @@ static ssize_t memory_async_distance_factor_write(struct kernfs_open_file *of,
 	return nbytes;
 }
 
+extern unsigned int vm_memcg_latency_histogram;
+
+static int mem_cgroup_lat_seq_show(struct seq_file *m, void *v)
+{
+	u64 sum_lat;
+	int i, cpu;
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	if (!sysctl_vm_memory_qos) {
+		seq_puts(m, "vm.memory_qos is not enabled.\n");
+		return 0;
+	}
+
+	if (!vm_memcg_latency_histogram) {
+		seq_puts(m, "vm.memcg_latency_histogram is not enabled.\n");
+		return 0;
+	}
+
+	for (i = 0; i < MEM_LATENCY_MAX_SLOTS; i++) {
+		sum_lat = 0;
+
+		for_each_possible_cpu(cpu) {
+			sum_lat += *per_cpu_ptr(memcg->latency_histogram[i], cpu);
+			*per_cpu_ptr(memcg->latency_histogram[i], cpu) = 0;
+		}
+		if (i == 0)
+			seq_printf(m, "[%-20llu, %-20llu]ns : %llu.\n",
+				   (u64)0, (u64)1, sum_lat);
+		else
+			seq_printf(m, "[%-20llu, %-20llu]ns : %llu.\n",
+				   (u64)1 << (i - 1),
+				   (u64)1 << i, sum_lat);
+	}
+
+	return 0;
+}
+
 static int memory_oom_group_show(struct seq_file *m, void *v);
 static ssize_t memory_oom_group_write(struct kernfs_open_file *of,
 				      char *buf, size_t nbytes, loff_t off);
 
 static struct cftype mem_cgroup_legacy_files[] = {
+	{
+		.name = "latency_histogram",
+		.seq_show = mem_cgroup_lat_seq_show,
+	},
 	{
 		.name = "usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_USAGE),
@@ -6756,6 +6797,10 @@ static void free_mem_cgroup_per_node_info(struct mem_cgroup *memcg, int node)
 static void __mem_cgroup_free(struct mem_cgroup *memcg)
 {
 	int node;
+	int i;
+
+	for (i = 0; i < MEM_LATENCY_MAX_SLOTS; i++)
+		free_percpu(memcg->latency_histogram[i]);
 
 	for_each_node(node)
 		free_mem_cgroup_per_node_info(memcg, node);
@@ -6853,6 +6898,8 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 {
 	struct mem_cgroup *parent = mem_cgroup_from_css(parent_css);
 	struct mem_cgroup *memcg, *old_memcg;
+	long error = -ENOMEM;
+	int index;
 
 	old_memcg = set_active_memcg(parent);
 	memcg = mem_cgroup_alloc(parent);
@@ -6862,6 +6909,11 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 
 	page_counter_set_high(&memcg->memory, PAGE_COUNTER_MAX);
 	WRITE_ONCE(memcg->soft_limit, PAGE_COUNTER_MAX);
+	for (index = 0; index < MEM_LATENCY_MAX_SLOTS; index++) {
+		memcg->latency_histogram[index] = alloc_percpu(u64);
+		if (!memcg->latency_histogram[index])
+			goto fail;
+	}
 	memcg->pagecache_reclaim_ratio = DEFAULT_PAGE_RECLAIM_RATIO;
 	memcg->pagecache_max_ratio = PAGECACHE_MAX_RATIO_MAX;
 #if defined(CONFIG_MEMCG_KMEM) && defined(CONFIG_ZSWAP)
@@ -6924,6 +6976,10 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	INIT_LIST_HEAD(&memcg->prio_list_async);
 
 	return &memcg->css;
+fail:
+	mem_cgroup_id_remove(memcg);
+	mem_cgroup_free(memcg);
+	return ERR_PTR(error);
 }
 
 static int mem_cgroup_css_online(struct cgroup_subsys_state *css)

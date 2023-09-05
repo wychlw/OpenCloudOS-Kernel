@@ -22,6 +22,8 @@
 #include <linux/writeback.h>
 #include <linux/page-flags.h>
 
+#define MEM_LATENCY_MAX_SLOTS 64
+
 struct mem_cgroup;
 struct obj_cgroup;
 struct page;
@@ -340,6 +342,8 @@ struct mem_cgroup {
 #endif
 
 	CACHELINE_PADDING(_pad2_);
+
+	u64 __percpu *latency_histogram[MEM_LATENCY_MAX_SLOTS];
 
 	int reclaim_failed;
 	struct list_head	prio_list;
