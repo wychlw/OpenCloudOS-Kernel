@@ -343,6 +343,10 @@ struct mem_cgroup {
 
 	CACHELINE_PADDING(_pad2_);
 
+	u64 __percpu *mpa;
+	u64 __percpu *mbd;
+	u64 __percpu *apcl;
+	u64 __percpu *apd;
 	u64 __percpu *latency_histogram[MEM_LATENCY_MAX_SLOTS];
 
 	int reclaim_failed;
@@ -1869,6 +1873,7 @@ void reparent_shrinker_deferred(struct mem_cgroup *memcg);
 
 extern int sysctl_vm_memory_qos;
 extern unsigned int vm_pagecache_limit_retry_times;
+extern unsigned int vm_memcg_page_cache_hit;
 extern void
 mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
 

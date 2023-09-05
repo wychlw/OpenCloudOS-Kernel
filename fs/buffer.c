@@ -1185,6 +1185,22 @@ __getblk_slow(struct block_device *bdev, sector_t block,
  */
 void mark_buffer_dirty(struct buffer_head *bh)
 {
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 *page_acc;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_page_cache_hit) {
+		if (memcg) {
+			page_acc = get_cpu_ptr(memcg->mbd);
+			*page_acc = *page_acc + 1;
+			put_cpu_ptr(memcg->mbd);
+		}
+	}
+	rcu_read_unlock();
+#endif
+
 	WARN_ON_ONCE(!buffer_uptodate(bh));
 
 	trace_block_dirty_buffer(bh);

@@ -2616,6 +2616,7 @@ static struct ctl_table kern_table[] = {
 };
 
 unsigned int vm_memcg_latency_histogram;
+unsigned int vm_memcg_page_cache_hit;
 unsigned long vm_pagecache_system_usage;
 
 static struct ctl_table vm_table[] = {
@@ -2930,6 +2931,15 @@ static struct ctl_table vm_table[] = {
 		.procname	= "memcg_latency_histogram",
 		.data		= &vm_memcg_latency_histogram,
 		.maxlen		= sizeof(vm_memcg_latency_histogram),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "memcg_page_cache_hit",
+		.data		= &vm_memcg_page_cache_hit,
+		.maxlen		= sizeof(vm_memcg_page_cache_hit),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,

@@ -6359,6 +6359,53 @@ static int mem_cgroup_lat_seq_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int mem_cgroup_page_cache_hit_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	long long mpa = 0, mbd = 0, apcl = 0, apd = 0, total = 0, misses = 0, hits = 0;
+	int cpu;
+
+	if (!sysctl_vm_memory_qos) {
+		seq_puts(m, "vm.memory_qos is not enabled.\n");
+		return 0;
+	}
+
+	if (!vm_memcg_page_cache_hit) {
+		seq_puts(m, "vm.memcg_page_cache_hit is not enabled.\n");
+		return 0;
+	}
+
+	if (!memcg->mpa || !memcg->mbd || !memcg->apcl || !memcg->apd)
+		return 0;
+
+	for_each_possible_cpu(cpu) {
+		mpa += (long long)*per_cpu_ptr(memcg->mpa, cpu);
+		*per_cpu_ptr(memcg->mpa, cpu) = 0;
+		mbd += (long long)*per_cpu_ptr(memcg->mbd, cpu);
+		*per_cpu_ptr(memcg->mbd, cpu) = 0;
+		apcl += (long long)*per_cpu_ptr(memcg->apcl, cpu);
+		*per_cpu_ptr(memcg->apcl, cpu) = 0;
+		apd += (long long)*per_cpu_ptr(memcg->apd, cpu);
+		*per_cpu_ptr(memcg->apd, cpu) = 0;
+	}
+
+	total = mpa - mbd;
+	if (total < 0)
+		total = 0;
+	misses = apcl - apd;
+	if (misses < 0)
+		misses = 0;
+	hits = total - misses;
+	if (hits < 0) {
+		misses = total;
+		hits = 0;
+	}
+
+	seq_printf(m, "total: %llu, hits: %llu, misses: %llu.\n", total, hits, misses);
+
+	return 0;
+}
+
 static int memory_oom_group_show(struct seq_file *m, void *v);
 static ssize_t memory_oom_group_write(struct kernfs_open_file *of,
 				      char *buf, size_t nbytes, loff_t off);
@@ -6367,6 +6414,10 @@ static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "latency_histogram",
 		.seq_show = mem_cgroup_lat_seq_show,
+	},
+	{
+		.name = "page_cache_hit",
+		.seq_show = mem_cgroup_page_cache_hit_show,
 	},
 	{
 		.name = "usage_in_bytes",
@@ -6801,6 +6852,10 @@ static void __mem_cgroup_free(struct mem_cgroup *memcg)
 
 	for (i = 0; i < MEM_LATENCY_MAX_SLOTS; i++)
 		free_percpu(memcg->latency_histogram[i]);
+	free_percpu(memcg->mpa);
+	free_percpu(memcg->mbd);
+	free_percpu(memcg->apcl);
+	free_percpu(memcg->apd);
 
 	for_each_node(node)
 		free_mem_cgroup_per_node_info(memcg, node);
@@ -6909,6 +6964,27 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 
 	page_counter_set_high(&memcg->memory, PAGE_COUNTER_MAX);
 	WRITE_ONCE(memcg->soft_limit, PAGE_COUNTER_MAX);
+	memcg->mpa = alloc_percpu(u64);
+	if (!memcg->mpa)
+		goto fail;
+	memcg->mbd = alloc_percpu(u64);
+	if (!memcg->mbd) {
+		free_percpu(memcg->mpa);
+		goto fail;
+	}
+	memcg->apcl = alloc_percpu(u64);
+	if (!memcg->apcl) {
+		free_percpu(memcg->mpa);
+		free_percpu(memcg->mbd);
+		goto fail;
+	}
+	memcg->apd = alloc_percpu(u64);
+	if (!memcg->apd) {
+		free_percpu(memcg->mpa);
+		free_percpu(memcg->mbd);
+		free_percpu(memcg->apcl);
+		goto fail;
+	}
 	for (index = 0; index < MEM_LATENCY_MAX_SLOTS; index++) {
 		memcg->latency_histogram[index] = alloc_percpu(u64);
 		if (!memcg->latency_histogram[index])

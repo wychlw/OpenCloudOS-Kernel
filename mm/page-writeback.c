@@ -2707,6 +2707,21 @@ static void folio_account_dirtied(struct folio *folio,
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 	struct blkcg *blkcg = get_task_blkcg(current);
 #endif
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 *page_acc;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_page_cache_hit) {
+		if (memcg) {
+			page_acc = get_cpu_ptr(memcg->apd);
+			*page_acc = *page_acc + 1;
+			put_cpu_ptr(memcg->apd);
+		}
+	}
+	rcu_read_unlock();
+#endif
 
 	trace_writeback_dirty_folio(folio, mapping);
 

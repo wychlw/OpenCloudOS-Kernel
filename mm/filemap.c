@@ -945,6 +945,21 @@ int filemap_add_folio(struct address_space *mapping, struct folio *folio,
 {
 	void *shadow = NULL;
 	int ret;
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 *page_acc;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_page_cache_hit) {
+		if (memcg) {
+			page_acc = get_cpu_ptr(memcg->apcl);
+			*page_acc = *page_acc + 1;
+			put_cpu_ptr(memcg->apcl);
+		}
+	}
+	rcu_read_unlock();
+#endif
 
 	if (pagecache_limit_should_shrink())
 		shrink_page_cache(gfp, &folio->page);
