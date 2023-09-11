@@ -264,6 +264,19 @@ Requires(postun): kmod
 %description modules
 This package provides commonly used kernel modules for the %{?2:%{2}-}core kernel package.
 
+### Kernel removable media module package
+%package modules-removable-media
+Summary: %{rpm_vendor} Kernel removable modules to match the %{rpm_name}-core kernel
+Provides: installonlypkg(kernel-module-removable-media)
+Requires: %{rpm_name} = %{version}-%{release}
+AutoReq: no
+AutoProv: yes
+Requires(pre): kmod
+Requires(postun): kmod
+%description modules-removable-media
+This package provides drivers for removable media, e.g. USB disks and CD-ROM,
+for %{name} of version %{version}-%{release}.
+
 ### Kernel devel package
 %package devel
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
@@ -1060,7 +1073,13 @@ CollectKernelFile() {
 	# Rest of the modules stay in core package
 	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" non-core-modules >> modules.list || exit $?
 
+	# Do module splitting for removable-media-modules
+	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-removable-media >> modules-removable-media.list || exit $?
+
 	comm -23 core.list modules.list > core.list.tmp
+	mv core.list.tmp core.list
+
+	comm -23 core.list modules-removable-media.list > core.list.tmp
 	mv core.list.tmp core.list
 
 	popd
@@ -1230,6 +1249,13 @@ fi
 %postun modules
 depmod -a %{kernel_unamer}
 
+### Module package
+%post modules-removable-media
+depmod -a %{kernel_unamer}
+
+%postun modules-removable-media
+depmod -a %{kernel_unamer}
+
 ### Devel package
 %post devel
 if [ -f /etc/sysconfig/kernel ]; then
@@ -1286,6 +1312,8 @@ fi
 
 %files modules -f modules.list
 %defattr(-,root,root)
+
+%files modules-removable-media -f modules-removable-media.list
 
 %if %{with_keypkg}
 %files signing-keys -f signing-keys.list
