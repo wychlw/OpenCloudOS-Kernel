@@ -25,16 +25,29 @@ static bool rue_used(void)
 	return !!total;
 }
 
+static int check_net_patch_state(struct rue_ops *ops, bool state)
+{
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	if (state && !ops->net)
+		return -EINVAL;
+
+	if (!state)
+		sysctl_net_qos_enable = 0;
+#endif
+
+	return 0;
+}
+
 static int check_patch_state(struct rue_ops *ops)
 {
 	int ret = 0;
+	bool state = !!ops; /* true: patch, false: unpatch */
 
-	if (ops) {
-		/* check if patching */
-	} else {
-		/* check if unpatching */
-	}
-	return ret;
+	ret = check_net_patch_state(ops, state);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 int register_rue_ops(struct rue_ops *ops)

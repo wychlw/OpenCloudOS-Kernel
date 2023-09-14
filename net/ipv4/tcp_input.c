@@ -735,11 +735,12 @@ void tcp_rcv_space_adjust(struct sock *sk)
 	bool is_low = 0;
 	int scale = 0;
 
-	if (sysctl_net_qos_enable &&
-	    READ_ONCE(netcls_modfunc.is_low_prio) &&
-	    READ_ONCE(netcls_modfunc.cls_cgroup_factor)) {
-		is_low = netcls_modfunc.is_low_prio(sk);
-		scale = netcls_modfunc.cls_cgroup_factor(sk);
+	if (sysctl_net_qos_enable) {
+		is_low = RUE_CALL_TYPE(NET, is_low_prio, bool, sk);
+		scale = RUE_CALL_INT(NET, cls_cgroup_factor, sk);
+
+		if (unlikely(!scale))
+			scale = WND_DIVISOR;
 	}
 #endif
 

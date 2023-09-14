@@ -14,6 +14,7 @@
 #include <net/sock.h>
 #include <net/inet_sock.h>
 #include <net/gen_stats.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_CGROUP_NET_CLASSID
 
@@ -78,7 +79,7 @@ struct cgroup_cls_state {
 	unsigned long *whitelist_rports;
 };
 
-struct net_cls_module_function {
+struct rue_net_ops {
 	int (*read_rx_stat)(struct cgroup_subsys_state *css,
 			struct seq_file *sf);
 	int (*read_tx_stat)(struct cgroup_subsys_state *css,
@@ -114,43 +115,12 @@ struct net_cls_module_function {
 extern int sysctl_net_qos_enable;
 extern int rx_throttle_all_enabled;
 extern int tx_throttle_all_enabled;
-extern struct net_cls_module_function netcls_modfunc;
 extern struct dev_bw_config bw_config[];
 extern struct dev_limit_config limit_bw_config[];
 extern struct dev_bw_config online_max_config[];
 extern struct dev_limit_config online_min_config[];
 extern int netqos_notifier(struct notifier_block *this,
 			   unsigned long event, void *ptr);
-extern int p_read_rx_stat(struct cgroup_subsys_state *css,
-			struct seq_file *sf);
-extern int p_read_tx_stat(struct cgroup_subsys_state *css,
-			struct seq_file *sf);
-extern void p_dump_rx_tb(struct seq_file *m);
-extern void p_dump_tx_tb(struct seq_file *m);
-extern void p_dump_rx_bps_limit_tb(struct cgroup_subsys_state *css,
-				struct seq_file *sf);
-extern void p_dump_tx_bps_limit_tb(struct cgroup_subsys_state *css,
-				struct seq_file *sf);
-extern void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate);
-extern void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate);
-extern int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max, int all);
-extern int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all);
-extern int p_write_rx_online_bps_max(int ifindex, u64 max);
-extern int p_write_tx_online_bps_max(int ifindex, u64 max);
-extern int p_write_rx_online_bps_min(struct cgroup_cls_state *cs,
-				int ifindex, u64 rate);
-extern int p_write_tx_online_bps_min(struct cgroup_cls_state *cs,
-				int ifindex, u64 rate);
-extern int p_rx_online_list_del(struct cgroup_cls_state *cs);
-extern int p_tx_online_list_del(struct cgroup_cls_state *cs);
-extern int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
-				  struct cftype *cft, u64 value);
-extern u64 p_read_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
-				 struct cftype *cft);
-extern u32 p_cls_cgroup_adjust_wnd(struct sock *sk, u32 wnd,
-				 u32 mss, u16 wscale);
-extern int p_cls_cgroup_factor(const struct sock *sk);
-extern bool p_is_low_prio(struct sock *sk);
 
 static inline struct
 cgroup_cls_state *css_cls_state(struct cgroup_subsys_state *css)

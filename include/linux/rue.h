@@ -6,7 +6,13 @@
 #include <linux/percpu.h>
 #include <linux/mutex.h>
 
-struct rue_ops {};
+struct rue_ops {
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	struct rue_net_ops *net;
+#endif
+};
+
+extern int sysctl_net_qos_enable;
 
 extern bool rue_installed;
 extern struct rue_ops *rue_mod_ops;
@@ -15,6 +21,10 @@ extern struct mutex rue_mutex;
 
 int register_rue_ops(struct rue_ops *ops);
 int try_unregister_rue_ops(void);
+
+#ifdef CONFIG_CGROUP_NET_CLASSID
+#define RUE_NET_FUNC(ops, func) ops->net->func  /* RUE NET OPs */
+#endif
 
 #define RUE_FUNC(subsys, ops, func) RUE_##subsys##_FUNC(ops, func)
 

@@ -24,137 +24,9 @@ EXPORT_SYMBOL_GPL(rx_throttle_all_enabled);
 int tx_throttle_all_enabled;
 EXPORT_SYMBOL_GPL(tx_throttle_all_enabled);
 
-struct net_cls_module_function netcls_modfunc;
-EXPORT_SYMBOL_GPL(netcls_modfunc);
-
 /* the last one more for all_dev config */
 struct dev_bw_config bw_config[MAX_NIC_SUPPORT + 1];
 EXPORT_SYMBOL_GPL(bw_config);
-
-int p_read_rx_stat(struct cgroup_subsys_state *css, struct seq_file *sf)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_read_rx_stat);
-
-int p_read_tx_stat(struct cgroup_subsys_state *css, struct seq_file *sf)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_read_tx_stat);
-
-void p_dump_rx_tb(struct seq_file *m)
-{
-}
-EXPORT_SYMBOL_GPL(p_dump_rx_tb);
-
-void p_dump_tx_tb(struct seq_file *m)
-{
-}
-EXPORT_SYMBOL_GPL(p_dump_tx_tb);
-
-void
-p_dump_rx_bps_limit_tb(struct cgroup_subsys_state *css, struct seq_file *sf)
-{
-}
-EXPORT_SYMBOL_GPL(p_dump_rx_bps_limit_tb);
-
-void
-p_dump_tx_bps_limit_tb(struct cgroup_subsys_state *css, struct seq_file *sf)
-{
-}
-EXPORT_SYMBOL_GPL(p_dump_tx_bps_limit_tb);
-
-void p_cgroup_set_rx_limit(struct cls_token_bucket *tb, u64 rate)
-{
-}
-EXPORT_SYMBOL_GPL(p_cgroup_set_rx_limit);
-
-void p_cgroup_set_tx_limit(struct cls_token_bucket *tb, u64 rate)
-{
-}
-EXPORT_SYMBOL_GPL(p_cgroup_set_tx_limit);
-
-int p_write_rx_bps_minmax(int ifindex, u64 min, u64 max, int all)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_rx_bps_minmax);
-
-int p_write_tx_bps_minmax(int ifindex, u64 min, u64 max, int all)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_tx_bps_minmax);
-
-int p_write_rx_online_bps_max(int ifindex, u64 max)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_rx_online_bps_max);
-
-int p_write_tx_online_bps_max(int ifindex, u64 max)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_tx_online_bps_max);
-
-int
-p_write_rx_online_bps_min(struct cgroup_cls_state *cs, int ifindex, u64 rate)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_rx_online_bps_min);
-
-int
-p_write_tx_online_bps_min(struct cgroup_cls_state *cs, int ifindex, u64 rate)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_tx_online_bps_min);
-
-int p_rx_online_list_del(struct cgroup_cls_state *cs)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_rx_online_list_del);
-
-int p_tx_online_list_del(struct cgroup_cls_state *cs)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_tx_online_list_del);
-
-int p_write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
-			     struct cftype *cft, u64 value)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_write_rx_min_rwnd_segs);
-
-u64 p_read_rx_min_rwnd_segs(struct cgroup_subsys_state *css, struct cftype *cft)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(p_read_rx_min_rwnd_segs);
-
-u32 p_cls_cgroup_adjust_wnd(struct sock *sk, u32 wnd, u32 mss, u16 wscale)
-{
-	return wnd;
-}
-EXPORT_SYMBOL_GPL(p_cls_cgroup_adjust_wnd);
-
-int p_cls_cgroup_factor(const struct sock *sk)
-{
-	return WND_DIVISOR;
-}
-EXPORT_SYMBOL_GPL(p_cls_cgroup_factor);
-
-bool p_is_low_prio(struct sock *sk)
-{
-	return false;
-}
-EXPORT_SYMBOL_GPL(p_is_low_prio);
 
 struct dev_limit_config limit_bw_config[MAX_NIC_SUPPORT];
 EXPORT_SYMBOL_GPL(limit_bw_config);
@@ -260,11 +132,9 @@ static void cgrp_css_offline(struct cgroup_subsys_state *css)
 
 	cls_cgroup_stats_destroy(&cs->rx_stats);
 	cls_cgroup_stats_destroy(&cs->tx_stats);
-	if (READ_ONCE(netcls_modfunc.rx_online_list_del) &&
-	    READ_ONCE(netcls_modfunc.tx_online_list_del)) {
-		netcls_modfunc.rx_online_list_del(cs);
-		netcls_modfunc.tx_online_list_del(cs);
-	}
+
+	RUE_CALL_INT(NET, rx_online_list_del, cs);
+	RUE_CALL_INT(NET, tx_online_list_del, cs);
 }
 
 static void cgrp_css_free(struct cgroup_subsys_state *css)
@@ -403,11 +273,11 @@ static ssize_t write_bps_limit(struct kernfs_open_file *of,
 	if (!rx_rate)
 		cs->rx_scale = WND_DIVISOR;
 
-	if (rx_rate != -1 && READ_ONCE(netcls_modfunc.cgroup_set_rx_limit))
-		netcls_modfunc.cgroup_set_rx_limit(&cs->rx_bucket, rx_rate);
+	if (rx_rate != -1)
+		RUE_CALL_VOID(NET, cgroup_set_rx_limit, &cs->rx_bucket, rx_rate);
 
-	if (tx_rate != -1 && READ_ONCE(netcls_modfunc.cgroup_set_tx_limit))
-		netcls_modfunc.cgroup_set_tx_limit(&cs->tx_bucket, tx_rate);
+	if (tx_rate != -1)
+		RUE_CALL_VOID(NET, cgroup_set_tx_limit, &cs->tx_bucket, tx_rate);
 	ret = nbytes;
 
 out_finish:
@@ -508,13 +378,13 @@ static ssize_t write_bps_dev_limit(struct kernfs_open_file *of,
 	if (!rx_rate)
 		cs->rx_dev_scale[ifindex] = WND_DIVISOR;
 
-	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.cgroup_set_rx_limit))
-		netcls_modfunc.cgroup_set_rx_limit(&cs->rx_dev_bucket[ifindex],
-						   rx_rate);
+	if (rx_rate > -1)
+		RUE_CALL_VOID(NET, cgroup_set_rx_limit, &cs->rx_dev_bucket[ifindex],
+			      rx_rate);
 
-	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.cgroup_set_tx_limit))
-		netcls_modfunc.cgroup_set_tx_limit(&cs->tx_dev_bucket[ifindex],
-						   tx_rate);
+	if (tx_rate > -1)
+		RUE_CALL_VOID(NET, cgroup_set_tx_limit, &cs->tx_dev_bucket[ifindex],
+			      tx_rate);
 	ret = nbytes;
 
 out_finish:
@@ -747,15 +617,15 @@ static ssize_t write_dev_online_bps_max(struct kernfs_open_file *of,
 	online_max_config[ifindex].name = name;
 	strncpy(online_max_config[ifindex].name, dev_name, strlen(dev_name));
 
-	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.write_rx_online_bps_max)) {
+	if (rx_rate > -1) {
 		online_max_config[ifindex].rx_bps_max = rx_rate;
-		netcls_modfunc.write_rx_online_bps_max(ifindex,
-			online_max_config[ifindex].rx_bps_max);
+		RUE_CALL_INT(NET, write_rx_online_bps_max, ifindex,
+			     online_max_config[ifindex].rx_bps_max);
 	}
-	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.write_tx_online_bps_max)) {
+	if (tx_rate > -1) {
 		online_max_config[ifindex].tx_bps_max = tx_rate;
-		netcls_modfunc.write_tx_online_bps_max(ifindex,
-			online_max_config[ifindex].tx_bps_max);
+		RUE_CALL_INT(NET, write_tx_online_bps_max, ifindex,
+			     online_max_config[ifindex].tx_bps_max);
 	}
 	ret = nbytes;
 
@@ -858,10 +728,10 @@ static ssize_t write_dev_online_bps_min(struct kernfs_open_file *of,
 	online_min_config[ifindex].name = name;
 	strncpy(online_min_config[ifindex].name, dev_name, strlen(dev_name));
 
-	if (rx_rate > -1 && READ_ONCE(netcls_modfunc.write_rx_online_bps_min))
-		netcls_modfunc.write_rx_online_bps_min(cs, ifindex, rx_rate);
-	if (tx_rate > -1 && READ_ONCE(netcls_modfunc.write_tx_online_bps_min))
-		netcls_modfunc.write_tx_online_bps_min(cs, ifindex, tx_rate);
+	if (rx_rate > -1)
+		RUE_CALL_INT(NET, write_rx_online_bps_min, cs, ifindex, rx_rate);
+	if (tx_rate > -1)
+		RUE_CALL_INT(NET, write_tx_online_bps_min, cs, ifindex, tx_rate);
 	ret = nbytes;
 
 out_finish:
@@ -967,24 +837,22 @@ static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 		bw_config[ifindex].name = name;
 		strncpy(bw_config[ifindex].name, dev_name, strlen(dev_name));
 
-		if (v[0] > -1 && v[1] > -1 &&
-		    READ_ONCE(netcls_modfunc.write_rx_bps_minmax)) {
+		if (v[0] > -1 && v[1] > -1) {
 			bw_config[ifindex].rx_bps_min = v[0];
 			bw_config[ifindex].rx_bps_max = v[1];
-			netcls_modfunc.write_rx_bps_minmax(ifindex,
-					bw_config[ifindex].rx_bps_min,
-					bw_config[ifindex].rx_bps_max,
-					set_all_dev);
+			RUE_CALL_INT(NET, write_rx_bps_minmax, ifindex,
+				     bw_config[ifindex].rx_bps_min,
+				     bw_config[ifindex].rx_bps_max,
+				     set_all_dev);
 		}
 
-		if (v[2] > -1 && v[3] > -1 &&
-		    READ_ONCE(netcls_modfunc.write_tx_bps_minmax)) {
+		if (v[2] > -1 && v[3] > -1) {
 			bw_config[ifindex].tx_bps_min = v[2];
 			bw_config[ifindex].tx_bps_max = v[3];
-			netcls_modfunc.write_tx_bps_minmax(ifindex,
-					bw_config[ifindex].tx_bps_min,
-					bw_config[ifindex].tx_bps_max,
-					set_all_dev);
+			RUE_CALL_INT(NET, write_tx_bps_minmax, ifindex,
+				     bw_config[ifindex].tx_bps_min,
+				     bw_config[ifindex].tx_bps_max,
+				     set_all_dev);
 		}
 
 		if (set_all_dev) {
@@ -1055,42 +923,33 @@ EXPORT_SYMBOL_GPL(netqos_notifier);
 static int write_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 				  struct cftype *cft, u64 value)
 {
-	if (READ_ONCE(netcls_modfunc.write_rx_min_rwnd_segs))
-		return netcls_modfunc.write_rx_min_rwnd_segs(css, cft, value);
-	return 0;
+	return RUE_CALL_INT(NET, write_rx_min_rwnd_segs, css, cft, value);
 }
 
 static u64 read_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 				 struct cftype *cft)
 {
-	if (READ_ONCE(netcls_modfunc.read_rx_min_rwnd_segs))
-		return netcls_modfunc.read_rx_min_rwnd_segs(css, cft);
-	return 0;
+	return RUE_CALL_TYPE(NET, read_rx_min_rwnd_segs, u64, css, cft);
 }
 
 int read_class_stat(struct seq_file *sf, void *v)
 {
 	struct cgroup_subsys_state *css = seq_css(sf);
 
-	if (READ_ONCE(netcls_modfunc.read_rx_stat) &&
-	    READ_ONCE(netcls_modfunc.read_tx_stat)) {
-		netcls_modfunc.read_rx_stat(css, sf);
-		netcls_modfunc.read_tx_stat(css, sf);
-	}
+	RUE_CALL_INT(NET, read_rx_stat, css, sf);
+	RUE_CALL_INT(NET, read_tx_stat, css, sf);
 	return 0;
 }
 
 int rx_dump(struct seq_file *sf, void *v)
 {
-	if (READ_ONCE(netcls_modfunc.dump_rx_tb))
-		netcls_modfunc.dump_rx_tb(sf);
+	RUE_CALL_VOID(NET, dump_rx_tb, sf);
 	return 0;
 }
 
 int tx_dump(struct seq_file *sf, void *v)
 {
-	if (READ_ONCE(netcls_modfunc.dump_tx_tb))
-		netcls_modfunc.dump_tx_tb(sf);
+	RUE_CALL_VOID(NET, dump_tx_tb, sf);
 	return 0;
 }
 
@@ -1098,11 +957,8 @@ int bps_limit_dump(struct seq_file *sf, void *v)
 {
 	struct cgroup_subsys_state *css = seq_css(sf);
 
-	if (READ_ONCE(netcls_modfunc.dump_rx_bps_limit_tb) &&
-	    READ_ONCE(netcls_modfunc.dump_tx_bps_limit_tb)) {
-		netcls_modfunc.dump_rx_bps_limit_tb(css, sf);
-		netcls_modfunc.dump_tx_bps_limit_tb(css, sf);
-	}
+	RUE_CALL_VOID(NET, dump_rx_bps_limit_tb, css, sf);
+	RUE_CALL_VOID(NET, dump_tx_bps_limit_tb, css, sf);
 	return 0;
 }
 
