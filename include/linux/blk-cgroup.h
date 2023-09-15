@@ -410,6 +410,9 @@ struct rue_io_module_ops {
 	unsigned int (*calc_readwrite_iops_limit)(struct throtl_data *td, struct throtl_grp *tg,
 			struct blkcg_gq *blkg, int rw, unsigned int ret);
 	int (*new_dynamic_ratio)(struct throtl_grp *tg);
+	bool (*throtl_info_scale_up)(struct wbt_throtl_info *ti, bool force_max);
+	bool (*throtl_info_scale_down)(struct wbt_throtl_info *ti, bool hard_throttle);
+	void (*throtl_info_calc_limit)(struct wbt_throtl_info *ti);
 
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);

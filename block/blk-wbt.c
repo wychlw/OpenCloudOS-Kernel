@@ -24,14 +24,44 @@
 #include <linux/slab.h>
 #include <linux/backing-dev.h>
 #include <linux/swap.h>
+#include <linux/blk-mq.h>
 
 #include "blk-stat.h"
 #include "blk-wbt.h"
 #include "blk-rq-qos.h"
 #include "elevator.h"
+#include "blk-cgroup.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/wbt.h>
+
+#ifdef CONFIG_BLK_CGROUP
+#include <linux/blk-cgroup.h>
+#include <linux/rue.h>
+
+/*per device per cgroup struct*/
+struct wbt_grp {
+	struct blkg_policy_data pd;
+	struct wbt_throtl_info throtl_info;
+};
+
+static inline struct wbt_grp *pd_to_wg(struct blkg_policy_data *pd)
+{
+	return pd ? container_of(pd, struct wbt_grp, pd) : NULL;
+}
+
+static struct blkcg_policy blkcg_policy_wbt;
+
+static inline struct wbt_grp *blkg_to_wg(struct blkcg_gq *blkg)
+{
+	return pd_to_wg(blkg_to_pd(blkg, &blkcg_policy_wbt));
+}
+
+static inline struct blkcg_gq *wg_to_blkg(struct wbt_grp *wg)
+{
+	return pd_to_blkg(&wg->pd);
+}
+#endif
 
 enum wbt_flags {
 	WBT_TRACKED		= 1,	/* write, tracked for throttling */
@@ -39,14 +69,13 @@ enum wbt_flags {
 	WBT_KSWAPD		= 4,	/* write, from kswapd */
 	WBT_DISCARD		= 8,	/* discard */
 
+#ifndef CONFIG_BLK_CGROUP
 	WBT_NR_BITS		= 4,	/* number of bits */
-};
+#else
+	WBT_CLASS_TRACKED = 16, /* bio tracked wbt class */
 
-enum {
-	WBT_RWQ_BG		= 0,
-	WBT_RWQ_KSWAPD,
-	WBT_RWQ_DISCARD,
-	WBT_NUM_RWQ,
+	WBT_NR_BITS		= 5,	/* number of bits */
+#endif
 };
 
 /*
@@ -60,6 +89,26 @@ enum {
 	WBT_STATE_OFF_DEFAULT	= 3,	/* off by default */
 	WBT_STATE_OFF_MANUAL	= 4,	/* off manually by sysfs */
 };
+
+#ifdef CONFIG_BLK_CGROUP
+#define WBT_CLASS_NR 3
+#define WBT_CLASS_BITS 2
+#define WBT_CLASS_OFFSET WBT_NR_BITS
+#define WBT_CLASS_MASK (((1 << WBT_CLASS_BITS) - 1) << WBT_CLASS_OFFSET)
+static inline enum wbt_flags bio_flags_to_wbt_class(enum wbt_flags wbt_acct)
+{
+	return (wbt_acct & WBT_CLASS_MASK) >> WBT_CLASS_OFFSET;
+}
+
+static inline void bio_flags_set_wbt_class(enum wbt_flags *wbt_acct, u16 wbt_class)
+{
+	enum wbt_flags tmp = 0;
+
+	tmp = (*wbt_acct) & (~WBT_CLASS_MASK);
+	tmp |= wbt_class << WBT_CLASS_OFFSET;
+	*wbt_acct = tmp;
+}
+#endif
 
 struct rq_wb {
 	/*
@@ -92,6 +141,11 @@ struct rq_wb {
 	struct rq_qos rqos;
 	struct rq_wait rq_wait[WBT_NUM_RWQ];
 	struct rq_depth rq_depth;
+
+#ifdef CONFIG_BLK_CGROUP
+	struct timer_list wbt_class_timer; /*cooridnate all wbt classes*/
+	struct wbt_throtl_info class_throtl_infos[WBT_CLASS_NR];
+#endif
 };
 
 static inline struct rq_wb *RQWB(struct rq_qos *rqos)
@@ -564,6 +618,9 @@ struct wbt_wait_data {
 	struct rq_wb *rwb;
 	enum wbt_flags wb_acct;
 	blk_opf_t opf;
+#ifdef CONFIG_BLK_CGROUP
+	struct wbt_throtl_info *ti;
+#endif
 };
 
 static bool wbt_inflight_cb(struct rq_wait *rqw, void *private_data)
@@ -613,6 +670,57 @@ static inline bool wbt_should_throttle(struct bio *bio)
 	}
 }
 
+#ifdef CONFIG_BLK_CGROUP
+static inline struct wbt_grp *bio_to_wg(struct bio *bio)
+{
+	return blkg_to_wg(bio->bi_blkg);
+}
+
+static inline u16 bio_to_cgprio(struct bio *bio)
+{
+	struct blkcg_gq *blkg = bio->bi_blkg;
+	struct blkcg *blkcg = blkg->blkcg;
+
+	return cgroup_priority(&blkcg->css);
+}
+
+static u16 cgprio_to_wbt_class(u16 cgprio)
+{
+	static int cgprio_wbt_class_map[CGROUP_PRIORITY_MAX] = {
+		[0] = 0,
+		[1 ... CGROUP_PRIORITY_MAX - 2] = 1,
+		[CGROUP_PRIORITY_MAX - 1] = 2,
+	};
+	if (cgprio < ARRAY_SIZE(cgprio_wbt_class_map))
+		return cgprio_wbt_class_map[cgprio];
+	return 0;
+}
+
+static inline u16 bio_to_wbt_class(struct bio *bio)
+{
+	return cgprio_to_wbt_class(bio_to_cgprio(bio));
+}
+
+static enum wbt_flags bio_to_wbt_class_flags(struct bio *bio)
+{
+	enum wbt_flags flags = 0;
+	u16 wbt_class = bio_to_wbt_class(bio);
+
+	if (bio_op(bio) == REQ_OP_READ) {
+		flags = WBT_READ;
+	} else if (wbt_should_throttle(bio)) {
+		if (current_is_kswapd())
+			flags |= WBT_KSWAPD;
+		if (bio_op(bio) == REQ_OP_DISCARD)
+			flags |= WBT_DISCARD;
+		flags |= WBT_CLASS_TRACKED;
+	}
+	bio_flags_set_wbt_class(&flags, wbt_class);
+
+	return flags;
+}
+#endif
+
 static enum wbt_flags bio_to_wbt_flags(struct rq_wb *rwb, struct bio *bio)
 {
 	enum wbt_flags flags = 0;
@@ -639,6 +747,314 @@ static void wbt_cleanup(struct rq_qos *rqos, struct bio *bio)
 	__wbt_done(rqos, flags);
 }
 
+#ifdef CONFIG_BLK_CGROUP
+static int throtl_info_alloc(struct wbt_throtl_info *ti, gfp_t gfp_mask)
+{
+	ti->read_lat_stats = alloc_percpu_gfp(struct blk_rq_stat, gfp_mask);
+	if (!ti->read_lat_stats)
+		return -1;
+	return 0;
+}
+
+static void throtl_info_free(struct wbt_throtl_info *ti)
+{
+	if (ti->read_lat_stats) {
+		free_percpu(ti->read_lat_stats);
+		ti->read_lat_stats = NULL;
+	}
+}
+
+static void throtl_info_init(struct wbt_throtl_info *ti,
+			     struct request_queue *q)
+{
+	struct blk_rq_stat *stat;
+	int j;
+	int cpu;
+
+	ti->max_depth = min_t(unsigned int, RWB_DEF_DEPTH, blk_queue_depth(q));
+	ti->min_depth = 1;
+	ti->current_depth = ti->max_depth;
+	ti->scale_up_percent = 50;
+	ti->scale_down_percent = 50;
+
+	for_each_possible_cpu(cpu) {
+		stat = per_cpu_ptr(ti->read_lat_stats, cpu);
+		blk_rq_stat_init(stat);
+	}
+
+	for (j = 0; j < WBT_NUM_RWQ; j++)
+		rq_wait_init(&ti->rq_wait[j]);
+
+	/*calc normal and background depth*/
+	RUE_CALL_VOID(IO, throtl_info_calc_limit, ti);
+}
+
+static inline struct wbt_throtl_info *rwb_to_wbt_class_info(struct rq_wb *rwb,
+							    u16 wbt_class)
+{
+	if (wbt_class < WBT_CLASS_NR)
+		return &rwb->class_throtl_infos[wbt_class];
+
+	pr_err("%s: Failed to find wbt_throtl_info with wbt_class %d\n",
+			__func__, wbt_class);
+	return NULL;
+}
+
+static int wbt_flags_to_counter_idx(enum wbt_flags flags)
+{
+	int i;
+
+	if (flags & WBT_KSWAPD)
+		i = WBT_RWQ_KSWAPD;
+	else if (flags & WBT_DISCARD)
+		i = WBT_RWQ_DISCARD;
+	else
+		i = WBT_RWQ_BG;
+
+	return i;
+}
+
+static inline struct wbt_throtl_info *bio_to_wbt_class_info(struct rq_wb *rwb,
+							    struct bio *bio)
+{
+	u16 wbt_class = cgprio_to_wbt_class(bio_to_cgprio(bio));
+
+	return rwb_to_wbt_class_info(rwb, wbt_class);
+}
+
+static bool throtl_info_enabled(struct wbt_throtl_info *ti)
+{
+	return rue_io_enabled() && ti->wb_normal != 0;
+}
+
+static inline void throtl_info_wake_all(struct wbt_throtl_info *ti)
+{
+	int i;
+
+	for (i = 0; i < WBT_NUM_RWQ; i++) {
+		struct rq_wait *rqw = &ti->rq_wait[i];
+
+		if (wq_has_sleeper(&rqw->wait))
+			wake_up_all(&rqw->wait);
+	}
+}
+
+static inline struct rq_wait *
+throtl_info_get_rq_wait(struct wbt_throtl_info *ti, enum wbt_flags wb_acct)
+{
+	if (wb_acct & WBT_KSWAPD)
+		return &ti->rq_wait[WBT_RWQ_KSWAPD];
+	else if (wb_acct & WBT_DISCARD)
+		return &ti->rq_wait[WBT_RWQ_DISCARD];
+
+	return &ti->rq_wait[WBT_RWQ_BG];
+}
+
+static int throtl_info_inflight(struct wbt_throtl_info *ti)
+{
+	unsigned int i, ret = 0;
+
+	for (i = 0; i < WBT_NUM_RWQ; i++)
+		ret += atomic_read(&ti->rq_wait[i].inflight);
+
+	return ret;
+}
+
+static inline unsigned int throtl_info_get_limit(struct wbt_throtl_info *ti,
+						 unsigned long rw)
+{
+	unsigned int limit;
+
+	if (!throtl_info_enabled(ti))
+		return UINT_MAX;
+	if ((rw & REQ_OP_MASK) == REQ_OP_DISCARD)
+		return ti->wb_background;
+	if (rw & REQ_HIPRIO || current_is_kswapd())
+		limit = ti->max_depth;
+	else if (rw & REQ_BACKGROUND)
+		limit = ti->wb_background;
+	else
+		limit = ti->wb_normal;
+
+	return limit;
+}
+
+static void throtl_info_rqw_done(struct rq_wb *rwb, struct wbt_throtl_info *ti,
+				 struct rq_wait *rqw, enum wbt_flags wbt_acct)
+{
+	int inflight, limit;
+
+	if (!(wbt_acct & WBT_CLASS_TRACKED))
+		return;
+
+	inflight = atomic_dec_return(&rqw->inflight);
+
+	if (!throtl_info_enabled(ti)) {
+		throtl_info_wake_all(ti);
+		return;
+	}
+
+	if (wbt_acct & WBT_DISCARD)
+		limit = ti->wb_background;
+	else
+		limit = ti->wb_normal;
+
+	/*
+	 * Don't wake anyone up if we are above the normal limit.
+	 */
+	if (inflight && inflight >= limit)
+		return;
+
+	if (wq_has_sleeper(&rqw->wait)) {
+		int diff = limit - inflight;
+
+		if (!inflight || diff >= ti->wb_background / 2)
+			wake_up_nr(&rqw->wait, diff);
+	}
+}
+
+static void wbt_class_timer_fn(struct timer_list *t)
+{
+	struct rq_wb *rwb = from_timer(rwb, t, wbt_class_timer);
+	struct wbt_throtl_info *ti;
+	u64 rd_expired_cnt;
+	int highest_class = WBT_CLASS_NR;
+	int i;
+
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		rd_expired_cnt = atomic64_read(&ti->read_expired_cnt);
+		atomic64_set(&ti->read_expired_cnt, 0);
+
+		if (rd_expired_cnt && highest_class == WBT_CLASS_NR)
+			highest_class = i;
+	}
+
+	if (highest_class == WBT_CLASS_NR)
+		goto depth_scale_up;
+
+	/*expired read did happen!!! throttle from the lowest class*/
+	for (i = WBT_CLASS_NR - 1; i >= highest_class; i--) {
+		struct wbt_throtl_info *throtl_ti =
+			rwb_to_wbt_class_info(rwb, i);
+
+		if (!throtl_info_enabled(throtl_ti))
+			continue;
+
+		/*skip if can't be scaled down*/
+		if (!RUE_CALL_TYPE(IO, throtl_info_scale_down, bool, throtl_ti, true))
+			continue;
+
+		/*current_depth changed, recal wb_normal and wb_background */
+		RUE_CALL_VOID(IO, throtl_info_calc_limit, throtl_ti);
+
+		if (throtl_info_inflight(throtl_ti) >
+		    throtl_ti->wb_background) {
+			/*
+			 * we did throttle some buffer write,
+			 * go and observe the effect
+			 */
+			break;
+		}
+	}
+	goto out;
+
+depth_scale_up:
+	/*amazing!!! everything goes fine, try to scale up queue depth*/
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		struct wbt_throtl_info *ti = rwb_to_wbt_class_info(rwb, i);
+
+		if (ti->current_depth < ti->max_depth) {
+			if (RUE_CALL_TYPE(IO, throtl_info_scale_up, bool, ti, false)) {
+				RUE_CALL_VOID(IO, throtl_info_calc_limit, ti);
+				throtl_info_wake_all(ti);
+				goto out;
+			}
+		}
+	}
+
+out:
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		if (throtl_info_inflight(ti) ||
+		    ti->current_depth < ti->max_depth) {
+			mod_timer(t, jiffies + nsecs_to_jiffies(rwb->win_nsec));
+			break;
+		}
+	}
+}
+
+static void wbt_class_account_bio_begin(struct rq_wb *rwb, struct bio *bio)
+{
+	int i;
+	enum wbt_flags flags;
+	struct wbt_throtl_info *ti = bio_to_wbt_class_info(rwb, bio);
+
+	flags = bio_to_wbt_class_flags(bio);
+	if (bio_op(bio) == REQ_OP_READ)
+		atomic64_inc(&ti->read_cnt);
+
+	if (bio_op(bio) == REQ_OP_WRITE &&
+	    (bio->bi_opf & (REQ_SYNC | REQ_IDLE)) == (REQ_SYNC | REQ_IDLE))
+		atomic64_inc(&ti->direct_write_cnt);
+
+	if (bio_op(bio) == REQ_OP_WRITE && (bio->bi_opf & REQ_SYNC) &&
+	    !(bio->bi_opf & REQ_IDLE))
+		atomic64_inc(&ti->wr_sync_cnt);
+
+	if (flags & WBT_CLASS_TRACKED) {
+		i = wbt_flags_to_counter_idx(flags);
+		atomic64_inc(&ti->tracked_cnt[i]);
+	}
+}
+
+static bool wbt_class_inflight_cb(struct rq_wait *rqw, void *private_data)
+{
+	struct wbt_wait_data *data = private_data;
+
+	return rq_wait_inc_below(rqw,
+				 throtl_info_get_limit(data->ti, data->opf));
+}
+
+static void wbt_class_cleanup_cb(struct rq_wait *rqw, void *private_data)
+{
+	struct wbt_wait_data *data = private_data;
+
+	throtl_info_rqw_done(data->rwb, data->ti, rqw, data->wb_acct);
+}
+
+static void wbt_class_wait(struct rq_wb *rwb, struct bio *bio)
+{
+	u16 wbt_class = bio_to_wbt_class(bio);
+	struct wbt_throtl_info *ti = rwb_to_wbt_class_info(rwb, wbt_class);
+	enum wbt_flags flags = bio_to_wbt_class_flags(bio);
+	struct rq_wait *rqw;
+	struct wbt_wait_data data;
+
+	if (!throtl_info_enabled(ti))
+		return;
+
+	wbt_class_account_bio_begin(rwb, bio);
+
+	/* bi_wbt_acct initialized in bio_init() as 0 */
+	bio->bi_wbt_acct = flags;
+
+	if (!(flags & WBT_CLASS_TRACKED))
+		return;
+
+	rqw = throtl_info_get_rq_wait(ti, flags);
+
+	data.rwb = rwb;
+	data.wb_acct = flags;
+	data.opf = bio->bi_opf;
+	data.ti = ti;
+	rq_qos_wait(rqw, &data, wbt_class_inflight_cb, wbt_class_cleanup_cb);
+	if (!timer_pending(&rwb->wbt_class_timer))
+		mod_timer(&rwb->wbt_class_timer,
+			  jiffies + nsecs_to_jiffies(rwb->win_nsec));
+}
+#endif
+
 /*
  * May sleep, if we have exceeded the writeback limits. Caller can pass
  * in an irq held spinlock, if it holds one when calling this function.
@@ -649,6 +1065,9 @@ static void wbt_wait(struct rq_qos *rqos, struct bio *bio)
 	struct rq_wb *rwb = RQWB(rqos);
 	enum wbt_flags flags;
 
+#ifdef CONFIG_BLK_CGROUP
+	wbt_class_wait(rwb, bio);
+#endif
 	flags = bio_to_wbt_flags(rwb, bio);
 	if (!(flags & WBT_TRACKED)) {
 		if (flags & WBT_READ)
@@ -705,6 +1124,84 @@ void wbt_set_write_cache(struct request_queue *q, bool write_cache_on)
 	if (rqos)
 		RQWB(rqos)->wc = write_cache_on;
 }
+
+#ifdef CONFIG_BLK_CGROUP
+static u64 bio_latency_nsec(struct bio *bio)
+{
+	u64 start = bio_issue_time(&bio->bi_issue);
+	u64 now = ktime_get_ns();
+	u64 latency_ns;
+
+	now = __bio_issue_time(now);
+	if (now <= start)
+		return 0;
+	latency_ns = now - start;
+	return latency_ns;
+}
+
+static void wbt_class_account_bio_end(struct rq_wb *rwb, struct bio *bio)
+{
+	int i;
+	enum wbt_flags flags = bio->bi_wbt_acct;
+	u16 wbt_class = bio_flags_to_wbt_class(flags);
+	struct wbt_throtl_info *ti = rwb_to_wbt_class_info(rwb, wbt_class);
+	struct wbt_grp *wg = bio_to_wg(bio);
+	u64 latency_ns;
+	struct blk_rq_stat *stat;
+
+	if (flags & WBT_CLASS_TRACKED) {
+		i = wbt_flags_to_counter_idx(flags);
+		atomic64_inc(&ti->finished_cnt[i]);
+	}
+
+	if (throtl_info_enabled(ti) && (flags & WBT_READ)) {
+		latency_ns = bio_latency_nsec(bio);
+		ti->recent_rd_latency_us = (latency_ns / 1000);
+		if (latency_ns > ti->min_lat_nsec)
+			atomic64_inc(&ti->read_expired_cnt);
+		ti->last_comp = jiffies;
+
+		stat = get_cpu_ptr(ti->read_lat_stats);
+		blk_rq_stat_add(stat, latency_ns / 1000);
+		put_cpu_ptr(stat);
+
+		stat = get_cpu_ptr(wg->throtl_info.read_lat_stats);
+		blk_rq_stat_add(stat, latency_ns / 1000);
+		put_cpu_ptr(stat);
+	}
+}
+
+static void wbt_class_done_bio(struct rq_wb *rwb, struct bio *bio)
+{
+	u16 wbt_class = bio_flags_to_wbt_class(bio->bi_wbt_acct);
+	struct wbt_throtl_info *ti = rwb_to_wbt_class_info(rwb, wbt_class);
+	enum wbt_flags wbt_acct = bio->bi_wbt_acct;
+	struct rq_wait *rqw = throtl_info_get_rq_wait(ti, wbt_acct);
+
+	throtl_info_rqw_done(rwb, ti, rqw, wbt_acct);
+}
+
+static void wbt_done_bio(struct rq_qos *rqos, struct bio *bio)
+{
+	wbt_class_account_bio_end(RQWB(rqos), bio);
+
+	if (bio->bi_wbt_acct & WBT_CLASS_TRACKED)
+		wbt_class_done_bio(RQWB(rqos), bio);
+
+	bio->bi_wbt_acct = 0;
+}
+
+static void wbt_merge(struct rq_qos *rqos, struct request *rq, struct bio *bio)
+{
+	struct wbt_throtl_info *ti = bio_to_wbt_class_info(RQWB(rqos), bio);
+
+	if (!throtl_info_enabled(ti))
+		return;
+
+	if (wbt_should_throttle(bio))
+		atomic64_inc(&ti->escaped_merge_cnt);
+}
+#endif
 
 /*
  * Enable wbt if defaults are configured that way
@@ -770,9 +1267,20 @@ static void wbt_queue_depth_changed(struct rq_qos *rqos)
 static void wbt_exit(struct rq_qos *rqos)
 {
 	struct rq_wb *rwb = RQWB(rqos);
+#ifdef CONFIG_BLK_CGROUP
+	struct wbt_throtl_info *ti;
+	int i;
+#endif
 
 	blk_stat_remove_callback(rqos->disk->queue, rwb->cb);
 	blk_stat_free_callback(rwb->cb);
+#ifdef CONFIG_BLK_CGROUP
+	del_timer_sync(&rwb->wbt_class_timer);
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		throtl_info_free(ti);
+	}
+#endif
 	kfree(rwb);
 }
 
@@ -811,6 +1319,17 @@ static int wbt_enabled_show(void *data, struct seq_file *m)
 	seq_printf(m, "%d\n", rwb->enable_state);
 	return 0;
 }
+
+#ifdef CONFIG_BLK_CGROUP
+static int wbt_rue_cls_enabled_show(void *data, struct seq_file *m)
+{
+	struct rq_qos *rqos = data;
+	struct rq_wb *rwb = RQWB(rqos);
+
+	seq_printf(m, "%d\n", rue_io_enabled() && rwb->enable_state);
+	return 0;
+}
+#endif
 
 static int wbt_id_show(void *data, struct seq_file *m)
 {
@@ -868,15 +1387,104 @@ static int wbt_background_show(void *data, struct seq_file *m)
 	return 0;
 }
 
+#ifdef CONFIG_BLK_CGROUP
+static int wbt_class_rd_expired_cnt_show(void *data, struct seq_file *m)
+{
+	struct rq_qos *rqos = data;
+	struct rq_wb *rwb = RQWB(rqos);
+	u64 lat_cnt;
+	int i;
+
+	seq_puts(m, "class\tcnt\n");
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		lat_cnt = atomic64_read(
+			&rwb->class_throtl_infos[i].read_expired_cnt);
+		seq_printf(m, "%d\t%llu\n", i, lat_cnt);
+	}
+	return 0;
+}
+
+static int wbt_class_lat_show(void *data, struct seq_file *m)
+{
+	struct rq_qos *rqos = data;
+	struct rq_wb *rwb = RQWB(rqos);
+	struct blk_rq_stat stat;
+	int cpu;
+	int i;
+	struct wbt_throtl_info *ti;
+
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+
+		blk_rq_stat_init(&stat);
+		for_each_online_cpu(cpu) {
+			struct blk_rq_stat *s;
+
+			s = per_cpu_ptr(ti->read_lat_stats, cpu);
+			blk_rq_stat_sum(&stat, s);
+			blk_rq_stat_init(s);
+		}
+
+		seq_printf(m, "%d mean_lat_usec=%llu total_io=%u\n", i,
+			   stat.mean, stat.nr_samples);
+	}
+
+	return 0;
+}
+
+static int wbt_debug_show(void *data, struct seq_file *m)
+{
+	struct rq_qos *rqos = data;
+	struct rq_wb *rwb = RQWB(rqos);
+	int i;
+	struct wbt_throtl_info *ti;
+
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		seq_printf(m, "%d inflight=%d ", i, throtl_info_inflight(ti));
+		seq_printf(
+			m,
+			"track_bg=%llu track_kswp=%llu track_disc=%llu "
+			"finished_bg=%llu finished_kswp=%llu finished_disc=%llu "
+			"untrack_read=%llu untrack_direct_wr=%llu escape_merg=%llu "
+			"sync_write=%llu rd_expired=%llu ",
+			atomic64_read(&ti->tracked_cnt[WBT_RWQ_BG]),
+			atomic64_read(&ti->tracked_cnt[WBT_RWQ_KSWAPD]),
+			atomic64_read(&ti->tracked_cnt[WBT_RWQ_DISCARD]),
+			atomic64_read(&ti->finished_cnt[WBT_RWQ_BG]),
+			atomic64_read(&ti->finished_cnt[WBT_RWQ_KSWAPD]),
+			atomic64_read(&ti->finished_cnt[WBT_RWQ_DISCARD]),
+			atomic64_read(&ti->read_cnt),
+			atomic64_read(&ti->direct_write_cnt),
+			atomic64_read(&ti->escaped_merge_cnt),
+			atomic64_read(&ti->wr_sync_cnt),
+			atomic64_read(&ti->read_expired_cnt));
+		seq_printf(
+			m,
+			"rd_issue=%lu rd_compl=%lu rd_recent_latency_us=%llu\n",
+			ti->last_issue, ti->last_comp,
+			ti->recent_rd_latency_us);
+	}
+
+	return 0;
+}
+#endif
+
 static const struct blk_mq_debugfs_attr wbt_debugfs_attrs[] = {
-	{"curr_win_nsec", 0400, wbt_curr_win_nsec_show},
-	{"enabled", 0400, wbt_enabled_show},
-	{"id", 0400, wbt_id_show},
-	{"inflight", 0400, wbt_inflight_show},
-	{"min_lat_nsec", 0400, wbt_min_lat_nsec_show},
-	{"unknown_cnt", 0400, wbt_unknown_cnt_show},
-	{"wb_normal", 0400, wbt_normal_show},
-	{"wb_background", 0400, wbt_background_show},
+	{ "curr_win_nsec", 0400, wbt_curr_win_nsec_show },
+	{ "enabled", 0400, wbt_enabled_show },
+	{ "id", 0400, wbt_id_show },
+	{ "inflight", 0400, wbt_inflight_show },
+	{ "min_lat_nsec", 0400, wbt_min_lat_nsec_show },
+	{ "unknown_cnt", 0400, wbt_unknown_cnt_show },
+	{ "wb_normal", 0400, wbt_normal_show },
+	{ "wb_background", 0400, wbt_background_show },
+#ifdef CONFIG_BLK_CGROUP
+	{ "cls_enabled", 0400, wbt_rue_cls_enabled_show },
+	{ "wbt_class_rd_expired_cnt", 0400, wbt_class_rd_expired_cnt_show },
+	{ "wbt_class_lat", 0400, wbt_class_lat_show },
+	{ "wbt_debug", 0400, wbt_debug_show },
+#endif
 	{},
 };
 #endif
@@ -887,6 +1495,10 @@ static const struct rq_qos_ops wbt_rqos_ops = {
 	.track = wbt_track,
 	.requeue = wbt_requeue,
 	.done = wbt_done,
+#ifdef CONFIG_BLK_CGROUP
+	.merge = wbt_merge,
+	.done_bio = wbt_done_bio,
+#endif
 	.cleanup = wbt_cleanup,
 	.queue_depth_changed = wbt_queue_depth_changed,
 	.exit = wbt_exit,
@@ -935,11 +1547,304 @@ int wbt_init(struct gendisk *disk)
 
 	blk_stat_add_callback(q, rwb->cb);
 
+#ifdef CONFIG_BLK_CGROUP
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		struct wbt_throtl_info *ti;
+
+		ti = rwb_to_wbt_class_info(rwb, i);
+
+		if (throtl_info_alloc(ti, GFP_KERNEL)) {
+			ret = -ENOMEM;
+			goto fail_no_mem;
+		}
+		throtl_info_init(ti, q);
+	}
+	timer_setup(&rwb->wbt_class_timer, wbt_class_timer_fn, 0);
+#endif
 	return 0;
 
+#ifdef CONFIG_BLK_CGROUP
+fail_no_mem:
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		struct wbt_throtl_info *ti;
+
+		ti = rwb_to_wbt_class_info(rwb, i);
+		throtl_info_free(ti);
+	}
+#endif
 err_free:
 	blk_stat_free_callback(rwb->cb);
 	kfree(rwb);
 	return ret;
-
 }
+
+#ifdef CONFIG_BLK_CGROUP
+int blk_wbt_init(struct gendisk *disk)
+{
+	/*create wbt policy structure for each blkg*/
+	return blkcg_activate_policy(disk, &blkcg_policy_wbt);
+}
+
+static struct blkg_policy_data *wbt_pd_alloc(struct gendisk *disk,
+		struct blkcg *blkcg, gfp_t gfp)
+{
+	struct wbt_grp *wg;
+
+	wg = kzalloc_node(sizeof(*wg), gfp, disk->node_id);
+	if (!wg)
+		return NULL;
+
+	if (throtl_info_alloc(&wg->throtl_info, gfp)) {
+		kfree(wg);
+		return NULL;
+	}
+
+	return wg ? &wg->pd : NULL;
+}
+
+static void wbt_pd_init(struct blkg_policy_data *pd)
+{
+	struct request_queue *q = pd->blkg->q;
+	struct wbt_grp *wg;
+	struct wbt_throtl_info *ti;
+
+	wg = pd_to_wg(pd);
+	ti = &wg->throtl_info;
+
+	throtl_info_init(ti, q);
+}
+
+/*sysfs interface*/
+ssize_t queue_wbt_class_lat_show(struct request_queue *q, char *page)
+{
+	struct wbt_throtl_info *ti;
+	struct rq_qos *rqos = wbt_rq_qos(q);
+	struct rq_wb *rwb;
+	int i;
+	int p = 0;
+
+	if (!rqos)
+		return 0;
+
+	rwb = RQWB(rqos);
+
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		p += snprintf(page + p, PAGE_SIZE - p, "%d %llu(usec)\n", i,
+			      ti->min_lat_nsec / 1000);
+	}
+	return p;
+}
+
+ssize_t queue_wbt_class_lat_store(struct request_queue *q, const char *page,
+				  size_t count)
+{
+	u16 wbt_class;
+	u64 latency_us;
+	struct wbt_throtl_info *ti;
+	struct rq_qos *rqos = wbt_rq_qos(q);
+	struct rq_wb *rwb;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+	if (!rqos)
+		return 0;
+
+	rwb = RQWB(rqos);
+
+	if (sscanf(page, "%hu %llu", &wbt_class, &latency_us) != 2)
+		return -EINVAL;
+
+	ti = rwb_to_wbt_class_info(rwb, wbt_class);
+	if (ti == NULL)
+		return -EINVAL;
+
+	blk_mq_freeze_queue(q);
+	blk_mq_quiesce_queue(q);
+	ti->min_lat_nsec = latency_us * 1000;
+	RUE_CALL_VOID(IO, throtl_info_calc_limit, ti);
+
+	blk_mq_unquiesce_queue(q);
+	blk_mq_unfreeze_queue(q);
+
+	return count;
+}
+
+ssize_t queue_wbt_class_conf_show(struct request_queue *q, char *page)
+{
+	struct wbt_throtl_info *ti;
+	struct rq_qos *rqos = wbt_rq_qos(q);
+	struct rq_wb *rwb;
+	int i;
+	int p = 0;
+
+	if (!rqos)
+		return 0;
+
+	rwb = RQWB(rqos);
+
+	for (i = 0; i < WBT_CLASS_NR; i++) {
+		ti = rwb_to_wbt_class_info(rwb, i);
+		p += snprintf(page + p, PAGE_SIZE,
+			"%d max_depth=%u min_depth=%u cur_depth=%u normal=%u bg=%u\n",
+			i, ti->max_depth, ti->min_depth, ti->current_depth,
+			ti->wb_normal, ti->wb_background);
+	}
+	return p;
+}
+
+ssize_t queue_wbt_class_conf_store(struct request_queue *q, const char *page,
+				   size_t count)
+{
+	struct wbt_throtl_info *ti;
+	struct rq_qos *rqos = wbt_rq_qos(q);
+	struct rq_wb *rwb;
+	u16 wbt_class;
+	u64 val;
+	char tok[64];
+	int ret, rc;
+	char *p;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+	if (!rqos)
+		return 0;
+
+	rwb = RQWB(rqos);
+
+	if (sscanf(page, "%hu %s", &wbt_class, tok) != 2)
+		return -EINVAL;
+	if (tok[0] == '\0')
+		return -EINVAL;
+	p = tok;
+	strsep(&p, "=");
+	rc = kstrtou64(p, 0, &val);
+
+	if (!p || rc)
+		return -EINVAL;
+
+	ti = rwb_to_wbt_class_info(rwb, wbt_class);
+
+	blk_mq_freeze_queue(q);
+	blk_mq_quiesce_queue(q);
+
+	ret = -EINVAL;
+	if (!strcmp(tok, "max_depth")) {
+		if (val == 0 || val < ti->min_depth)
+			goto out_finish;
+		ti->max_depth = min_t(u64, val, 1024);
+		ti->current_depth = ti->max_depth;
+	} else if (!strcmp(tok, "min_depth")) {
+		if (val > ti->max_depth || val == 0)
+			goto out_finish;
+		ti->min_depth = (unsigned int)val;
+	} else if (!strcmp(tok, "scale_up_pct")) {
+		if (val > 100 || val == 0)
+			goto out_finish;
+		ti->scale_up_percent = val;
+	} else if (!strcmp(tok, "scale_down_pct")) {
+		if (val > 100 || val == 0)
+			goto out_finish;
+		ti->scale_down_percent = val;
+	} else
+		goto out_finish;
+	ret = 0;
+	ti->current_depth = ti->max_depth;
+	RUE_CALL_VOID(IO, throtl_info_calc_limit, ti);
+	throtl_info_wake_all(ti);
+
+out_finish:
+	blk_mq_unquiesce_queue(q);
+	blk_mq_unfreeze_queue(q);
+
+	return ret ?: count;
+}
+
+static void wbt_pd_free(struct blkg_policy_data *pd)
+{
+	struct wbt_grp *wg = pd_to_wg(pd);
+
+	throtl_info_free(&wg->throtl_info);
+	kfree(wg);
+}
+
+static inline u16 wg_to_cgprio(struct wbt_grp *wg)
+{
+	struct blkcg_gq *blkg;
+
+	blkg = wg_to_blkg(wg);
+
+	return cgroup_priority(&blkg->blkcg->css);
+}
+
+static inline u16 wg_to_wbt_class(struct wbt_grp *wg)
+{
+	u16 cgprio;
+
+	cgprio = wg_to_cgprio(wg);
+
+	return cgprio_to_wbt_class(cgprio);
+}
+
+static u64 wg_prfill_stat(struct seq_file *sf, struct blkg_policy_data *pd,
+			  int off)
+{
+	struct wbt_grp *wg = pd_to_wg(pd);
+	const char *dname = blkg_dev_name(pd->blkg);
+	struct blk_rq_stat stat;
+	int cpu;
+
+	blk_rq_stat_init(&stat);
+	for_each_online_cpu(cpu) {
+		struct blk_rq_stat *s;
+
+		s = per_cpu_ptr(wg->throtl_info.read_lat_stats, cpu);
+		blk_rq_stat_sum(&stat, s);
+		blk_rq_stat_init(s);
+	}
+
+	seq_printf(sf, "%s wbt_class=%d read_mean_lat_usec=%llu\n", dname,
+		   wg_to_wbt_class(wg), stat.mean);
+
+	return 0;
+}
+static int wg_stat_show(struct seq_file *sf, void *v)
+{
+	blkcg_print_blkgs(sf, css_to_blkcg(seq_css(sf)), wg_prfill_stat,
+			  &blkcg_policy_wbt, 0, false);
+	return 0;
+}
+
+static struct cftype wbt_grp_files[] = {
+
+	{
+		.name = "wbt.stat",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = wg_stat_show,
+	},
+	{}
+};
+
+static struct blkcg_policy blkcg_policy_wbt = {
+	.pd_alloc_fn = wbt_pd_alloc,
+	.pd_init_fn = wbt_pd_init,
+	.pd_free_fn = wbt_pd_free,
+	.dfl_cftypes = wbt_grp_files,
+};
+
+static int __init wbt_policy_init(void)
+{
+	/*create for wbt structure for each blkcg */
+	return blkcg_policy_register(&blkcg_policy_wbt);
+}
+
+static void __exit wbt_policy_exit(void)
+{
+	return blkcg_policy_unregister(&blkcg_policy_wbt);
+}
+
+module_init(wbt_policy_init);
+module_exit(wbt_policy_exit);
+#endif

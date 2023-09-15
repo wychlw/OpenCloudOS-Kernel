@@ -19,11 +19,6 @@ enum rq_qos_id {
 	RQ_QOS_COST,
 };
 
-struct rq_wait {
-	wait_queue_head_t wait;
-	atomic_t inflight;
-};
-
 struct rq_qos {
 	const struct rq_qos_ops *ops;
 	struct gendisk *disk;

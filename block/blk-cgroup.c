@@ -36,6 +36,7 @@
 #include "blk-cgroup.h"
 #include "blk-ioprio.h"
 #include "blk-throttle.h"
+#include "blk-wbt.h"
 
 static void __blkcg_rstat_flush(struct blkcg *blkcg, int cpu);
 
@@ -2052,6 +2053,10 @@ int blkcg_init_disk(struct gendisk *disk)
 		goto err_destroy_all;
 
 	ret = blk_throtl_init(disk);
+	if (ret)
+		goto err_ioprio_exit;
+
+	ret = blk_wbt_init(disk);
 	if (ret)
 		goto err_ioprio_exit;
 

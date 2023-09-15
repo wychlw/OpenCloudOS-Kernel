@@ -296,6 +296,10 @@ struct bio {
 #ifdef CONFIG_BLK_CGROUP_IOCOST
 	u64			bi_iocost_cost;
 #endif
+
+#ifdef CONFIG_BLK_WBT
+	unsigned int bi_wbt_acct;
+#endif
 #endif
 
 #ifdef CONFIG_BLK_INLINE_ENCRYPTION

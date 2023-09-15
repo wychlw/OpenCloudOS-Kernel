@@ -10,6 +10,7 @@
 #include <linux/backing-dev.h>
 #include <linux/blktrace_api.h>
 #include <linux/debugfs.h>
+#include <linux/rue.h>
 
 #include "blk.h"
 #include "blk-mq.h"
@@ -546,6 +547,11 @@ QUEUE_RW_ENTRY(queue_io_timeout, "io_timeout");
 QUEUE_RO_ENTRY(queue_virt_boundary_mask, "virt_boundary_mask");
 QUEUE_RO_ENTRY(queue_dma_alignment, "dma_alignment");
 
+#ifdef CONFIG_BLK_CGROUP
+QUEUE_RW_ENTRY(queue_wbt_class_lat, "wbt_class_lat_usec");
+QUEUE_RW_ENTRY(queue_wbt_class_conf, "wbt_class_conf");
+#endif
+
 static struct queue_sysfs_entry queue_nbd_ignore_blksize_set_entry = {
 	.attr = {.name = "nbd_ignore_blksize_set", .mode = S_IRUGO | S_IWUSR },
 	.show = queue_nbd_ignore_blksize_set_show,
@@ -691,6 +697,10 @@ static struct attribute *blk_mq_queue_attrs[] = {
 	&queue_io_timeout_entry.attr,
 #ifdef CONFIG_BLK_WBT
 	&queue_wb_lat_entry.attr,
+#endif
+#ifdef CONFIG_BLK_CGROUP
+	&queue_wbt_class_lat_entry.attr,
+	&queue_wbt_class_conf_entry.attr,
 #endif
 	NULL,
 };
