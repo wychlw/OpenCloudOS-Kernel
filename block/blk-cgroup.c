@@ -1980,6 +1980,8 @@ blkcg_css_alloc(struct cgroup_subsys_state *parent_css)
 		cpd->plid = i;
 	}
 
+	blkcg->readwrite_dynamic_ratio = 3;
+
 	spin_lock_init(&blkcg->lock);
 	refcount_set(&blkcg->online_pin, 1);
 	INIT_RADIX_TREE(&blkcg->blkg_tree, GFP_NOWAIT | __GFP_NOWARN);

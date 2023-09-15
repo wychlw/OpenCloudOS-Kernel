@@ -11,6 +11,7 @@
 #include <linux/bio.h>
 #include <linux/blktrace_api.h>
 #include <linux/psi.h>
+#include <linux/rue.h>
 #include "blk.h"
 #include "blk-cgroup-rwstat.h"
 #include "blk-stat.h"
@@ -44,50 +45,6 @@ static struct workqueue_struct *kthrotld_workqueue;
 static bool throtl_hierarchy __read_mostly = true;
 
 #define rb_entry_tg(node)	rb_entry((node), struct throtl_grp, rb_node)
-
-/* We measure latency for request size from <= 4k to >= 1M */
-#define LATENCY_BUCKET_SIZE 9
-
-struct latency_bucket {
-	unsigned long total_latency; /* ns / 1024 */
-	int samples;
-};
-
-struct avg_latency_bucket {
-	unsigned long latency; /* ns / 1024 */
-	bool valid;
-};
-
-struct throtl_data
-{
-	/* service tree for active throtl groups */
-	struct throtl_service_queue service_queue;
-
-	struct request_queue *queue;
-
-	/* Total Number of queued bios on READ and WRITE lists */
-	unsigned int nr_queued[2];
-
-	unsigned int throtl_slice;
-
-	/* Work for dispatching throttled bios */
-	struct work_struct dispatch_work;
-	unsigned int limit_index;
-	bool limit_valid[LIMIT_CNT];
-
-	unsigned long low_upgrade_time;
-	unsigned long low_downgrade_time;
-
-	unsigned int scale;
-
-	struct latency_bucket tmp_buckets[2][LATENCY_BUCKET_SIZE];
-	struct avg_latency_bucket avg_buckets[2][LATENCY_BUCKET_SIZE];
-	struct latency_bucket __percpu *latency_buckets[2];
-	unsigned long last_calculate_time;
-	unsigned long filtered_latency;
-
-	bool track_bio_latency;
-};
 
 static void throtl_pending_timer_fn(struct timer_list *t);
 
@@ -141,6 +98,7 @@ static struct throtl_data *sq_to_td(struct throtl_service_queue *sq)
  *           limit hits .max limit
  * Scale down: exponentially scale down if a cgroup doesn't hit its .low limit
  */
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 static uint64_t throtl_adjusted_limit(uint64_t low, struct throtl_data *td)
 {
 	/* arbitrary value to avoid too big scale */
@@ -149,6 +107,15 @@ static uint64_t throtl_adjusted_limit(uint64_t low, struct throtl_data *td)
 		td->scale = (jiffies - td->low_upgrade_time) / td->throtl_slice;
 
 	return low + (low >> 1) * td->scale;
+}
+#endif
+
+static inline unsigned int get_dynamic_ratio(struct blkcg *blkcg)
+{
+	if (blkcg && blkcg->readwrite_dynamic_ratio)
+		return blkcg->readwrite_dynamic_ratio;
+
+	return DFL_READ_RATIO;
 }
 
 static uint64_t tg_bps_limit(struct throtl_grp *tg, int rw)
@@ -171,6 +138,7 @@ static uint64_t tg_bps_limit(struct throtl_grp *tg, int rw)
 			return MIN_THROTL_BPS;
 	}
 
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	if (td->limit_index == LIMIT_MAX && tg->bps[rw][LIMIT_LOW] &&
 	    tg->bps[rw][LIMIT_LOW] != tg->bps[rw][LIMIT_MAX]) {
 		uint64_t adjusted;
@@ -178,6 +146,18 @@ static uint64_t tg_bps_limit(struct throtl_grp *tg, int rw)
 		adjusted = throtl_adjusted_limit(tg->bps[rw][LIMIT_LOW], td);
 		ret = min(tg->bps[rw][LIMIT_MAX], adjusted);
 	}
+#endif
+
+	if (td->limit_index == LIMIT_MAX && tg->bps[READWRITE][LIMIT_MAX] &&
+	    tg->bps[READWRITE][LIMIT_MAX] != U64_MAX && rue_io_enabled()) {
+		ret = RUE_CALL_TYPE(IO, calc_readwrite_bps_limit, uint64_t, td,
+				    tg, blkg, rw, ret);
+
+		/* In case rue mod removed */
+		if (unlikely(!ret))
+			return U64_MAX;
+	}
+
 	return ret;
 }
 
@@ -201,6 +181,7 @@ static unsigned int tg_iops_limit(struct throtl_grp *tg, int rw)
 			return MIN_THROTL_IOPS;
 	}
 
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	if (td->limit_index == LIMIT_MAX && tg->iops[rw][LIMIT_LOW] &&
 	    tg->iops[rw][LIMIT_LOW] != tg->iops[rw][LIMIT_MAX]) {
 		uint64_t adjusted;
@@ -210,6 +191,18 @@ static unsigned int tg_iops_limit(struct throtl_grp *tg, int rw)
 			adjusted = UINT_MAX;
 		ret = min_t(unsigned int, tg->iops[rw][LIMIT_MAX], adjusted);
 	}
+#endif
+
+	if (td->limit_index == LIMIT_MAX && tg->iops[READWRITE][LIMIT_MAX] &&
+	    tg->iops[READWRITE][LIMIT_MAX] != UINT_MAX && rue_io_enabled()) {
+		ret = RUE_CALL_TYPE(IO, calc_readwrite_iops_limit, unsigned int,
+				    td, tg, blkg, rw, ret);
+
+		/* In case rue mod removed */
+		if (unlikely(!ret))
+			return UINT_MAX;
+	}
+
 	return ret;
 }
 
@@ -368,12 +361,16 @@ static struct blkg_policy_data *throtl_pd_alloc(struct gendisk *disk,
 	RB_CLEAR_NODE(&tg->rb_node);
 	tg->bps[READ][LIMIT_MAX] = U64_MAX;
 	tg->bps[WRITE][LIMIT_MAX] = U64_MAX;
+	tg->bps[READWRITE][LIMIT_MAX] = U64_MAX;
 	tg->iops[READ][LIMIT_MAX] = UINT_MAX;
 	tg->iops[WRITE][LIMIT_MAX] = UINT_MAX;
+	tg->iops[READWRITE][LIMIT_MAX] = UINT_MAX;
 	tg->bps_conf[READ][LIMIT_MAX] = U64_MAX;
 	tg->bps_conf[WRITE][LIMIT_MAX] = U64_MAX;
+	tg->bps_conf[READWRITE][LIMIT_MAX] = U64_MAX;
 	tg->iops_conf[READ][LIMIT_MAX] = UINT_MAX;
 	tg->iops_conf[WRITE][LIMIT_MAX] = UINT_MAX;
+	tg->iops_conf[READWRITE][LIMIT_MAX] = UINT_MAX;
 	/* LIMIT_LOW will have default value 0 */
 
 	tg->latency_target = DFL_LATENCY_TARGET;
@@ -640,6 +637,8 @@ static bool throtl_schedule_next_dispatch(struct throtl_service_queue *sq,
 static inline void throtl_start_new_slice_with_credit(struct throtl_grp *tg,
 		bool rw, unsigned long start)
 {
+	tg->pre_bdisp[rw] += tg->bytes_disp[rw];
+	tg->pre_iodisp[rw] += tg->io_disp[rw];
 	tg->bytes_disp[rw] = 0;
 	tg->io_disp[rw] = 0;
 	tg->carryover_bytes[rw] = 0;
@@ -661,11 +660,54 @@ static inline void throtl_start_new_slice_with_credit(struct throtl_grp *tg,
 		   tg->slice_end[rw], jiffies);
 }
 
+static inline void update_dynamic_ratio(struct throtl_grp *tg)
+{
+	struct blkcg_gq *blkg = tg_to_blkg(tg);
+	struct blkcg *blkcg = blkg->blkcg;
+	int tmp = 0;
+
+	/* iops have higher priority than bps */
+	if (blkcg && blkcg->readwrite_dynamic_ratio) {
+		tmp = RUE_CALL_INT(IO, new_dynamic_ratio, tg);
+
+		if (tmp && tmp != blkcg->readwrite_dynamic_ratio) {
+			throtl_log(&tg->service_queue,
+				"Update ratio %d. pre_iodisp=%u/%u, pre_bdisp=%llu/%llu",
+				tmp, tg->pre_iodisp[READ], tg->pre_iodisp[WRITE],
+				tg->pre_bdisp[READ], tg->pre_bdisp[WRITE]);
+			blkcg->readwrite_dynamic_ratio = min(max(MIN_READ_RATIO,
+						tmp), MAX_READ_RATIO);
+		}
+	}
+}
+
 static inline void throtl_start_new_slice(struct throtl_grp *tg, bool rw,
 					  bool clear_carryover)
 {
+	unsigned long jiffy_elapsed_rnd;
+
+	if (tg->td->throtl_slice) {
+		/* Update dynamic_ratio based on the dispatch ratio of the last slice */
+		jiffy_elapsed_rnd = roundup(tg->slice_end[rw] - tg->slice_start[rw],
+					    tg->td->throtl_slice);
+		jiffy_elapsed_rnd += tg->nr_trim_slice[rw] * tg->td->throtl_slice;
+
+		if (jiffy_elapsed_rnd) {
+			tg->pre_bdisp[rw] = (tg->pre_bdisp[rw] + tg->bytes_disp[rw]) *
+					    HZ / jiffy_elapsed_rnd;
+			tg->pre_iodisp[rw] = (tg->pre_iodisp[rw] + tg->io_disp[rw]) *
+					     HZ / jiffy_elapsed_rnd;
+		}
+
+		if (tg->pre_iodisp[READ] && tg->pre_iodisp[WRITE] && rue_io_enabled())
+			update_dynamic_ratio(tg);
+	}
+
 	tg->bytes_disp[rw] = 0;
 	tg->io_disp[rw] = 0;
+	tg->pre_bdisp[rw] = 0;
+	tg->pre_iodisp[rw] = 0;
+	tg->nr_trim_slice[rw] = 0;
 	tg->slice_start[rw] = jiffies;
 	tg->slice_end[rw] = jiffies + tg->td->throtl_slice;
 	if (clear_carryover) {
@@ -745,6 +787,7 @@ static inline void throtl_trim_slice(struct throtl_grp *tg, bool rw)
 	unsigned long time_elapsed;
 	long long bytes_trim;
 	int io_trim;
+	unsigned long nr_slices;
 
 	BUG_ON(time_before(tg->slice_end[rw], tg->slice_start[rw]));
 
@@ -771,6 +814,8 @@ static inline void throtl_trim_slice(struct throtl_grp *tg, bool rw)
 	if (!time_elapsed)
 		return;
 
+	nr_slices = time_elapsed / tg->td->throtl_slice;
+
 	bytes_trim = calculate_bytes_allowed(tg_bps_limit(tg, rw),
 					     time_elapsed) +
 		     tg->carryover_bytes[rw];
@@ -780,18 +825,29 @@ static inline void throtl_trim_slice(struct throtl_grp *tg, bool rw)
 		return;
 
 	tg->carryover_bytes[rw] = 0;
-	if ((long long)tg->bytes_disp[rw] >= bytes_trim)
+	if ((long long)tg->bytes_disp[rw] >= bytes_trim) {
+		tg->pre_bdisp[rw] += bytes_trim;
 		tg->bytes_disp[rw] -= bytes_trim;
-	else
+	} else {
+		tg->pre_bdisp[rw] += tg->bytes_disp[rw];
 		tg->bytes_disp[rw] = 0;
+	}
 
 	tg->carryover_ios[rw] = 0;
-	if ((int)tg->io_disp[rw] >= io_trim)
+	if ((int)tg->io_disp[rw] >= io_trim) {
+		tg->pre_iodisp[rw] += io_trim;
 		tg->io_disp[rw] -= io_trim;
-	else
+	} else {
+		tg->pre_iodisp[rw] += tg->io_disp[rw];
 		tg->io_disp[rw] = 0;
+	}
 
 	tg->slice_start[rw] += time_elapsed;
+	tg->nr_trim_slice[rw] += nr_slices;
+
+	/* Check read/write ratio when trim to make more precision */
+	if (tg->pre_iodisp[READ] && tg->pre_iodisp[WRITE] && rue_io_enabled())
+		update_dynamic_ratio(tg);
 
 	throtl_log(&tg->service_queue,
 		   "[%c] trim slice nr=%lu bytes=%lld io=%d start=%lu end=%lu jiffies=%lu",
@@ -1508,6 +1564,37 @@ static int blkg_print_throttle_stat(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static int blkcg_print_readwrite_ratio(struct seq_file *sf, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
+
+	if (blkcg)
+		seq_printf(sf, "%u\n", blkcg->readwrite_dynamic_ratio);
+
+	return 0;
+}
+
+static ssize_t blkcg_set_readwrite_ratio(struct kernfs_open_file *of, char *buf,
+					 size_t nbytes, loff_t off)
+{
+	struct blkcg *blkcg = css_to_blkcg(of_css(of));
+	unsigned int v;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+	if (kstrtou32(buf, 0, &v))
+		return -EINVAL;
+
+	if (v > MAX_READ_RATIO)
+		return -ERANGE;
+
+	if (blkcg)
+		blkcg->readwrite_dynamic_ratio = v;
+
+	return nbytes;
+}
+
 static struct cftype throtl_legacy_files[] = {
 	{
 		.name = "throttle.read_bps_device",
@@ -1522,6 +1609,12 @@ static struct cftype throtl_legacy_files[] = {
 		.write = tg_set_conf_u64,
 	},
 	{
+		.name = "throttle.readwrite_bps_device",
+		.private = offsetof(struct throtl_grp, bps[READWRITE][LIMIT_MAX]),
+		.seq_show = tg_print_conf_u64,
+		.write = tg_set_conf_u64,
+	},
+	{
 		.name = "throttle.read_iops_device",
 		.private = offsetof(struct throtl_grp, iops[READ][LIMIT_MAX]),
 		.seq_show = tg_print_conf_uint,
@@ -1532,6 +1625,17 @@ static struct cftype throtl_legacy_files[] = {
 		.private = offsetof(struct throtl_grp, iops[WRITE][LIMIT_MAX]),
 		.seq_show = tg_print_conf_uint,
 		.write = tg_set_conf_uint,
+	},
+	{
+		.name = "throttle.readwrite_iops_device",
+		.private = offsetof(struct throtl_grp, iops[READWRITE][LIMIT_MAX]),
+		.seq_show = tg_print_conf_uint,
+		.write = tg_set_conf_uint,
+	},
+	{
+		.name = "throttle.readwrite_dynamic_ratio",
+		.seq_show = blkcg_print_readwrite_ratio,
+		.write = blkcg_set_readwrite_ratio,
 	},
 	{
 		.name = "throttle.io_service_bytes",
@@ -1582,7 +1686,7 @@ static u64 tg_prfill_limit(struct seq_file *sf, struct blkg_policy_data *pd,
 {
 	struct throtl_grp *tg = pd_to_tg(pd);
 	const char *dname = blkg_dev_name(pd->blkg);
-	char bufs[4][21] = { "max", "max", "max", "max" };
+	char bufs[6][21] = { "max", "max", "max", "max", "max", "max" };
 	u64 bps_dft;
 	unsigned int iops_dft;
 	char idle_time[26] = "";
@@ -1601,8 +1705,10 @@ static u64 tg_prfill_limit(struct seq_file *sf, struct blkg_policy_data *pd,
 
 	if (tg->bps_conf[READ][off] == bps_dft &&
 	    tg->bps_conf[WRITE][off] == bps_dft &&
+	    tg->bps_conf[READWRITE][off] == bps_dft &&
 	    tg->iops_conf[READ][off] == iops_dft &&
 	    tg->iops_conf[WRITE][off] == iops_dft &&
+	    tg->iops_conf[READWRITE][off] == iops_dft &&
 	    (off != LIMIT_LOW ||
 	     (tg->idletime_threshold_conf == DFL_IDLE_THRESHOLD &&
 	      tg->latency_target_conf == DFL_LATENCY_TARGET)))
@@ -1614,12 +1720,18 @@ static u64 tg_prfill_limit(struct seq_file *sf, struct blkg_policy_data *pd,
 	if (tg->bps_conf[WRITE][off] != U64_MAX)
 		snprintf(bufs[1], sizeof(bufs[1]), "%llu",
 			tg->bps_conf[WRITE][off]);
+	if (tg->bps_conf[READWRITE][off] != U64_MAX)
+		snprintf(bufs[2], sizeof(bufs[2]), "%llu",
+			 tg->bps_conf[READWRITE][off]);
 	if (tg->iops_conf[READ][off] != UINT_MAX)
-		snprintf(bufs[2], sizeof(bufs[2]), "%u",
-			tg->iops_conf[READ][off]);
-	if (tg->iops_conf[WRITE][off] != UINT_MAX)
 		snprintf(bufs[3], sizeof(bufs[3]), "%u",
-			tg->iops_conf[WRITE][off]);
+			 tg->iops_conf[READ][off]);
+	if (tg->iops_conf[WRITE][off] != UINT_MAX)
+		snprintf(bufs[4], sizeof(bufs[4]), "%u",
+			 tg->iops_conf[WRITE][off]);
+	if (tg->iops_conf[READWRITE][off] != UINT_MAX)
+		snprintf(bufs[5], sizeof(bufs[5]), "%u",
+			 tg->iops_conf[READWRITE][off]);
 	if (off == LIMIT_LOW) {
 		if (tg->idletime_threshold_conf == ULONG_MAX)
 			strcpy(idle_time, " idle=max");
@@ -1634,9 +1746,9 @@ static u64 tg_prfill_limit(struct seq_file *sf, struct blkg_policy_data *pd,
 				" latency=%lu", tg->latency_target_conf);
 	}
 
-	seq_printf(sf, "%s rbps=%s wbps=%s riops=%s wiops=%s%s%s\n",
-		   dname, bufs[0], bufs[1], bufs[2], bufs[3], idle_time,
-		   latency_time);
+	seq_printf(sf, "%s rbps=%s wbps=%s rwbps=%s riops=%s wiops=%s rwiops=%s%s%s\n",
+		   dname, bufs[0], bufs[1], bufs[2], bufs[3], bufs[4], bufs[5],
+		   idle_time, latency_time);
 	return 0;
 }
 
@@ -1653,7 +1765,7 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 	struct blkcg *blkcg = css_to_blkcg(of_css(of));
 	struct blkg_conf_ctx ctx;
 	struct throtl_grp *tg;
-	u64 v[4];
+	u64 v[6];
 	unsigned long idle_time;
 	unsigned long latency_time;
 	int ret;
@@ -1670,8 +1782,10 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 
 	v[0] = tg->bps_conf[READ][index];
 	v[1] = tg->bps_conf[WRITE][index];
-	v[2] = tg->iops_conf[READ][index];
-	v[3] = tg->iops_conf[WRITE][index];
+	v[2] = tg->bps_conf[READWRITE][index];
+	v[3] = tg->iops_conf[READ][index];
+	v[4] = tg->iops_conf[WRITE][index];
+	v[5] = tg->iops_conf[READWRITE][index];
 
 	idle_time = tg->idletime_threshold_conf;
 	latency_time = tg->latency_target_conf;
@@ -1702,10 +1816,14 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 			v[0] = val;
 		else if (!strcmp(tok, "wbps") && val > 1)
 			v[1] = val;
+		else if (!strcmp(tok, "rwbps") && val > 1)
+			v[2] = val;
 		else if (!strcmp(tok, "riops") && val > 1)
-			v[2] = min_t(u64, val, UINT_MAX);
-		else if (!strcmp(tok, "wiops") && val > 1)
 			v[3] = min_t(u64, val, UINT_MAX);
+		else if (!strcmp(tok, "wiops") && val > 1)
+			v[4] = min_t(u64, val, UINT_MAX);
+		else if (!strcmp(tok, "rwiops") && val > 1)
+			v[5] = min_t(u64, val, UINT_MAX);
 		else if (off == LIMIT_LOW && !strcmp(tok, "idle"))
 			idle_time = val;
 		else if (off == LIMIT_LOW && !strcmp(tok, "latency"))
@@ -1716,14 +1834,18 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 
 	tg->bps_conf[READ][index] = v[0];
 	tg->bps_conf[WRITE][index] = v[1];
-	tg->iops_conf[READ][index] = v[2];
-	tg->iops_conf[WRITE][index] = v[3];
+	tg->bps_conf[READWRITE][index] = v[2];
+	tg->iops_conf[READ][index] = v[3];
+	tg->iops_conf[WRITE][index] = v[4];
+	tg->iops_conf[READWRITE][index] = v[5];
 
 	if (index == LIMIT_MAX) {
 		tg->bps[READ][index] = v[0];
 		tg->bps[WRITE][index] = v[1];
-		tg->iops[READ][index] = v[2];
-		tg->iops[WRITE][index] = v[3];
+		tg->bps[READWRITE][index] = v[2];
+		tg->iops[READ][index] = v[3];
+		tg->iops[WRITE][index] = v[4];
+		tg->iops[READWRITE][index] = v[5];
 	}
 	tg->bps[READ][LIMIT_LOW] = min(tg->bps_conf[READ][LIMIT_LOW],
 		tg->bps_conf[READ][LIMIT_MAX]);
@@ -2284,6 +2406,9 @@ bool __blk_throtl_bio(struct bio *bio)
 
 again:
 	while (true) {
+		if (time_before(tg->arrive_time[rw], jiffies))
+			tg->arrive_time[rw] = jiffies;
+
 		if (tg->last_low_overflow_time[rw] == 0)
 			tg->last_low_overflow_time[rw] = jiffies;
 		throtl_downgrade_check(tg);
@@ -2491,6 +2616,8 @@ int blk_throtl_init(struct gendisk *disk)
 	td->limit_index = LIMIT_MAX;
 	td->low_upgrade_time = jiffies;
 	td->low_downgrade_time = jiffies;
+	td->throtl_slice = DFL_THROTL_SLICE_HD;
+	td->filtered_latency = LATENCY_FILTERED_HD;
 
 	/* activate policy */
 	ret = blkcg_activate_policy(disk, &blkcg_policy_throtl);

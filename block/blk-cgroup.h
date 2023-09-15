@@ -29,68 +29,6 @@ struct blkg_policy_data;
 #define BLKG_STAT_CPU_BATCH	(INT_MAX / 2)
 
 #ifdef CONFIG_BLK_CGROUP
-
-enum blkg_iostat_type {
-	BLKG_IOSTAT_READ,
-	BLKG_IOSTAT_WRITE,
-	BLKG_IOSTAT_DISCARD,
-
-	BLKG_IOSTAT_NR,
-};
-
-struct blkg_iostat {
-	u64				bytes[BLKG_IOSTAT_NR];
-	u64				ios[BLKG_IOSTAT_NR];
-};
-
-struct blkg_iostat_set {
-	struct u64_stats_sync		sync;
-	struct blkcg_gq		       *blkg;
-	struct llist_node		lnode;
-	int				lqueued;	/* queued in llist */
-	struct blkg_iostat		cur;
-	struct blkg_iostat		last;
-};
-
-/* association between a blk cgroup and a request queue */
-struct blkcg_gq {
-	/* Pointer to the associated request_queue */
-	struct request_queue		*q;
-	struct list_head		q_node;
-	struct hlist_node		blkcg_node;
-	struct blkcg			*blkcg;
-
-	/* all non-root blkcg_gq's are guaranteed to have access to parent */
-	struct blkcg_gq			*parent;
-
-	/* reference count */
-	struct percpu_ref		refcnt;
-
-	/* is this blkg online? protected by both blkcg and q locks */
-	bool				online;
-
-	struct blkg_iostat_set __percpu	*iostat_cpu;
-	struct blkg_iostat_set		iostat;
-
-	struct blkg_policy_data		*pd[BLKCG_MAX_POLS];
-#ifdef CONFIG_BLK_CGROUP_PUNT_BIO
-	spinlock_t			async_bio_lock;
-	struct bio_list			async_bios;
-#endif
-	union {
-		struct work_struct	async_bio_work;
-		struct work_struct	free_work;
-	};
-
-	atomic_t			use_delay;
-	atomic64_t			delay_nsec;
-	atomic64_t			delay_start;
-	u64				last_delay;
-	int				last_use;
-
-	struct rcu_head			rcu_head;
-};
-
 static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
 {
 	return css ? container_of(css, struct blkcg, css) : NULL;
@@ -171,24 +109,6 @@ struct disk_stats *blkcg_dkstats_find_create(struct blkcg *blkcg,
 #define blkcg_part_stat_sub(blkcg, gendiskp, field, subnd)
 #define blkcg_part_stat_read(blkcg, part, field)
 #endif /* CONFIG_BLK_CGROUP_DISKSTATS */
-
-/*
- * A blkcg_gq (blkg) is association between a block cgroup (blkcg) and a
- * request_queue (q).  This is used by blkcg policies which need to track
- * information per blkcg - q pair.
- *
- * There can be multiple active blkcg policies and each blkg:policy pair is
- * represented by a blkg_policy_data which is allocated and freed by each
- * policy's pd_alloc/free_fn() methods.  A policy can allocate private data
- * area by allocating larger data structure which embeds blkg_policy_data
- * at the beginning.
- */
-struct blkg_policy_data {
-	/* the blkg and policy id this per-policy data belongs to */
-	struct blkcg_gq			*blkg;
-	int				plid;
-	bool				online;
-};
 
 /*
  * Policies that need to keep per-blkcg data which is independent from any
