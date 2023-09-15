@@ -31,6 +31,7 @@
 #include <linux/part_stat.h>
 #include <linux/percpu.h>
 #include <linux/percpu_counter.h>
+#include <linux/rue.h>
 #include "blk.h"
 #include "blk-cgroup.h"
 #include "blk-ioprio.h"
@@ -53,6 +54,8 @@ EXPORT_SYMBOL_GPL(blkcg_root);
 
 struct cgroup_subsys_state * const blkcg_root_css = &blkcg_root.css;
 EXPORT_SYMBOL_GPL(blkcg_root_css);
+
+struct rue_io_module_ops rue_io_ops;
 
 static struct blkcg_policy *blkcg_policy[BLKCG_MAX_POLS];
 

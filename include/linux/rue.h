@@ -5,6 +5,7 @@
 #include <linux/types.h>
 #include <linux/percpu.h>
 #include <linux/mutex.h>
+#include <linux/blkdev.h>
 
 struct rue_ops {
 #ifdef CONFIG_CGROUP_NET_CLASSID
@@ -14,6 +15,10 @@ struct rue_ops {
 #ifdef CONFIG_MEMCG
 	struct rue_mem_ops *mem;
 #endif
+
+#ifdef CONFIG_BLK_CGROUP
+	struct rue_io_module_ops *io;
+#endif
 };
 
 extern int sysctl_net_qos_enable;
@@ -21,10 +26,15 @@ extern int sysctl_net_qos_enable;
 extern int sysctl_vm_memory_qos;
 extern struct rue_mem_ops mem_ops;
 
+extern struct rue_io_module_ops io_ops;
+extern struct rue_io_module_ops rue_io_ops;
+
 extern bool rue_installed;
 extern struct rue_ops *rue_mod_ops;
 DECLARE_PER_CPU(long, nr_rue_calls);
 extern struct mutex rue_mutex;
+
+int rue_io_enabled(void);
 
 int register_rue_ops(struct rue_ops *ops);
 int try_unregister_rue_ops(void);
@@ -35,6 +45,10 @@ int try_unregister_rue_ops(void);
 
 #ifdef CONFIG_MEMCG
 #define RUE_MEM_FUNC(ops, func) ops->mem->func  /* RUE MEM OPs */
+#endif
+
+#ifdef CONFIG_BLK_CGROUP
+#define RUE_IO_FUNC(ops, func) ops->io->func  /* RUE IO OPs */
 #endif
 
 #define RUE_FUNC(subsys, ops, func) RUE_##subsys##_FUNC(ops, func)

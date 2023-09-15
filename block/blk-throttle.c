@@ -2286,7 +2286,7 @@ again:
 		 * Parent tg has already linked when throtl_hierarchy enabled.
 		 * But if io_qos disabled, skip check parent and fire directly.
 		 */
-		if (!tg || (!sysctl_io_qos_enabled && throtl_hierarchy_enabled())) {
+		if (!tg || (!rue_io_enabled() && throtl_hierarchy_enabled())) {
 			bio_set_flag(bio, BIO_BPS_THROTTLED);
 			goto out_unlock;
 		}

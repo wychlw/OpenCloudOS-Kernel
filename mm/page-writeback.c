@@ -41,8 +41,9 @@
 #include <linux/mm_inline.h>
 #include <trace/events/writeback.h>
 
+#include <linux/rue.h>
+
 #include "internal.h"
-#include "../block/blk-cgroup.h"
 
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
@@ -1642,55 +1643,6 @@ static long wb_min_pause(struct bdi_writeback *wb,
 	return pages >= DIRTY_POLL_THRESH ? 1 + t / 2 : t;
 }
 
-#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-static void blkcg_update_dirty_ratelimit(struct blkcg *blkcg,
-					 unsigned long dirtied,
-					 unsigned long elapsed)
-{
-	unsigned long long bps = blkcg_buffered_write_bps(blkcg);
-	unsigned long long ratelimit;
-	unsigned long dirty_rate;
-
-	dirty_rate = (dirtied - blkcg->dirtied_stamp) * HZ;
-	dirty_rate /= elapsed;
-
-	ratelimit = blkcg->dirty_ratelimit;
-	ratelimit *= div_u64(bps, dirty_rate + 1);
-	ratelimit = min(ratelimit, bps);
-	ratelimit >>= PAGE_SHIFT;
-
-	blkcg->dirty_ratelimit = (blkcg->dirty_ratelimit + ratelimit) / 2 + 1;
-	trace_blkcg_dirty_ratelimit(bps, dirty_rate, blkcg->dirty_ratelimit, ratelimit);
-}
-
-void blkcg_update_bandwidth(struct blkcg *blkcg)
-{
-	unsigned long now = jiffies;
-	unsigned long dirtied;
-	unsigned long elapsed;
-
-	if (!blkcg)
-		return;
-	if (!spin_trylock(&blkcg->lock))
-		return;
-
-	elapsed = now - blkcg->bw_time_stamp;
-	dirtied = percpu_counter_read(&blkcg->nr_dirtied);
-
-	if (elapsed > MAX_PAUSE * 2)
-		goto snapshot;
-	if (elapsed <= MAX_PAUSE)
-		goto unlock;
-
-	blkcg_update_dirty_ratelimit(blkcg, dirtied, elapsed);
-snapshot:
-	blkcg->dirtied_stamp = dirtied;
-	blkcg->bw_time_stamp = now;
-unlock:
-	spin_unlock(&blkcg->lock);
-}
-#endif
-
 static inline void wb_dirty_limits(struct dirty_throttle_control *dtc)
 {
 	struct bdi_writeback *wb = dtc->wb;
@@ -1731,6 +1683,10 @@ static inline void wb_dirty_limits(struct dirty_throttle_control *dtc)
 		dtc->wb_dirty = wb_reclaimable + wb_stat(wb, WB_WRITEBACK);
 	}
 }
+
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+EXPORT_TRACEPOINT_SYMBOL_GPL(blkcg_dirty_ratelimit);
+#endif
 
 /*
  * balance_dirty_pages() must be called by processes which are generating dirty
@@ -1941,7 +1897,7 @@ free_running:
 		if (blkcg_buffered_write_bps(blkcg) &&
 			task_ratelimit > blkcg_dirty_ratelimit(blkcg)) {
 blkcg_bps:
-				blkcg_update_bandwidth(blkcg);
+				RUE_CALL_VOID(IO, blkcg_update_bandwidth, blkcg);
 				dirty_ratelimit = blkcg_dirty_ratelimit(blkcg);
 				task_ratelimit = dirty_ratelimit;
 		}

@@ -4,6 +4,7 @@
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
 #include <linux/delay.h>
+#include <linux/blk-cgroup.h>
 #include <linux/rue.h>
 
 bool rue_installed;
@@ -51,6 +52,16 @@ static int check_mem_patch_state(struct rue_ops *ops, bool state)
 	return 0;
 }
 
+static int check_io_patch_state(struct rue_ops *ops, bool state)
+{
+#ifdef CONFIG_BLK_CGROUP
+	if (state && !ops->io)
+		return -EINVAL;
+#endif
+
+	return 0;
+}
+
 static int check_patch_state(struct rue_ops *ops)
 {
 	int ret = 0;
@@ -61,6 +72,10 @@ static int check_patch_state(struct rue_ops *ops)
 		return ret;
 
 	ret = check_mem_patch_state(ops, state);
+	if (ret)
+		return ret;
+
+	ret = check_io_patch_state(ops, state);
 	if (ret)
 		return ret;
 
@@ -115,3 +130,12 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL(try_unregister_rue_ops);
+
+/**
+ * rue_io_enabled - whether RUE IO feature enabled
+ */
+int rue_io_enabled(void)
+{
+	return sysctl_io_qos_enabled && READ_ONCE(rue_installed);
+}
+EXPORT_SYMBOL(rue_io_enabled);
