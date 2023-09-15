@@ -4324,6 +4324,11 @@ restart:
 
 		walk_pmd_range(&val, addr, next, args);
 
+#ifdef CONFIG_EMM_RECLAIM
+		if (walk->force_full_scan)
+			continue;
+#endif
+
 		if (need_resched() || walk->batched >= MAX_LRU_BATCH) {
 			end = (addr | ~PUD_MASK) + 1;
 			goto done;
@@ -4427,7 +4432,12 @@ static bool inc_min_seq(struct lruvec *lruvec, int type, bool can_swap)
 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
 	int new_gen, old_gen = lru_gen_from_seq(lrugen->min_seq[type]);
 
-	if (type == LRU_GEN_ANON && !can_swap)
+	/*
+	 * Keep tracking of Anon gen even if swappiness is not set for EMM,
+	 * because EMM can adjust swappiness dynamically and may drop to 0
+	 * from time to time, we can't lose hotness info here.
+	 */
+	if (type == LRU_GEN_ANON && !can_swap && !IS_ENABLED(CONFIG_EMM_RECLAIM))
 		goto done;
 
 	/* prevent cold/hot inversion if force_scan is true */
@@ -5197,6 +5207,21 @@ static int isolate_folios(struct lruvec *lruvec, struct scan_control *sc, int sw
 	int scanned;
 	int tier = -1;
 	DEFINE_MIN_SEQ(lruvec);
+
+#ifdef CONFIG_EMM_RECLAIM
+	/*
+	 * When called by EMM we must come here from run_eviction directly, else
+	 * the code is broken and need to be fixed.
+	 *
+	 * For swappiness == 0, we have type = LRU_GEN_FILE set below. But
+	 * for forcing a ANON isolation we have to extent swappiness to 201
+	 * and return directly to avoid FILE LRU fallback.
+	 */
+	if (sc->emm_running && sc->emm_swappiness == 201) {
+		*type_scanned = LRU_GEN_ANON;
+		return scan_folios(lruvec, sc, LRU_GEN_ANON, MAX_NR_TIERS, list);
+	}
+#endif
 
 	/*
 	 * Try to make the obvious choice first. When anon and file are both
@@ -8660,6 +8685,88 @@ int node_reclaim(struct pglist_data *pgdat, gfp_t gfp_mask, unsigned int order)
 
 	return ret;
 }
+#endif
+
+#ifdef CONFIG_EMM_RECLAIM
+#ifdef CONFIG_LRU_GEN
+int memcg_lru_gen_emm_reclaim(struct mem_cgroup *memcg, int mode,
+			      unsigned long nr_pages, unsigned long swappiness)
+{
+	unsigned int flags;
+	struct blk_plug plug;
+	struct lruvec *lruvec;
+	struct lru_gen_mm_walk *walk;
+	int ret = 0, nid;
+
+	struct scan_control sc = {
+		.gfp_mask = GFP_KERNEL,
+		.reclaim_idx = MAX_NR_ZONES - 1,
+		.may_writepage = true,
+		.may_unmap = true,
+		.may_swap = !!swappiness,
+		.emm_swappiness = swappiness,
+		.emm_reclaiming = mode == EMM_RECLAIM,
+		.emm_aging = mode == EMM_AGE,
+	};
+
+	set_task_reclaim_state(current, &sc.reclaim_state);
+	flags = memalloc_noreclaim_save();
+
+	walk = set_mm_walk(NULL, true);
+	if (!walk) {
+		ret = -ENOMEM;
+		goto done;
+	}
+
+	if (nr_pages == PAGE_COUNTER_MAX)
+		walk->force_full_scan = true;
+
+	/* Don't expose extended swappiness to rest of lru_gen */
+	if (swappiness > 200)
+		swappiness = 200;
+
+	blk_start_plug(&plug);
+	for_each_node_state(nid, N_MEMORY) {
+		lruvec = get_lruvec(memcg, nid);
+		if (lruvec) {
+			DEFINE_MAX_SEQ(lruvec);
+			if (mode == EMM_AGE) {
+				ret = run_aging(lruvec, max_seq, &sc,
+						!!swappiness, !!nr_pages);
+			} else if (mode == EMM_RECLAIM) {
+				ret = run_eviction(lruvec, max_seq - MIN_NR_GENS, &sc,
+						swappiness, nr_pages);
+				nr_pages -= min(nr_pages, sc.nr_reclaimed);
+
+				/*
+				 * If swappiness is less than 100 (bias towards cache), reclaim slab,
+				 * using DEF_PRIORITY which means 1/4096 of inactive objects will be
+				 * reclaimed. If too many pages were asked to reclaim, shrink harder.
+				 */
+				if (swappiness <= 100)
+					shrink_slab(GFP_KERNEL, nid, memcg,
+						    (nr_pages > MAX_LRU_BATCH) ? DEF_PRIORITY - 1 : DEF_PRIORITY);
+			} else {
+				ret = -EINVAL;
+			}
+
+			if (ret < 0)
+				break;
+		}
+	}
+	blk_finish_plug(&plug);
+done:
+	clear_mm_walk();
+	memalloc_noreclaim_restore(flags);
+	set_task_reclaim_state(current, NULL);
+
+	if (ret < 0 || mode != EMM_RECLAIM)
+		return ret;
+
+	return nr_pages ? -EAGAIN: 0;
+}
+EXPORT_SYMBOL_GPL(memcg_lru_gen_emm_reclaim);
+#endif
 #endif
 
 /**

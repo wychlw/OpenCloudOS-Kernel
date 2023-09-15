@@ -486,6 +486,9 @@ struct lru_gen_mm_walk {
 	int batched;
 	bool can_swap;
 	bool force_scan;
+#ifdef CONFIG_EMM_RECLAIM
+	bool force_full_scan;
+#endif
 };
 
 void lru_gen_init_lruvec(struct lruvec *lruvec);
