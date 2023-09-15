@@ -86,6 +86,7 @@ struct blkcg {
 
 struct rue_io_module_ops {
 	void (*blkcg_update_bandwidth)(struct blkcg *blkcg);
+	void (*cgroup_sync)(struct mem_cgroup *memcg);
 
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);

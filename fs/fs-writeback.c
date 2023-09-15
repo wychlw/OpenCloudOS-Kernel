@@ -29,31 +29,13 @@
 #include <linux/tracepoint.h>
 #include <linux/device.h>
 #include <linux/memcontrol.h>
+#include <linux/rue.h>
 #include "internal.h"
 
 /*
  * 4MB minimal write chunk size
  */
 #define MIN_WRITEBACK_PAGES	(4096UL >> (PAGE_SHIFT - 10))
-
-/*
- * Passed into wb_writeback(), essentially a subset of writeback_control
- */
-struct wb_writeback_work {
-	long nr_pages;
-	struct super_block *sb;
-	enum writeback_sync_modes sync_mode;
-	unsigned int tagged_writepages:1;
-	unsigned int for_kupdate:1;
-	unsigned int range_cyclic:1;
-	unsigned int for_background:1;
-	unsigned int for_sync:1;	/* sync(2) WB_SYNC_ALL writeback */
-	unsigned int auto_free:1;	/* free on completion */
-	enum wb_reason reason;		/* why was writeback initiated? */
-
-	struct list_head list;		/* pending work list */
-	struct wb_completion *done;	/* set if the caller waits */
-};
 
 /*
  * If an inode is constantly having its pages dirtied, but then the
@@ -157,8 +139,7 @@ static void finish_writeback_work(struct bdi_writeback *wb,
 	}
 }
 
-static void wb_queue_work(struct bdi_writeback *wb,
-			  struct wb_writeback_work *work)
+void wb_queue_work(struct bdi_writeback *wb, struct wb_writeback_work *work)
 {
 	trace_writeback_queue(wb, work);
 

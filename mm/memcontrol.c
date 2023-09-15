@@ -6294,6 +6294,23 @@ static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
 	return 0;
 }
 
+static ssize_t mem_cgroup_sync_write(struct kernfs_open_file *of, char *buf,
+				     size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+
+	if (mem_cgroup_is_root(memcg))
+		return -EINVAL;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+#ifdef CONFIG_BLK_CGROUP
+	RUE_CALL_VOID(IO, cgroup_sync, memcg);
+#endif
+	return nbytes;
+}
+
 static u64 memory_current_read(struct cgroup_subsys_state *css,
 			       struct cftype *cft);
 static int memory_low_show(struct seq_file *m, void *v);
@@ -8793,6 +8810,11 @@ static struct cftype memory_files[] = {
 		.seq_show = memory_async_distance_delta_show,
 		.write = memory_async_distance_delta_write,
 	},
+	{
+		.name = "sync",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_sync_write,
+	},
 	{ }	/* terminate */
 };
 
@@ -9784,6 +9806,11 @@ static struct cftype memsw_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.write = mem_cgroup_bind_blkio_write,
 		.seq_show = mem_cgroup_bind_blkio_show,
+	},
+	{
+		.name = "sync",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_sync_write,
 	},
 	{ },	/* terminate */
 };
