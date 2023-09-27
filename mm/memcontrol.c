@@ -786,6 +786,7 @@ unsigned long memcg_page_state(struct mem_cgroup *memcg, int idx)
 #endif
 	return x;
 }
+EXPORT_SYMBOL_GPL(memcg_page_state);
 
 /**
  * __mod_memcg_state - update cgroup memory statistics

@@ -187,6 +187,7 @@ struct scan_control {
  * From 0 .. 200.  Higher means more swappy.
  */
 int vm_swappiness = 60;
+EXPORT_SYMBOL(vm_swappiness);
 
 #ifdef CONFIG_EMM_FORCE_SWAPPINESS
 unsigned int sysctl_vm_force_swappiness __read_mostly;
@@ -3286,6 +3287,8 @@ DEFINE_STATIC_KEY_ARRAY_TRUE(lru_gen_caps, NR_LRU_GEN_CAPS);
 DEFINE_STATIC_KEY_ARRAY_FALSE(lru_gen_caps, NR_LRU_GEN_CAPS);
 #define get_cap(cap)	static_branch_unlikely(&lru_gen_caps[cap])
 #endif
+/* Some module may want to behave differently when lru_gen is enabled */
+EXPORT_SYMBOL_GPL(lru_gen_caps);
 
 static bool should_walk_mmu(void)
 {
@@ -7276,6 +7279,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 
 	return nr_reclaimed;
 }
+EXPORT_SYMBOL_GPL(try_to_free_mem_cgroup_pages);
 #endif
 
 #ifdef CONFIG_PAGECACHE_LIMIT

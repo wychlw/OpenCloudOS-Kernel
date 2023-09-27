@@ -910,6 +910,7 @@ void lru_add_drain_all(void)
 	lru_add_drain();
 }
 #endif /* CONFIG_SMP */
+EXPORT_SYMBOL_GPL(lru_add_drain_all);
 
 atomic_t lru_disable_count = ATOMIC_INIT(0);
 
