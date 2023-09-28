@@ -147,6 +147,7 @@ extern int sysctl_vm_force_swappiness;
 
 #ifdef CONFIG_EMM_RAMDISK_SWAP
 extern int sysctl_vm_ramdisk_swaptune;
+extern int sysctl_vm_swapcache_fastfree;
 #endif
 
 #endif /* CONFIG_SYSCTL */
@@ -2281,6 +2282,15 @@ static struct ctl_table vm_table[] = {
 	{
 		.procname       = "ramdisk_swaptune",
 		.data           = &sysctl_vm_ramdisk_swaptune,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+	{
+		.procname       = "swapcache_fastfree",
+		.data           = &sysctl_vm_swapcache_fastfree,
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec_minmax,

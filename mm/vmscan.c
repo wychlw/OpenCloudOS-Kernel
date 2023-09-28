@@ -196,6 +196,9 @@ unsigned int sysctl_vm_force_swappiness __read_mostly;
 
 #ifdef CONFIG_EMM_RAMDISK_SWAP
 unsigned int sysctl_vm_ramdisk_swaptune __read_mostly;
+unsigned int sysctl_vm_swapcache_fastfree __read_mostly;
+#else
+#define sysctl_vm_swapcache_fastfree 0
 #endif
 
 LIST_HEAD(shrinker_list);
@@ -2169,8 +2172,8 @@ activate_locked_split:
 		}
 activate_locked:
 		/* Not a candidate for swapping, so reclaim swap space. */
-		if (folio_test_swapcache(folio) &&
-		    (mem_cgroup_swap_full(folio) || folio_test_mlocked(folio)))
+		if (folio_test_swapcache(folio) && (sysctl_vm_swapcache_fastfree ||
+		    mem_cgroup_swap_full(folio) || folio_test_mlocked(folio)))
 			folio_free_swap(folio);
 		VM_BUG_ON_FOLIO(folio_test_active(folio), folio);
 		if (!folio_test_mlocked(folio)) {
