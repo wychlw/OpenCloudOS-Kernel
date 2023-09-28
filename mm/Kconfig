@@ -1268,4 +1268,14 @@ config PAGECACHE_LIMIT
 
 	  If unsure, say N.
 
+config ENHANCED_MM
+	bool "Enable enhanced mm support (EMM)"
+	depends on MEMCG
+	default n
+	help
+	  Support for EMM, including in-kernel API, extended interface, and reserved
+	  extra data structures.
+
+	  If unsure, say N.
+
 endmenu
