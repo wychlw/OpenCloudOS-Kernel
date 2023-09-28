@@ -1324,4 +1324,12 @@ config EMM_MEMCG
 	help
 	  This enables enhanced memory management support for memcg.
 
+config EMM_RECLAIM
+	bool "Enhanced memory reclaim support."
+	depends on ENHANCED_MM
+	depends on MEMCG
+	default y
+	help
+	  This enables enhanced memory reclaim support.
+
 endmenu

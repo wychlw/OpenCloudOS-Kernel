@@ -25,3 +25,13 @@ static inline void emm_memcg_exit(struct mem_cgroup *memcg)
 }
 
 #endif
+
+#ifdef CONFIG_EMM_RECLAIM
+
+enum {
+	EMM_RECLAIM,
+	EMM_AGE,
+	EMM_MIX,
+};
+
+#endif

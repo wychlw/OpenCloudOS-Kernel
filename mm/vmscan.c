@@ -57,6 +57,7 @@
 #include <linux/khugepaged.h>
 #include <linux/rculist_nulls.h>
 #include <linux/random.h>
+#include <linux/emm.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -167,6 +168,25 @@ struct scan_control {
 
 	/* for recording the reclaimed slab by now */
 	struct reclaim_state reclaim_state;
+
+#ifdef CONFIG_EMM_RECLAIM
+	union {
+		struct {
+			/* Just like setting all may_writepage, may_swap, may_unmap to zero, but also forbids dropping clean cache */
+			unsigned int emm_aging:1;
+			/* Do reclaim without aging any LRU, NOTE: MM may still prompt pages during reclaim if a page is found active */
+			unsigned int emm_reclaiming:1;
+			/* Do both reclaim and aging, just like normal reclaim but other EMM data are also in effect. */
+			unsigned int emm_mix:1;
+		};
+		/* If emm_ageing, emm_reclaiming is set, EMM is be used for this reclaim */
+		unsigned int emm_running:3;
+	};
+	/* One time swappiness override, NOTE: this could got extended to 201, for anon only reclaim */
+	u8 emm_swappiness;
+	/* Number of pages shrinked/aged/scanned, could be used by different emm reclaim phase */
+	unsigned long emm_nr_taken;
+#endif
 };
 
 #ifdef ARCH_HAS_PREFETCHW
