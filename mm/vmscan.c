@@ -2767,6 +2767,10 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	nr_taken = isolate_lru_folios(nr_to_scan, lruvec, &l_hold,
 				     &nr_scanned, sc, lru);
 
+#ifdef CONFIG_EMM_RECLAIM
+	sc->emm_nr_taken += nr_taken;
+#endif
+
 	__mod_node_page_state(pgdat, NR_ISOLATED_ANON + file, nr_taken);
 
 	if (!cgroup_reclaim(sc))
@@ -2903,6 +2907,15 @@ unsigned long reclaim_pages(struct list_head *folio_list)
 static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 				 struct lruvec *lruvec, struct scan_control *sc)
 {
+#ifdef CONFIG_EMM_RECLAIM
+	/* Don't set skipped_deactivate here, if reclaim all failed simply bail out */
+	if (sc->emm_reclaiming && is_active_lru(lru))
+		return 0;
+
+	if (sc->emm_aging && !is_active_lru(lru))
+		return 0;
+#endif
+
 	if (is_active_lru(lru)) {
 		if (sc->may_deactivate & (1 << is_file_lru(lru)))
 			shrink_active_list(nr_to_scan, lruvec, sc, lru);
@@ -3093,6 +3106,20 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 	enum scan_balance scan_balance;
 	unsigned long ap, fp;
 	enum lru_list lru;
+
+#ifdef CONFIG_EMM_RECLAIM
+	if (sc->emm_running) {
+		swappiness = sc->emm_swappiness;
+		if (swappiness == 201) {
+			scan_balance = SCAN_ANON;
+			swappiness = 200;
+			goto out;
+		} else if (!swappiness) {
+			scan_balance = SCAN_FILE;
+			goto out;
+		}
+	}
+#endif
 
 	/* If we have no swap space, do not bother scanning anon folios. */
 	if (!sc->may_swap || !can_reclaim_anon_pages(memcg, pgdat->node_id, sc)) {
@@ -6468,6 +6495,9 @@ static void shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
 
 	blk_start_plug(&plug);
 	while (nr[LRU_INACTIVE_ANON] || nr[LRU_ACTIVE_FILE] ||
+#ifdef CONFIG_EMM_RECLAIM
+	       (sc->emm_aging && sc->emm_swappiness == 201 && nr[LRU_ACTIVE_ANON]) ||
+#endif
 					nr[LRU_INACTIVE_FILE]) {
 		unsigned long nr_anon, nr_file, percentage;
 		unsigned long nr_scanned;
@@ -7003,6 +7033,11 @@ retry:
 
 		if (sc->nr_reclaimed >= sc->nr_to_reclaim)
 			break;
+
+#ifdef CONFIG_EMM_RECLAIM
+		if (sc->emm_aging && sc->emm_nr_taken >= sc->nr_to_reclaim)
+			break;
+#endif
 
 		if (sc->compaction_ready)
 			break;
@@ -8688,6 +8723,64 @@ int node_reclaim(struct pglist_data *pgdat, gfp_t gfp_mask, unsigned int order)
 #endif
 
 #ifdef CONFIG_EMM_RECLAIM
+int memcg_emm_reclaim(struct mem_cgroup *memcg, int mode,
+		      unsigned long nr_pages, unsigned long swappiness)
+{
+	unsigned int noreclaim_flag;
+	struct zonelist *zonelist;
+	unsigned long nr_shrinked;
+	bool retry = true;
+
+	struct scan_control sc = {
+		.nr_to_reclaim = max(nr_pages, SWAP_CLUSTER_MAX),
+		.gfp_mask = GFP_KERNEL,
+		.reclaim_idx = MAX_NR_ZONES - 1,
+		.target_mem_cgroup = memcg,
+		.priority = DEF_PRIORITY,
+		.may_writepage = true,
+		.may_unmap = true,
+		.may_swap = !!swappiness,
+		.emm_swappiness = swappiness,
+		.emm_reclaiming = mode == EMM_RECLAIM,
+		.emm_aging = mode == EMM_AGE,
+	};
+
+again:
+	/*
+	 * Copy & paste from try_to_free_mem_cgroup_pages
+	 */
+	zonelist = node_zonelist(numa_node_id(), sc.gfp_mask);
+
+	set_task_reclaim_state(current, &sc.reclaim_state);
+
+	noreclaim_flag = memalloc_noreclaim_save();
+
+	nr_shrinked = do_try_to_free_pages(zonelist, &sc);
+
+	if (mode != EMM_RECLAIM) {
+		nr_shrinked += sc.emm_nr_taken;
+		sc.emm_nr_taken = 0;
+	}
+
+	if (nr_shrinked) {
+		nr_pages -= min(nr_pages, nr_shrinked);
+	} else if (retry) {
+		retry = false;
+		lru_add_drain_all();
+		goto again;
+	}
+
+	memalloc_noreclaim_restore(noreclaim_flag);
+
+	set_task_reclaim_state(current, NULL);
+
+	if (nr_pages)
+		return -EAGAIN;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(memcg_emm_reclaim);
+
 #ifdef CONFIG_LRU_GEN
 int memcg_lru_gen_emm_reclaim(struct mem_cgroup *memcg, int mode,
 			      unsigned long nr_pages, unsigned long swappiness)
