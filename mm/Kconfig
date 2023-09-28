@@ -1332,4 +1332,17 @@ config EMM_RECLAIM
 	help
 	  This enables enhanced memory reclaim support.
 
+config EMM_ZRAM_CONF
+	bool "A place holder to Ensure required ZRAM configures are enabled."
+	select CRYPTO_LZO
+	select CRYPTO_ZSTD
+	select CRYPTO_LZ4
+	select CRYPTO_LZO
+	select CRYPTO_LZ4HC
+	select MEMCG_ZRAM
+	select ZSMALLOC
+	default n
+	help
+	  A place holder to Ensure required ZRAM configures are enabled.
+
 endmenu
