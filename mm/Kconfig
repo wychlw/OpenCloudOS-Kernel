@@ -1304,4 +1304,16 @@ config EMM_RAMDISK_SWAP
 
 	  If unsure say N.
 
+config EMM_WORKINGSET_TRACKING
+	bool "Evaluate memory eviction usage"
+	depends on ENHANCED_MM
+	default n
+
+	help
+	  Evaluate per-cgroup memory eviction status, this help esimate
+	  the maximum, or actual potential workingset growth pattern when
+	  active shrinker are enabled. Because active shrinker may reduce
+	  the in-memory LRU size and change the workingset size, estimating
+	  a "raw workingset" can help analyze and improve the memory usage.
+
 endmenu

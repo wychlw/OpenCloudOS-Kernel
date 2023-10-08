@@ -219,6 +219,45 @@ static void unpack_shadow(void *shadow, int *memcgidp, pg_data_t **pgdat,
 	*workingsetp = workingset;
 }
 
+#ifdef CONFIG_EMM_WORKINGSET_TRACKING
+static void workingset_eviction_file(struct lruvec *lruvec, unsigned long nr_pages)
+{
+	do {
+		atomic_long_add(nr_pages, &lruvec->evicted_file);
+	} while ((lruvec = parent_lruvec(lruvec)));
+}
+
+/*
+ * If a page is evicted and never come back, either this page is really cold or it
+ * is deleted on disk.
+ *
+ * For cold page, it could take up all of memory until kswapd start to shrink it.
+ * For deleted page, the shadow will be gone too, so no refault.
+ *
+ * If a page comes back before it's shadow is released, that's a refault, which means
+ * file page reclaim have gone over-aggressive and that page would not have been evicted
+ * if all the page, include it self, stayed in memory.
+ */
+static void workingset_refault_track(struct lruvec *lruvec, unsigned long refault_distance)
+{
+	do {
+		/*
+		 * Not taking any lock, for better performance, may lead to some
+		 * event got lost, but it's just a rough estimation anyway.
+		 */
+		WRITE_ONCE(lruvec->refault_count, READ_ONCE(lruvec->refault_count) + 1);
+		WRITE_ONCE(lruvec->total_distance, READ_ONCE(lruvec->total_distance) + refault_distance);
+	} while ((lruvec = parent_lruvec(lruvec)));
+}
+#else
+static void workingset_eviction_file(struct lruvec *lruvec, unsigned long nr_pages)
+{
+}
+static void workingset_refault_track(struct lruvec *lruvec, unsigned long refault_distance)
+{
+}
+#endif
+
 static inline struct mem_cgroup *try_get_flush_memcg(int memcgid)
 {
 	struct mem_cgroup *memcg;

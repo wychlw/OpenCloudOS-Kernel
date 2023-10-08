@@ -641,6 +641,14 @@ struct lruvec {
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
 #endif
+
+#ifdef CONFIG_EMM_WORKINGSET_TRACKING
+	/* Non-resident file age, driven by LRU movement */
+	atomic_long_t			evicted_file;
+	/* For estimating avg refault distance */
+	unsigned long			refault_count;
+	unsigned long			total_distance;
+#endif
 };
 
 /* Isolate unmapped pages */
