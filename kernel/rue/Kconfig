@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Tencent RUE configuration
+#
+
+config RUE
+	tristate "Resource Utilization Enhancement"
+	default y
+	help
+	  Rue provides cgroup level resource isolation. It can help user to
+	  increase resource utilization. Rue contains four subsystems:
+	  cpu, memory, io, network. It allocates resource according to the
+	  priority of the cgroup.
