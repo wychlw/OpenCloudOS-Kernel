@@ -204,6 +204,13 @@ struct obj_cgroup {
 	};
 };
 
+/* Define item offset base on nr_node_ids in memcg->nodeinfo */
+enum memcg_blkio_item {
+	ITEM_BLKIO_CSS,
+	ITEM_BLKIO_PATH,
+	ITEM_BLKIO_MAX
+};
+
 /*
  * The memory controller data structure. The memory controller controls both
  * page cache and RSS per cgroup. We would eventually like to provide
@@ -658,6 +665,40 @@ static inline void mem_cgroup_protection(struct mem_cgroup *root,
 	*min = READ_ONCE(memcg->memory.emin);
 	*low = READ_ONCE(memcg->memory.elow);
 }
+
+/* For buffer io limit module*/
+static inline struct cgroup_subsys_state *get_blkio_css(struct mem_cgroup *memcg)
+{
+	return (struct cgroup_subsys_state *)memcg->nodeinfo[nr_node_ids + ITEM_BLKIO_CSS];
+}
+
+static inline char *get_blkio_path(struct mem_cgroup *memcg)
+{
+	return (char *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH];
+}
+
+static inline void set_blkio_css(struct mem_cgroup *memcg, struct cgroup_subsys_state *css)
+{
+	memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS] = (struct mem_cgroup_per_node *)css;
+}
+
+static inline void set_blkio_path(struct mem_cgroup *memcg, char *bpath)
+{
+	memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH] = (struct mem_cgroup_per_node *)bpath;
+}
+
+static inline void memcg_blkio_free(struct mem_cgroup *memcg)
+{
+	if (memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS]) {
+		css_put((struct cgroup_subsys_state *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS]);
+		set_blkio_css(memcg, NULL);
+	}
+	if (memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH]) {
+		kfree((char *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH]);
+		set_blkio_path(memcg, NULL);
+	}
+}
+/*For buffer io module end*/
 
 void mem_cgroup_calculate_protection(struct mem_cgroup *root,
 				     struct mem_cgroup *memcg);
