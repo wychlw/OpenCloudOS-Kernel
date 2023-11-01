@@ -8718,6 +8718,9 @@ int memcg_lru_gen_emm_reclaim(struct mem_cgroup *memcg, int mode,
 		goto done;
 	}
 
+	if (nr_pages)
+		walk->force_scan = true;
+
 	if (nr_pages == PAGE_COUNTER_MAX)
 		walk->force_full_scan = true;
 
