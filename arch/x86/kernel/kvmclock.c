@@ -250,8 +250,13 @@ static int __init kvm_setup_vsyscall_timeinfo(void)
 		u8 flags;
 
 		flags = pvclock_read_flags(&hv_clock_boot[0].pvti);
-		if (!(flags & PVCLOCK_TSC_STABLE_BIT))
+		if (!(flags & PVCLOCK_TSC_STABLE_BIT)) {
+			if (IS_ENABLED(CONFIG_KVM_FORCE_PVCLOCK)) {
+				pr_info("Forcing vclock_mode = VCLOCK_PVCLOCK\n");
+				kvm_clock.vdso_clock_mode = VDSO_CLOCKMODE_PVCLOCK;
+			}
 			return 0;
+		}
 
 		kvm_clock.vdso_clock_mode = VDSO_CLOCKMODE_PVCLOCK;
 	}

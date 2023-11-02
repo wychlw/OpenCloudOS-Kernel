@@ -225,7 +225,8 @@ static u64 vread_pvclock(void)
 	do {
 		version = pvclock_read_begin(pvti);
 
-		if (unlikely(!(pvti->flags & PVCLOCK_TSC_STABLE_BIT)))
+		if (unlikely(!(pvti->flags & PVCLOCK_TSC_STABLE_BIT)) &&
+				!IS_ENABLED(CONFIG_KVM_FORCE_PVCLOCK))
 			return U64_MAX;
 
 		ret = __pvclock_read_cycles(pvti, rdtsc_ordered());
