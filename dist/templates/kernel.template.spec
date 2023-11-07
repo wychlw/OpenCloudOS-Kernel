@@ -139,6 +139,8 @@ BuildRequires: gcc-plugin-devel
 # glibc-static is required for a consistent build environment (specifically
 # CONFIG_CC_CAN_LINK_STATIC=y).
 BuildRequires: glibc-static
+# Kernel could be compressed with lz4
+BuildRequires: lz4
 
 %if %{with_perf}
 BuildRequires: zlib-devel binutils-devel newt-devel perl(ExtUtils::Embed) bison flex xz-devel
