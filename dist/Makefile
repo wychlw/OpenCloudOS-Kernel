@@ -103,6 +103,10 @@ endif
 # All params enabled by default (except kABI check, see below), ENABLED overrides DEFAULT_DISABLE.
 DISABLED=$(DEFAULT_DISABLED)
 ENABLED=$(DEFAULT_ENABLED)
+# Automatically disable non core package for non standard build
+ifneq ($(CONFIG),generic-release)
+DISABLED=ofed bpftool perf tools
+endif
 
 ## A few shortcut for commonly used params:
 # Disable KABI check by default
