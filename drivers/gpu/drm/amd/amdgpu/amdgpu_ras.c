@@ -1019,8 +1019,13 @@ int amdgpu_ras_query_error_status(struct amdgpu_device *adev,
 				  struct ras_query_if *info)
 {
 	struct amdgpu_ras_block_object *block_obj = NULL;
-	struct ras_manager *obj = amdgpu_ras_find_obj(adev, &info->head);
+	struct ras_manager *obj;
 	struct ras_err_data err_data = {0, 0, 0, NULL};
+
+	if (!info)
+		return -EINVAL;
+
+	obj = amdgpu_ras_find_obj(adev, &info->head);
 
 	if (!obj)
 		return -EINVAL;
