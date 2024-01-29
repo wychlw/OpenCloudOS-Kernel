@@ -4126,7 +4126,7 @@ void tcp_parse_options(const struct net *net,
 				if ((opsize == TCPOLEN_TIMESTAMP) &&
 				    ((estab && opt_rx->tstamp_ok) ||
 				     (!estab && READ_ONCE(net->ipv4.sysctl_tcp_timestamps) &&
-				      (net->ipv4.sysctl_tcp_wan_timestamps || is_private_ip(iph->saddr))))) {
+				      (READ_ONCE(net->ipv4.sysctl_tcp_wan_timestamps) || is_private_ip(iph->saddr))))) {
 					opt_rx->saw_tstamp = 1;
 					opt_rx->rcv_tsval = get_unaligned_be32(ptr);
 					opt_rx->rcv_tsecr = get_unaligned_be32(ptr + 4);
