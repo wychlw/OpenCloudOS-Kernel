@@ -110,6 +110,10 @@ config-fragments = $(call configfiles,$@)
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/kconfig/merge_config.sh -m .config $(config-fragments)
 	$(Q)$(MAKE) -f $(srctree)/Makefile olddefconfig
 
+PHONY += notkconfig
+notkconfig: notk.config
+	@:
+
 PHONY += tinyconfig
 tinyconfig:
 	$(Q)KCONFIG_ALLCONFIG=kernel/configs/tiny-base.config $(MAKE) -f $(srctree)/Makefile allnoconfig
