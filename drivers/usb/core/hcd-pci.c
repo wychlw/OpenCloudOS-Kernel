@@ -48,6 +48,9 @@ static void for_each_companion(struct pci_dev *pdev, struct usb_hcd *hcd,
 	struct pci_dev		*companion;
 	struct usb_hcd		*companion_hcd;
 	unsigned int		slot = PCI_SLOT(pdev->devfn);
+#if IS_ENABLED(CONFIG_X86)
+	struct pci_driver	*drv;
+#endif
 
 	/*
 	 * Iterate through other PCI functions in the same slot.
@@ -59,6 +62,18 @@ static void for_each_companion(struct pci_dev *pdev, struct usb_hcd *hcd,
 		if (companion->bus != pdev->bus ||
 				PCI_SLOT(companion->devfn) != slot)
 			continue;
+
+#if IS_ENABLED(CONFIG_X86)
+		if (boot_cpu_data.x86_vendor == X86_VENDOR_CENTAUR ||
+			boot_cpu_data.x86_vendor == X86_VENDOR_ZHAOXIN) {
+			drv = companion->driver;
+			if (drv &&
+				strncmp(drv->name, "uhci_hcd", sizeof("uhci_hcd") - 1) &&
+				strncmp(drv->name, "ohci-pci", sizeof("ohci-pci") - 1) &&
+				strncmp(drv->name, "ehci-pci", sizeof("ehci-pci") - 1))
+				continue;
+			}
+#endif
 
 		/*
 		 * Companion device should be either UHCI,OHCI or EHCI host
