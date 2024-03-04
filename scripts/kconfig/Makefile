@@ -90,6 +90,14 @@ else
 	$(Q)$(MAKE) -f $(srctree)/Makefile $(KBUILD_DEFCONFIG)
 endif
 
+centosconfig: $(obj)/conf
+ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/configs/centos.config),)
+	@$(kecho) "*** configuration is based on 'centos.config'"
+	$(Q)$< $(silent) --defconfig=arch/$(SRCARCH)/configs/centos.config $(Kconfig)
+else
+	@$(kecho) "*** NO centosconfig! ERROR "
+endif
+
 tencentconfig: $(obj)/conf
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/configs/tencent.config),)
 	@$(kecho) "*** configuration is based on 'tencent.config'"
