@@ -90,6 +90,14 @@ else
 	$(Q)$(MAKE) -f $(srctree)/Makefile $(KBUILD_DEFCONFIG)
 endif
 
+tencentconfig: $(obj)/conf
+ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/configs/tencent.config),)
+	@$(kecho) "*** configuration is based on 'tencent.config'"
+	$(Q)$< $(silent) --defconfig=arch/$(SRCARCH)/configs/tencent.config $(Kconfig)
+else
+	@$(kecho) "*** NO tencentconfig! ERROR "
+endif
+
 %_defconfig: $(obj)/conf
 	$(Q)$< $(silent) --defconfig=arch/$(SRCARCH)/configs/$@ $(Kconfig)
 
@@ -144,6 +152,7 @@ help:
 	@echo  '                    default value without prompting'
 	@echo  '  tinyconfig	  - Configure the tiniest possible kernel'
 	@echo  '  testconfig	  - Run Kconfig unit tests (requires python3 and pytest)'
+	@echo  '  tencentconfig   - Tencent default configrations'
 	@echo  ''
 	@echo  'Configuration topic targets:'
 	@$(foreach f, $(all-config-fragments), \
