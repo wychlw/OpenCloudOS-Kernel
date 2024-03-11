@@ -244,6 +244,12 @@ config ARCH_NPCM
 	  General support for NPCM8xx BMC (Arbel).
 	  Nuvoton NPCM8xx BMC based on the Cortex A35.
 
+config ARCH_PHYTIUM
+	bool "Phytium SoC Family"
+	select ARM_GIC_PHYTIUM_2500
+	help
+	  This enables support for Phytium ARMv8 SoC family.
+
 config ARCH_QCOM
 	bool "Qualcomm Platforms"
 	select GPIOLIB
