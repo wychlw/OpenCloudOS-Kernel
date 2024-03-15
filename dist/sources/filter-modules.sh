@@ -170,7 +170,7 @@ case $MODULEPKG in
 		# Now process the override list to bring those modules back into core
 		filter_override "$overrides"
 		;;
-	modules-removable-media )
+	modules-public-removable-media )
 		# Filter all mods under /lib/modules/$kver/kernel/drivers/usb/storage
 		filter_mods "drivers/usb/" "storage" /
 		;;
