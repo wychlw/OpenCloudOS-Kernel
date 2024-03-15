@@ -174,6 +174,9 @@ case $MODULEPKG in
 		# Filter all mods under /lib/modules/$kver/kernel/drivers/usb/storage
 		filter_mods "drivers/usb/" "storage" /
 		;;
+	modules-public )
+		filter_mods "drivers/gpu/drm/" "nouveau" /
+		;;
 	* )
 		error "Invalid module packaging param '$1'"
 		exit 1
