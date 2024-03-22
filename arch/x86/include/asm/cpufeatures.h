@@ -13,7 +13,7 @@
 /*
  * Defines x86 CPU feature bits
  */
-#define NCAPINTS			30	   /* N 32-bit words worth of info */
+#define NCAPINTS			31	   /* N 32-bit words worth of info */
 #define NBUGINTS			4	   /* N 32-bit bug flags */
 
 /*
@@ -473,6 +473,10 @@
 #define X86_FEATURE_SBPB		(20*32+27) /* "" Selective Branch Prediction Barrier */
 #define X86_FEATURE_IBPB_BRTYPE		(20*32+28) /* "" MSR_PRED_CMD[IBPB] flushes all branch type predictions */
 #define X86_FEATURE_SRSO_NO		(20*32+29) /* "" CPU is not affected by SRSO */
+
+/* VIA/Cyrix/Centaur-defined CPU features, CPUID level 0xC0000006, word 21 */
+#define X86_FEATURE_ZXPAUSE		(30*32 + 0) /* ZHAOXIN ZXPAUSE */
+
 
 /*
  * BUG word(s)

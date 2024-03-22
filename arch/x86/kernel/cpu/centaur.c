@@ -117,6 +117,9 @@ static void early_init_centaur(struct cpuinfo_x86 *c)
 	if (c->x86 == 0x6 || (c->x86 == 0x7 && c->x86_model <= 0x3b))
 		set_cpu_cap(c, X86_FEATURE_CRC32C_LOW_PERF);
 
+	if (cpuid_eax(0xC0000000) >= 0xC0000006)
+		c->x86_capability[CPUID_C000_0006_EAX] = cpuid_eax(0xC0000006);
+
 	if (detect_extended_topology_early(c) < 0)
 		detect_ht_early(c);
 }
