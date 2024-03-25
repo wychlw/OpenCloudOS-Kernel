@@ -601,12 +601,6 @@ struct blkcg_policy {
 struct blkcg {
 };
 
-#define blkcg_part_stat_add(blkcg, cpu, part, field, addnd) do {} while (0)
-#define blkcg_part_stat_dec(blkcg, cpu, gendiskp, field) do {} while (0)
-#define blkcg_part_stat_inc(blkcg, cpu, gendiskp, field) do {} while (0)
-#define blkcg_part_stat_sub(blkcg, cpu, gendiskp, field, subnd) do {} while (0)
-#define blkcg_part_stat_read(blkcg, part, field) do {} while (0)
-
 static inline struct blkcg_gq *blkg_lookup(struct blkcg *blkcg, void *key) { return NULL; }
 static inline void blkg_init_queue(struct request_queue *q) { }
 static inline int blkcg_init_disk(struct gendisk *disk) { return 0; }

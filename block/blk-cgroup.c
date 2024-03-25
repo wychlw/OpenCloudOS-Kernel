@@ -1036,7 +1036,12 @@ int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v)
 
 	return ret;
 }
-#endif
+#else
+int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v)
+{
+	return 0;
+}
+#endif /* CONFIG_CGROUPFS and CONFIG_BLK_CGROUP_DISKSTATS */
 
 #ifdef CONFIG_BLK_CGROUP_DISKSTATS
 static int blkcg_dkstats_show(struct seq_file *sf, void *v)
