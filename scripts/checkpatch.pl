@@ -7723,10 +7723,16 @@ sub process {
 				     "From:/Signed-off-by: email subaddress mismatch: $sob_msg\n");
 			}
 		}
-		if ($author !~ /tencent/ && $tencentsign != 0 && $tencentbackport == 0) {
-			# It's a backport commit, needs a cid reference
-			WARN("NO_BACKPORT_REF",
-				"Missing backport reference 'commit xxx upstream' ?\n");
+		if ($author !~ /tencent.com/) {
+			if ($tencentsign == 0) {
+				WARN("BAD_SIGN_OFF",
+					"If this commit cherry-pick from upstream, must add Signed-off-by: <*tencent.com> !\n");
+			}
+			if ($tencentbackport == 0) {
+				# It's a backport commit, needs a cid reference
+				WARN("NO_BACKPORT_REF",
+					"If this commit cherry-pick from upstream, must add upstream commid, eg: 'commit xxx upstream.' !\n");
+			}
 		}
 
 	}
