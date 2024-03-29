@@ -200,6 +200,19 @@ static inline s64 bytes_to_ns(u64 rate, u64 bytes)
 	return bytes * NSEC_PER_SEC / rate;
 }
 
+static inline struct cgroup_cls_state *sock_get_css(const struct sock *sk)
+{
+	struct cgroup_cls_state *cs;
+
+	rcu_read_lock();
+	cs = READ_ONCE(sk->sk_cgrp_data.cs);
+	if (!cs || unlikely(!css_tryget_online(&cs->css)))
+		cs = NULL;
+	rcu_read_unlock();
+
+	return cs;
+}
+
 #else /* !CONFIG_CGROUP_NET_CLASSID */
 static inline void sock_update_classid(struct sock_cgroup_data *skcd)
 {
