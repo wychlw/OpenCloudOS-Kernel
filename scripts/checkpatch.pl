@@ -3352,6 +3352,7 @@ sub process {
 			my $id = '0123456789ab';
 			my $orig_desc = "commit description";
 			my $description = "";
+			my $backport = 0;
 			my $herectx = $herecurr;
 			my $has_parens = 0;
 			my $has_quotes = 0;
@@ -3384,6 +3385,8 @@ sub process {
 				$long = 1 if ($input =~ /\bcommit\s+[0-9a-f]{41,}/i);
 				$space = 0 if ($input =~ /\bcommit [0-9a-f]/i);
 				$case = 0 if ($input =~ /\b[Cc]ommit\s+[0-9a-f]{5,40}[^A-F]/);
+				$backport = 1 if(($line =~ /\bcommit\s+[0-9a-f]{12,40}\supstream/i) ||
+							($line =~ /\B\[\s[Uu]pstream\scommit\s+[0-9a-f]{5,}\s\]/));
 			} elsif ($input =~ /\b([0-9a-f]{12,40})\b/i) {
 				$orig_commit = lc($1);
 			}
@@ -3393,7 +3396,7 @@ sub process {
 
 			if (defined($id) &&
 			    ($short || $long || $space || $case || ($orig_desc ne $description) || !$has_quotes) &&
-			    $last_git_commit_id_linenr != $linenr - 1) {
+			    $last_git_commit_id_linenr != $linenr - 1 && !$backport) {
 				ERROR("GIT_COMMIT_ID",
 				      "Please use git commit description style 'commit <12+ chars of sha1> (\"<title line>\")' - ie: '${init_char}ommit $id (\"$description\")'\n" . $herectx);
 			}
