@@ -310,6 +310,9 @@ static inline unsigned long lru_eviction(struct lruvec *lruvec, int type,
 {
 	unsigned long eviction;
 
+	if (type)
+		workingset_eviction_file(lruvec, nr_pages);
+
 	/*
 	 * Reclaiming a cgroup means reclaiming all its children in a
 	 * round-robin fashion. That means that each cgroup has an LRU
@@ -467,6 +470,7 @@ static void lru_gen_refault(struct folio *folio, void *shadow)
 	mod_lruvec_state(lruvec, WORKINGSET_REFAULT_BASE + type, delta);
 	refault_distance = lru_distance(lruvec, type, token,
 				LRU_GEN_EVICTION_BITS, lru_gen_bucket_order);
+	workingset_refault_track(lruvec, distance);
 	/* Check if the gen the page was evicted from still exist */
 	recent = lru_gen_test_recent(lruvec, type, refault_distance);
 	/* Check if the distance indicates a refault */
@@ -595,10 +599,11 @@ void *workingset_eviction(struct folio *folio, struct mem_cgroup *target_memcg)
  * @file: whether the corresponding folio is from the file lru.
  * @workingset: where the workingset value unpacked from shadow should
  * be stored.
+ * @tracking: whether do workingset tracking or not
  *
  * Return: true if the shadow is for a recently evicted folio; false otherwise.
  */
-bool workingset_test_recent(void *shadow, bool file, bool *workingset)
+bool workingset_test_recent(void *shadow, bool file, bool *workingset, bool tracking)
 {
 	struct mem_cgroup *eviction_memcg;
 	struct lruvec *eviction_lruvec;
@@ -650,6 +655,9 @@ bool workingset_test_recent(void *shadow, bool file, bool *workingset)
 
 	refault_distance = lru_distance(eviction_lruvec, file,
 					eviction, EVICTION_BITS, bucket_order);
+
+	if (tracking)
+		workingset_refault_track(eviction_lruvec, refault_distance);
 
 	/*
 	 * Compare the distance to the existing workingset size. We
@@ -717,7 +725,7 @@ void workingset_refault(struct folio *folio, void *shadow)
 
 	mod_lruvec_state(lruvec, WORKINGSET_REFAULT_BASE + file, nr);
 
-	if (!workingset_test_recent(shadow, file, &workingset))
+	if (!workingset_test_recent(shadow, file, &workingset, true))
 		return;
 
 	folio_set_active(folio);
