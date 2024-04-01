@@ -300,7 +300,7 @@ static void lru_gen_refault(struct folio *folio, void *shadow)
 
 	lrugen = &lruvec->lrugen;
 
-	hist = lru_hist_from_seq(READ_ONCE(lrugen->min_seq[type]));
+	hist = lru_hist_of_min_seq(lruvec, type);
 	/* see the comment in folio_lru_refs() */
 	refs = (token & (BIT(LRU_REFS_WIDTH) - 1)) + workingset;
 	tier = lru_tier_from_refs(refs);
