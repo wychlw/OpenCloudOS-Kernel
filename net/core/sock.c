@@ -2440,12 +2440,13 @@ static u32 sk_dst_gso_max_size(struct sock *sk, struct dst_entry *dst)
 	return max_size - (MAX_TCP_HEADER + 1);
 }
 
+DEFINE_STATIC_KEY_TRUE(forced_caps_enabled);
 void sk_setup_caps(struct sock *sk, struct dst_entry *dst)
 {
 	u32 max_segs = 1;
 
 	sk->sk_route_caps = dst->dev->features;
-	if (sk_is_tcp(sk))
+	if (sk_is_tcp(sk) && static_branch_likely(&forced_caps_enabled))
 		sk->sk_route_caps |= NETIF_F_GSO;
 	if (sk->sk_route_caps & NETIF_F_GSO)
 		sk->sk_route_caps |= NETIF_F_GSO_SOFTWARE;

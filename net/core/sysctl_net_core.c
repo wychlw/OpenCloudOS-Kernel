@@ -660,6 +660,13 @@ static struct ctl_table net_core_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
+	{
+		.procname       = "forced_caps_enabled",
+		.data           = &forced_caps_enabled.key,
+		.maxlen         = sizeof(forced_caps_enabled),
+		.mode           = 0644,
+		.proc_handler	= proc_do_static_key,
+	},
 	{ }
 };
 
