@@ -1142,9 +1142,11 @@ static int zswap_writeback_entry(struct zswap_entry *entry,
 	SetPageReclaim(page);
 
 	/* start writeback */
-	__swap_writepage(page, &wbc);
+	ret = __swap_writepage(page, &wbc);
 	put_page(page);
-	zswap_written_back_pages++;
+
+	if (!ret)
+		zswap_written_back_pages++;
 
 	return ret;
 
