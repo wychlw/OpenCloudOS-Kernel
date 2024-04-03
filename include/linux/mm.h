@@ -444,6 +444,9 @@ extern unsigned int kobjsize(const void *objp);
 /* This mask represents all the VMA flag bits used by mlock */
 #define VM_LOCKED_MASK	(VM_LOCKED | VM_LOCKONFAULT)
 
+/* This mask is used to clear all the VMA flags used by mlock */
+#define VM_LOCKED_CLEAR_MASK	(~(VM_LOCKED | VM_LOCKONFAULT))
+
 /* Arch-specific flags to clear when updating VM flags on protection change */
 #ifndef VM_ARCH_CLEAR
 # define VM_ARCH_CLEAR	VM_NONE
@@ -2330,6 +2333,9 @@ static inline bool can_do_mlock(void) { return false; }
 #endif
 extern int user_shm_lock(size_t, struct ucounts *);
 extern void user_shm_unlock(size_t, struct ucounts *);
+extern int mlock_fixup(struct vma_iterator *vmi, struct vm_area_struct *vma,
+			struct vm_area_struct **prev, unsigned long start,
+			unsigned long end, vm_flags_t newflags);
 
 struct folio *vm_normal_folio(struct vm_area_struct *vma, unsigned long addr,
 			     pte_t pte);
