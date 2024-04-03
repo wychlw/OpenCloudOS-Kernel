@@ -5373,8 +5373,6 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
-static ssize_t memory_reclaim(struct kernfs_open_file *of, char *buf,
-			      size_t nbytes, loff_t off);
 static u64 memory_current_read(struct cgroup_subsys_state *css,
 			       struct cftype *cft);
 static int memory_low_show(struct seq_file *m, void *v);
@@ -5562,11 +5560,6 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "events",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = memory_events_show,
-	},
-	{
-		.name = "reclaim",
-		.flags = CFTYPE_NS_DELEGATABLE,
-		.write = memory_reclaim,
 	},
 	{ },	/* terminate */
 };
