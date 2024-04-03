@@ -70,6 +70,9 @@
 #include <net/ip.h>
 #include "slab.h"
 #include "swap.h"
+#ifdef CONFIG_TEXT_UNEVICTABLE
+#include <linux/unevictable.h>
+#endif
 
 #include <linux/uaccess.h>
 
@@ -4214,6 +4217,18 @@ static void memcg1_stat_format(struct mem_cgroup *memcg, struct seq_buf *s)
 #endif
 }
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+static int memcg_unevict_size_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+
+	seq_printf(m, "unevictable_text_size_kb %lu\n",
+		   memcg_exstat_text_unevict_gather(memcg) >> 10);
+
+	return 0;
+}
+#endif
+
 static u64 mem_cgroup_swappiness_read(struct cgroup_subsys_state *css,
 				      struct cftype *cft)
 {
@@ -5413,6 +5428,10 @@ static int mem_cgroup_allow_unevictable_write(struct cgroup_subsys_state *css,
 		return 0;
 
 	memcg->allow_unevictable = val;
+	if (val)
+		memcg_all_processes_unevict(memcg, true);
+	else
+		memcg_all_processes_unevict(memcg, false);
 
 	return 0;
 }
@@ -5454,6 +5473,10 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "text_unevictable_percent",
 		.read_u64 = mem_cgroup_unevictable_percent_read,
 		.write_u64 = mem_cgroup_unevictable_percent_write,
+	},
+	{
+		.name = "text_unevictable_size",
+		.seq_show = memcg_unevict_size_show,
 	},
  #endif
 	{
@@ -5870,6 +5893,7 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	page_counter_set_high(&memcg->swap, PAGE_COUNTER_MAX);
 #ifdef CONFIG_TEXT_UNEVICTABLE
 	memcg->unevictable_percent = 100;
+	atomic_long_set(&memcg->unevictable_size, 0);
 #endif
 	if (parent) {
 #ifdef CONFIG_TEXT_UNEVICTABLE
@@ -6674,6 +6698,10 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 	if (!p)
 		return 0;
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	mem_cgroup_can_unevictable(p, memcg);
+#endif
+
 	/*
 	 * We are now committed to this value whatever it is. Changes in this
 	 * tunable will only affect upcoming migrations, not the current one.
@@ -6717,6 +6745,9 @@ static int mem_cgroup_can_attach(struct cgroup_taskset *tset)
 
 static void mem_cgroup_cancel_attach(struct cgroup_taskset *tset)
 {
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	mem_cgroup_cancel_unevictable(tset);
+#endif
 	if (mc.to)
 		mem_cgroup_clear_mc();
 }

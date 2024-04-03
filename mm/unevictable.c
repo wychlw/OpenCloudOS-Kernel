@@ -40,6 +40,11 @@
 
 #ifdef CONFIG_TEXT_UNEVICTABLE
 DEFINE_STATIC_KEY_FALSE(unevictable_enabled_key);
+
+#define for_each_mem_cgroup(iter)			\
+	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(NULL, iter, NULL))
 #endif
 
 struct evict_pids_t {
@@ -51,6 +56,9 @@ struct evict_pid_entry {
 	struct list_head list;
 	pid_t rootpid;
 	u64 start_time;
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	u64 unevict_size;
+#endif
 	struct task_struct *tsk;
 	bool done;
 };
@@ -102,6 +110,10 @@ static void __evict_pid(struct evict_pid_entry *pid)
 			if (!(mm->def_flags & VM_LOCKED)) {
 				struct vm_area_struct *vma, *prev = NULL;
 				vm_flags_t flag;
+#ifdef CONFIG_TEXT_UNEVICTABLE
+				unsigned long size = 0;
+				struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+#endif
 
 				VMA_ITERATOR(vmi, mm, 0);
 				mmap_write_lock(mm);
@@ -113,10 +125,18 @@ static void __evict_pid(struct evict_pid_entry *pid)
 						flag = vma->vm_flags & VM_LOCKED_CLEAR_MASK;
 						mlock_fixup(&vmi, vma, &prev,
 								vma->vm_start, vma->vm_end, flag);
+#ifdef CONFIG_TEXT_UNEVICTABLE
+						size += vma->vm_end - vma->vm_start;
+#endif
 					}
 				}
 
 				mmap_write_unlock(mm);
+#ifdef CONFIG_TEXT_UNEVICTABLE
+				memcg_decrease_unevict_size(memcg, size);
+				css_put(&memcg->css);
+				pid->unevict_size -= size;
+#endif
 			}
 			mmput(mm);
 		}
@@ -250,6 +270,9 @@ static void add_unevict_task(struct task_struct *tsk)
 	if (!result) {
 		result = new_entry;
 		result->rootpid = rootpid;
+#ifdef CONFIG_TEXT_UNEVICTABLE
+		result->unevict_size = 0;
+#endif
 		rb_link_node(&result->node, parent, link);
 		rb_insert_color(&result->node, &base_tree->root);
 		list_add_tail(&result->list, &pid_list);
@@ -294,6 +317,12 @@ static void unevict_pid(pid_t pid)
 	get_task_struct(tsk);
 	rcu_read_unlock();
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	if (is_memcg_unevictable_enabled(mem_cgroup_from_task(tsk))) {
+		put_task_struct(tsk);
+		return;
+	}
+#endif
 	add_unevict_task(tsk);
 	put_task_struct(tsk);
 }
@@ -431,6 +460,9 @@ static void execute_vm_lock(struct work_struct *unused)
 
 		mm = get_task_mm(tsk);
 		if (mm && !(mm->def_flags & VM_LOCKED)) {
+#ifdef CONFIG_TEXT_UNEVICTABLE
+			struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+#endif
 			struct vm_area_struct *vma, *prev = NULL;
 			vm_flags_t flag;
 
@@ -438,6 +470,10 @@ static void execute_vm_lock(struct work_struct *unused)
 			mmap_write_lock(mm);
 
 			for_each_vma(vmi, vma) {
+#ifdef CONFIG_TEXT_UNEVICTABLE
+				if (is_unevictable_size_overflow(memcg))
+					break;
+#endif
 				if (vma->vm_file &&
 					(vma->vm_flags & VM_EXEC) &&
 					(vma->vm_flags & VM_READ)) {
@@ -445,6 +481,9 @@ static void execute_vm_lock(struct work_struct *unused)
 					flag |= (VM_LOCKED | VM_LOCKONFAULT);
 					mlock_fixup(&vmi, vma, &prev,
 							 vma->vm_start, vma->vm_end, flag);
+#ifdef CONFIG_TEXT_UNEVICTABLE
+					result->unevict_size += vma->vm_end - vma->vm_start;
+#endif
 				}
 			}
 
@@ -452,6 +491,11 @@ static void execute_vm_lock(struct work_struct *unused)
 			result->start_time = tsk->start_boottime;
 			result->done = true;
 			mmap_write_unlock(mm);
+#ifdef CONFIG_TEXT_UNEVICTABLE
+			memcg_increase_unevict_size(memcg,
+							result->unevict_size);
+			css_put(&memcg->css);
+#endif
 		} else {
 			list_del(&result->list);
 			__remove_entry(result);
@@ -546,6 +590,163 @@ const static struct proc_ops del_proc_fops = {
 };
 
 #ifdef CONFIG_TEXT_UNEVICTABLE
+void clean_task_unevict_size(struct task_struct *tsk)
+{
+	struct evict_pid_entry *result;
+	struct mem_cgroup *memcg;
+
+	/*
+	 * There must make sure unevictable
+	 * function is finished.
+	 */
+	if (!tsk || !base_tree)
+		return;
+
+	mutex_lock(&pid_mutex);
+	result = lookup_unevict_entry(tsk);
+	if (result) {
+		if (result->unevict_size) {
+			rcu_read_lock();
+			memcg = mem_cgroup_from_task(tsk);
+			memcg_decrease_unevict_size(memcg, result->unevict_size);
+			rcu_read_unlock();
+		}
+		list_del(&result->list);
+		__remove_entry(result);
+		mutex_unlock(&pid_mutex);
+		kfree(result);
+	} else
+		mutex_unlock(&pid_mutex);
+}
+
+bool is_memcg_unevictable_enabled(struct mem_cgroup *memcg)
+{
+	if (!unevictable_enabled())
+		return false;
+
+	if (!memcg)
+		return false;
+
+	if (memcg->allow_unevictable)
+		return true;
+
+	return false;
+}
+
+void memcg_increase_unevict_size(struct mem_cgroup *memcg, unsigned long size)
+{
+	atomic_long_add(size,  &memcg->unevictable_size);
+}
+
+void memcg_decrease_unevict_size(struct mem_cgroup *memcg, unsigned long size)
+{
+	atomic_long_sub(size,  &memcg->unevictable_size);
+}
+
+bool is_unevictable_size_overflow(struct mem_cgroup *memcg)
+{
+	struct page_counter *counter;
+	u64 res_limit;
+	u64 size;
+
+	counter = &memcg->memory;
+	res_limit = (u64)counter->max * PAGE_SIZE;
+	size = atomic_long_read(&memcg->unevictable_size);
+	size = size * 100 / res_limit;
+	if (size >= memcg->unevictable_percent)
+		return true;
+
+	return false;
+}
+
+unsigned long memcg_exstat_text_unevict_gather(struct mem_cgroup *memcg)
+{
+	return atomic_long_read(&memcg->unevictable_size);
+}
+
+void mem_cgroup_can_unevictable(struct task_struct *tsk, struct mem_cgroup *to)
+{
+	struct mem_cgroup *from;
+
+	if (!unevictable_enabled())
+		return;
+
+	from = mem_cgroup_from_task(tsk);
+	VM_BUG_ON(from == to);
+
+	if (to->allow_unevictable && !from->allow_unevictable) {
+		add_unevict_task(tsk);
+		schedule_delayed_work(&evict_work, HZ);
+	}
+
+	if (!to->allow_unevictable && from->allow_unevictable)
+		del_unevict_task(tsk);
+}
+
+void mem_cgroup_cancel_unevictable(struct cgroup_taskset *tset)
+{
+	struct task_struct *tsk;
+	struct cgroup_subsys_state *dst_css;
+	struct mem_cgroup *memcg;
+
+	if (!unevictable_enabled())
+		return;
+
+	cgroup_taskset_for_each(tsk, dst_css, tset) {
+		memcg = mem_cgroup_from_task(tsk);
+
+		if (memcg->allow_unevictable)
+			del_unevict_task(tsk);
+	}
+}
+
+static inline int schedule_unevict_task(struct task_struct *tsk, void *arg)
+{
+	add_unevict_task(tsk);
+	schedule_delayed_work(&evict_work, HZ);
+
+	return 0;
+}
+
+static inline int schedule_evict_task(struct task_struct *tsk, void *arg)
+{
+	del_unevict_task(tsk);
+
+	return 0;
+}
+
+static inline void make_all_memcg_evictable(void)
+{
+	struct mem_cgroup *memcg;
+
+	for_each_mem_cgroup(memcg) {
+		if (!memcg->allow_unevictable)
+			continue;
+		mem_cgroup_scan_tasks(memcg, schedule_unevict_task, NULL);
+		memcg->allow_unevictable = 0;
+		memcg->unevictable_percent = 100;
+		atomic_long_set(&memcg->unevictable_size, 0);
+	}
+}
+
+void memcg_all_processes_unevict(struct mem_cgroup *memcg, bool enable)
+{
+	struct mem_cgroup *tmp_memcg;
+
+	if (!unevictable_enabled())
+		return;
+
+	if (!memcg)
+		tmp_memcg = root_mem_cgroup;
+	else
+		tmp_memcg = memcg;
+
+	if (enable)
+		mem_cgroup_scan_tasks(tmp_memcg, schedule_unevict_task, NULL);
+	else
+		mem_cgroup_scan_tasks(tmp_memcg, schedule_evict_task, NULL);
+}
+
 static int __init setup_unevictable(char *s)
 {
 	if (!strcmp(s, "1"))
@@ -573,9 +774,10 @@ static ssize_t unevictable_enabled_store(struct kobject *kobj,
 
 	if (!strncmp(buf, "1", 1))
 		static_branch_enable(&unevictable_enabled_key);
-	else if (!strncmp(buf, "0", 1))
+	else if (!strncmp(buf, "0", 1)) {
 		static_branch_disable(&unevictable_enabled_key);
-	else
+		make_all_memcg_evictable();
+	} else
 		ret = -EINVAL;
 
 	mutex_unlock(&mutex);

@@ -352,6 +352,12 @@ struct mem_cgroup {
 #ifdef CONFIG_TEXT_UNEVICTABLE
 	bool allow_unevictable;
 	unsigned int unevictable_percent;
+	/*
+	 * the unevictable_size is larger than the real unevictable memory
+	 * size, due to there may be multiple tasks sharing the same memory,
+	 * such as binary and dynamic library sharing.
+	 */
+	atomic_long_t unevictable_size;
 #endif
 
 	KABI_RESERVE(1);
