@@ -292,6 +292,19 @@ Requires(postun): kmod
 This package provides drivers for public release, e.g. nouveau.ko,
 for %{name} of version %{version}-%{release}.
 
+### Kernel module private package
+%package modules-private
+Summary: %{rpm_vendor} Kernel modules private to match the %{rpm_name}-core kernel
+Provides: installonlypkg(kernel-module-private)
+Requires: %{rpm_name} = %{version}-%{release}
+AutoReq: no
+AutoProv: yes
+Requires(pre): kmod
+Requires(postun): kmod
+%description modules-private
+This package provides modules for private release, e.g. rue.ko,
+for %{name} of version %{version}-%{release}.
+
 ### Kernel devel package
 %package devel
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
@@ -1102,6 +1115,9 @@ CollectKernelFile() {
 	# Do module splitting for public release modules
 	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-public >> modules-public.list || exit $?
 
+	# Do module splitting for public release modules
+	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-private >> modules-private.list || exit $?
+
 	comm -23 core.list modules.list > core.list.tmp
 	mv core.list.tmp core.list
 
@@ -1109,6 +1125,9 @@ CollectKernelFile() {
 	mv core.list.tmp core.list
 
 	comm -23 core.list modules-public.list > core.list.tmp
+	mv core.list.tmp core.list
+
+	comm -23 core.list modules-private.list > core.list.tmp
 	mv core.list.tmp core.list
 
 	popd
@@ -1291,6 +1310,12 @@ depmod -a %{kernel_unamer}
 %postun modules-public
 depmod -a %{kernel_unamer}
 
+%post modules-private
+depmod -a %{kernel_unamer}
+
+%postun modules-private
+depmod -a %{kernel_unamer}
+
 ### Devel package
 %post devel
 if [ -f /etc/sysconfig/kernel ]; then
@@ -1351,6 +1376,8 @@ fi
 %files modules-public-removable-media -f modules-public-removable-media.list
 
 %files modules-public -f modules-public.list
+
+%files modules-private -f modules-private.list
 
 %if %{with_keypkg}
 %files signing-keys -f signing-keys.list

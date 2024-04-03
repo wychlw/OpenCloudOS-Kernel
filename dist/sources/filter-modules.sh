@@ -42,6 +42,8 @@ fsdrvs="affs befs cifs coda cramfs dlm ecryptfs hfs hfsplus jfs jffs2 minix ncpf
 # .ko files to be filtered
 singlemods="ntb_netdev iscsi_ibft iscsi_boot_sysfs megaraid pmcraid qedi qla1280 9pnet_rdma rpcrdma nvmet-rdma nvme-rdma hid-picolcd hid-prodikeys hwa-hc hwpoison-inject hid-sensor-hub target_core_user sbp_target cxgbit iw_cxgb3 iw_cxgb4 cxgb3i cxgb3i cxgb3i_ddp cxgb4i chcr chtls parport_serial ism regmap-sdw regmap-sdw-mbq arizona-micsupp hid-asus iTCO_wdt rnbd-client rnbd-server mlx5_ib mlx5_vdpa spi-altera-dfl nct6775 hid-playstation hid-nintendo ntc_thermistor configs cifs"
 
+privatemods="rue emm_extentions emm_coreutils emm_zram"
+
 # Overrides is individual modules which need to remain in kernel-core due to deps.
 overrides="cec wmi"
 
@@ -176,6 +178,9 @@ case $MODULEPKG in
 		;;
 	modules-public )
 		filter_mods "drivers/gpu/drm/" "nouveau" /
+		;;
+	modules-private )
+		filter_mods "" "$privatemods" /
 		;;
 	* )
 		error "Invalid module packaging param '$1'"
