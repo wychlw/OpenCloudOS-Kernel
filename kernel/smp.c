@@ -346,6 +346,7 @@ static __always_inline void csd_unlock(struct __call_single_data *csd)
 
 static DEFINE_PER_CPU_SHARED_ALIGNED(call_single_data_t, csd_data);
 
+/* if you changed this function, please take care of __smp_queue_func */
 void __smp_call_single_queue(int cpu, struct llist_node *node)
 {
 	/*
@@ -382,12 +383,31 @@ void __smp_call_single_queue(int cpu, struct llist_node *node)
 		send_call_function_single_ipi(cpu);
 }
 
+/* this function is take from __smp_call_single_queue, while without
+ * real send ipi, we really only need llist_add, if we use llist_add
+ * directly, we leave a trace point
+ */
+static bool __smp_queue_func(int cpu, struct llist_node *node)
+{
+	if (trace_csd_queue_cpu_enabled()) {
+		call_single_data_t *csd;
+		smp_call_func_t func;
+
+		csd = container_of(node, call_single_data_t, node.llist);
+		func = CSD_TYPE(csd) == CSD_TYPE_TTWU ?
+			sched_ttwu_pending : csd->func;
+
+		trace_csd_queue_cpu(cpu, _RET_IP_, func, csd);
+	}
+	return llist_add(node, &per_cpu(call_single_queue, cpu));
+}
+
 /*
  * Insert a previously allocated call_single_data_t element
  * for execution on the given CPU. data must already have
  * ->func, ->info, and ->flags set.
  */
-static int generic_exec_single(int cpu, struct __call_single_data *csd)
+static int generic_exec_single(int cpu, struct __call_single_data *csd, struct cpumask *mask)
 {
 	if (cpu == smp_processor_id()) {
 		smp_call_func_t func = csd->func;
@@ -412,10 +432,47 @@ static int generic_exec_single(int cpu, struct __call_single_data *csd)
 		return -ENXIO;
 	}
 
-	__smp_call_single_queue(cpu, &csd->node.llist);
-
+	if (!mask) {
+		__smp_call_single_queue(cpu, &csd->node.llist);
+		return 0;
+	}
+	if (__smp_queue_func(cpu, &csd->node.llist))
+		__cpumask_set_cpu(cpu, mask);
 	return 0;
 }
+
+/**
+ * smp_call_function_many_async(): Run an asynchronous function on a
+ *                              specific CPU.
+ * @cpu: The CPU to run on.
+ * @csd: Pre-allocated and setup data structure
+ * @mask: CPU mask, only mark, do not send ipi
+ *
+ * Like smp_call_function_single(), but the call is asynchonous and
+ * can thus be done from contexts with disabled interrupts.
+ *
+ * The caller passes his own pre-allocated data structure
+ * (ie: embedded in an object) and is responsible for synchronizing it
+ * such that the IPIs performed on the @csd are strictly serialized.
+ *
+ * NOTE: Be careful, there is unfortunately no current debugging facility to
+ * validate the correctness of this serialization.
+ */
+int smp_call_function_many_async(int cpu, struct __call_single_data *csd, struct cpumask *mask)
+{
+	int err = 0;
+
+	if (csd->node.u_flags & CSD_FLAG_LOCK) {
+		err = -EBUSY;
+		goto out;
+	}
+	csd->node.u_flags = CSD_FLAG_LOCK;
+	smp_wmb();
+	err = generic_exec_single(cpu, csd, mask);
+out:
+	return err;
+}
+EXPORT_SYMBOL_GPL(smp_call_function_many_async);
 
 /**
  * generic_smp_call_function_single_interrupt - Execute SMP IPI callbacks
@@ -644,7 +701,7 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
 	csd->node.dst = cpu;
 #endif
 
-	err = generic_exec_single(cpu, csd);
+	err = generic_exec_single(cpu, csd, NULL);
 
 	if (wait)
 		csd_lock_wait(csd);
@@ -692,7 +749,7 @@ int smp_call_function_single_async(int cpu, struct __call_single_data *csd)
 	csd->node.u_flags = CSD_FLAG_LOCK;
 	smp_wmb();
 
-	err = generic_exec_single(cpu, csd);
+	err = generic_exec_single(cpu, csd, NULL);
 
 out:
 	preempt_enable();
