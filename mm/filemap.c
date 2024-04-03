@@ -4195,7 +4195,7 @@ static void filemap_cachestat(struct address_space *mapping,
 				shadow = get_shadow_from_swap_cache(swp);
 			}
 #endif
-			if (workingset_test_recent(shadow, true, &workingset))
+			if (workingset_test_recent(shadow, true, &workingset, false))
 				cs->nr_recently_evicted += nr_pages;
 
 			goto resched;

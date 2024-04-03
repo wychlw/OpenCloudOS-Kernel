@@ -425,9 +425,9 @@ struct lru_gen_folio {
 	/* the multi-gen LRU sizes, eventually consistent */
 	long nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
 	/* the exponential moving average of refaulted */
-	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
 	/* the exponential moving average of evicted+protected */
-	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t avg_total[ANON_AND_FILE][MAX_NR_TIERS];
 	/* the first tier doesn't need protection, hence the minus one */
 	unsigned long protected[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS - 1];
 	/* can be modified without holding the LRU lock */
@@ -486,6 +486,9 @@ struct lru_gen_mm_walk {
 	int batched;
 	bool can_swap;
 	bool force_scan;
+#ifdef CONFIG_EMM_RECLAIM
+	bool force_full_scan;
+#endif
 };
 
 void lru_gen_init_lruvec(struct lruvec *lruvec);
@@ -626,8 +629,8 @@ struct lruvec {
 	 */
 	unsigned long			anon_cost;
 	unsigned long			file_cost;
-	/* Non-resident age, driven by LRU movement */
-	atomic_long_t			nonresident_age;
+	/* Number of evictions (non-resident age) */
+	atomic_long_t			evictions[ANON_AND_FILE];
 	/* Refaults at the time of last reclaim cycle */
 	unsigned long			refaults[ANON_AND_FILE];
 	/* Various lruvec state flags (enum lruvec_flags) */
@@ -640,6 +643,18 @@ struct lruvec {
 #endif
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
+#endif
+
+#ifdef CONFIG_EMM_WORKINGSET_TRACKING
+	/* Non-resident file age, driven by LRU movement */
+	atomic_long_t			evicted_file;
+	/* For estimating avg refault distance */
+	unsigned long			refault_count;
+	unsigned long			total_distance;
+#endif
+
+#ifdef CONFIG_EMM_MEMCG
+	void *emm_lruvec_data;
 #endif
 };
 

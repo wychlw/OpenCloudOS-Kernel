@@ -1268,4 +1268,93 @@ config PAGECACHE_LIMIT
 
 	  If unsure, say N.
 
+config ENHANCED_MM
+	bool "Enable enhanced mm support (EMM)"
+	depends on MEMCG
+	default n
+	help
+	  Support for EMM, including in-kernel API, extended interface, and reserved
+	  extra data structures.
+
+	  If unsure, say N.
+
+config EMM_FORCE_SWAPPINESS
+	bool "Prevent kswapd from reclaim any anon pages"
+	depends on ENHANCED_MM
+	depends on SWAP
+	default n
+	help
+	  This option will prevent kswapd from reclaim any anon pages when
+	  when swappiness is set to 0.
+
+	  By default, to prevent system-wide OOM, kswapd will reclaim anon
+	  pages for root cgroup even if swappiness is set to 0. This overrides
+	  this behaviour.
+
+	  If unsure say N.
+
+config EMM_RAMDISK_SWAP
+	bool "Tune ramdisks based swaps"
+	depends on ENHANCED_MM
+	depends on SWAP
+	default n
+	help
+	  This option will enable a few tunes for ramdisk based swaps,
+	  and make swap work better with memcg bounded ramdisk.
+
+	  If unsure say N.
+
+config EMM_WORKINGSET_TRACKING
+	bool "Evaluate memory eviction usage"
+	depends on ENHANCED_MM
+	default n
+
+	help
+	  Evaluate per-cgroup memory eviction status, this help esimate
+	  the maximum, or actual potential workingset growth pattern when
+	  active shrinker are enabled. Because active shrinker may reduce
+	  the in-memory LRU size and change the workingset size, estimating
+	  a "raw workingset" can help analyze and improve the memory usage.
+
+config EMM_MEMCG
+	bool "Enhanced memory management support for memcg."
+	depends on ENHANCED_MM
+	depends on MEMCG
+	default y
+	help
+	  This enables enhanced memory management support for memcg.
+
+config EMM_RECLAIM
+	bool "Enhanced memory reclaim support."
+	depends on ENHANCED_MM
+	depends on MEMCG
+	default y
+	help
+	  This enables enhanced memory reclaim support.
+
+config EMM_ZRAM_CONF
+	bool "A place holder to Ensure required ZRAM configures are enabled."
+	select CRYPTO_LZO
+	select CRYPTO_ZSTD
+	select CRYPTO_LZ4
+	select CRYPTO_LZO
+	select CRYPTO_LZ4HC
+	select MEMCG_ZRAM
+	select ZSMALLOC
+	default n
+	help
+	  A place holder to Ensure required ZRAM configures are enabled.
+
+config TEXT_UNEVICTABLE
+	bool "Enable memcg granularity code section unevictable"
+	depends on MEMCG
+	default n
+	help
+	  This feature is used to pin code section of processes in memcg for the
+	  corresponding VMAs like mlock does. The reason why add this feature here
+	  is to prevent the performance jitter when some key applications code section
+	  are reclaimed in memcg.
+
+	  If unsure, say N.
+
 endmenu

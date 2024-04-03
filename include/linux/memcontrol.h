@@ -37,6 +37,10 @@ enum memcg_stat_item {
 	MEMCG_KMEM,
 	MEMCG_ZSWAP_B,
 	MEMCG_ZSWAPPED,
+#ifdef CONFIG_MEMCG_ZRAM
+	MEMCG_ZRAM_B,
+	MEMCG_ZRAMED,
+#endif
 	MEMCG_NR_STAT,
 };
 
@@ -231,6 +235,11 @@ struct mem_cgroup {
 	unsigned long zswap_max;
 #endif
 
+#ifdef CONFIG_MEMCG_ZRAM
+	unsigned long zram_max;
+	unsigned short zram_prio;
+#endif
+
 	unsigned long soft_limit;
 
 	/* vmpressure notifications */
@@ -326,11 +335,6 @@ struct mem_cgroup {
 	struct list_head event_list;
 	spinlock_t event_list_lock;
 
-	KABI_RESERVE(1);
-	KABI_RESERVE(2);
-	KABI_RESERVE(3);
-	KABI_RESERVE(4);
-
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	struct deferred_split deferred_split_queue;
 #endif
@@ -339,6 +343,27 @@ struct mem_cgroup {
 	/* per-memcg mm_struct list */
 	struct lru_gen_mm_list mm_list;
 #endif
+
+#ifdef CONFIG_EMM_MEMCG
+	/* EMM: for tracking cgroup level info on the fly and with high performance */
+	void *emm_memcg_data;
+#endif
+
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	bool allow_unevictable;
+	unsigned int unevictable_percent;
+	/*
+	 * the unevictable_size is larger than the real unevictable memory
+	 * size, due to there may be multiple tasks sharing the same memory,
+	 * such as binary and dynamic library sharing.
+	 */
+	atomic_long_t unevictable_size;
+#endif
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 
 	struct mem_cgroup_per_node *nodeinfo[];
 };
@@ -1046,8 +1071,8 @@ static inline unsigned long lruvec_page_state_local(struct lruvec *lruvec,
 	return x;
 }
 
-void mem_cgroup_flush_stats(void);
-void mem_cgroup_flush_stats_ratelimited(void);
+void mem_cgroup_flush_stats(struct mem_cgroup *memcg);
+void mem_cgroup_flush_stats_ratelimited(struct mem_cgroup *memcg);
 
 void __mod_memcg_lruvec_state(struct lruvec *lruvec, enum node_stat_item idx,
 			      int val);
@@ -1531,11 +1556,11 @@ static inline unsigned long lruvec_page_state_local(struct lruvec *lruvec,
 	return node_page_state(lruvec_pgdat(lruvec), idx);
 }
 
-static inline void mem_cgroup_flush_stats(void)
+static inline void mem_cgroup_flush_stats(struct mem_cgroup *memcg)
 {
 }
 
-static inline void mem_cgroup_flush_stats_ratelimited(void)
+static inline void mem_cgroup_flush_stats_ratelimited(struct mem_cgroup *memcg)
 {
 }
 

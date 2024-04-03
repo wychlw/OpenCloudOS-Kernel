@@ -201,8 +201,8 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		folio_end_writeback(folio);
 		return 0;
 	}
-	__swap_writepage(&folio->page, wbc);
-	return 0;
+	ret = __swap_writepage(&folio->page, wbc);
+	return ret;
 }
 EXPORT_SYMBOL(swap_writepage);
 
@@ -369,11 +369,21 @@ static void swap_writepage_bdev_async(struct page *page,
 	submit_bio(bio);
 }
 
-void __swap_writepage(struct page *page, struct writeback_control *wbc)
+int __swap_writepage(struct page *page, struct writeback_control *wbc)
 {
 	struct swap_info_struct *sis = page_swap_info(page);
 
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
+
+	if (data_race(sis->flags & SWP_SYNCHRONOUS_IO)) {
+		int ret = bdev_swapout_folio(sis->bdev, swap_page_sector(page), page_folio(page), wbc);
+		if (ret != -EOPNOTSUPP) {
+			if (!ret)
+				count_swpout_vm_event(page_folio(page));
+			return ret;
+		}
+	}
+
 	/*
 	 * ->flags can be updated non-atomicially (scan_swap_map_slots),
 	 * but that will never affect SWP_FS_OPS, so the data_race
@@ -385,6 +395,8 @@ void __swap_writepage(struct page *page, struct writeback_control *wbc)
 		swap_writepage_bdev_sync(page, wbc, sis);
 	else
 		swap_writepage_bdev_async(page, wbc, sis);
+
+	return 0;
 }
 
 void swap_write_unplug(struct swap_iocb *sio)
@@ -520,11 +532,18 @@ void swap_readpage(struct page *page, bool synchronous, struct swap_iocb **plug)
 	} else if (data_race(sis->flags & SWP_FS_OPS)) {
 		swap_readpage_fs(page, plug);
 	} else if (synchronous || (sis->flags & SWP_SYNCHRONOUS_IO)) {
+		int ret = bdev_swapin_folio(sis->bdev, swap_page_sector(page), folio);
+		if (ret != -EOPNOTSUPP) {
+			if (!ret)
+				count_vm_event(PSWPIN);
+			goto out;
+		}
 		swap_readpage_bdev_sync(page, sis);
 	} else {
 		swap_readpage_bdev_async(page, sis);
 	}
 
+out:
 	if (workingset) {
 		delayacct_thrashing_end(&in_thrashing);
 		psi_memstall_leave(&pflags);

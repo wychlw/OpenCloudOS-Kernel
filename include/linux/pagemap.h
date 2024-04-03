@@ -206,6 +206,9 @@ enum mapping_flags {
 	AS_RELEASE_ALWAYS,	/* Call ->release_folio(), even if no private data */
 	AS_STABLE_WRITES,	/* must wait for writeback before modifying
 				   folio contents */
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+	AS_RAM_SWAP,		/* ramdisk based swap space, XXX: rename to some thing commonly used */
+#endif
 };
 
 /**
@@ -305,6 +308,13 @@ static inline void mapping_clear_stable_writes(struct address_space *mapping)
 {
 	clear_bit(AS_STABLE_WRITES, &mapping->flags);
 }
+
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+static inline int mapping_ram_swap(struct address_space *mapping)
+{
+	return !test_bit(AS_RAM_SWAP, &mapping->flags);
+}
+#endif
 
 static inline gfp_t mapping_gfp_mask(struct address_space * mapping)
 {

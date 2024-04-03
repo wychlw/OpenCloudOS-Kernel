@@ -34,9 +34,13 @@
 	} while (0)
 
 #define TCPOPT_TOA  200
-
 /* MUST be 4n !!!! */
-#define TCPOLEN_TOA 8		/* |opcode|size|ip+port| = 1 + 1 + 6 */
+/* |opcode|size|ip+port| = 1 + 1 + 6 */
+#define TCPOLEN_TOA 8
+
+#define TCPOPT_TOA_ALI_CIP 0xfe
+/* |opcode|size|sport|sip| = 1 + 1 + 2 + 4 */
+#define TCPOLEN_TOA_ALI_CIP 8
 
 /* MUST be 4 bytes alignment */
 struct toa_data {

@@ -482,7 +482,6 @@ void folio_mark_accessed(struct folio *folio)
 		else
 			__lru_cache_activate_folio(folio);
 		folio_clear_referenced(folio);
-		workingset_activation(folio);
 	}
 	if (folio_test_idle(folio))
 		folio_clear_idle(folio);
@@ -910,6 +909,7 @@ void lru_add_drain_all(void)
 	lru_add_drain();
 }
 #endif /* CONFIG_SMP */
+EXPORT_SYMBOL_GPL(lru_add_drain_all);
 
 atomic_t lru_disable_count = ATOMIC_INIT(0);
 

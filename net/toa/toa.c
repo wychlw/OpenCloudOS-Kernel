@@ -20,6 +20,9 @@
  *
  */
 
+static int ali_cip;
+module_param(ali_cip, int, 0600);
+MODULE_PARM_DESC(ali_cip, "Enable ali cip option: 0xfe. Value could be 0 or 1, defaults to 0.");
 
 /*
  * Statistics of toa in proc /proc/net/toa_stats
@@ -78,7 +81,8 @@ static void *get_toa_data(struct sk_buff *skb)
 					return NULL;
 				if (opsize > length)
 					return NULL;	/* don't parse partial options */
-				if (TCPOPT_TOA == opcode && TCPOLEN_TOA == opsize) {
+				if ((TCPOPT_TOA == opcode && TCPOLEN_TOA == opsize) ||
+					(ali_cip == 1 && TCPOPT_TOA_ALI_CIP == opcode && TCPOLEN_TOA_ALI_CIP == opsize)) {
 					memcpy(&tdata, ptr - 2, sizeof (tdata));
 					//TOA_DBG("find toa data: ip = %u.%u.%u.%u, port = %u\n", NIPQUAD(tdata.ip),
 						//ntohs(tdata.port));
@@ -118,7 +122,8 @@ inet_getname_toa(struct socket *sock, struct sockaddr *uaddr, int peer)
 	if (retval == 0 && NULL != sk->sk_user_data && peer) {
 		if (sock_def_readable == sk->sk_data_ready) {
 			memcpy(&tdata, &sk->sk_user_data, sizeof (tdata));
-			if (TCPOPT_TOA == tdata.opcode && TCPOLEN_TOA == tdata.opsize) {
+			if ((TCPOPT_TOA == tdata.opcode && TCPOLEN_TOA == tdata.opsize) ||
+				(ali_cip == 1 && TCPOPT_TOA_ALI_CIP == tdata.opcode && TCPOLEN_TOA_ALI_CIP == tdata.opsize)) {
 				TOA_INC_STATS(ext_stats, GETNAME_TOA_OK_CNT);
 				//TOA_DBG("inet_getname_toa: set new sockaddr, ip %u.%u.%u.%u -> %u.%u.%u.%u, port %u -> %u\n",
 				//		NIPQUAD(sin->sin_addr.s_addr), NIPQUAD(tdata.ip), ntohs(sin->sin_port),
@@ -158,7 +163,8 @@ inet6_getname_toa(struct socket *sock, struct sockaddr *uaddr, int peer)
 	if (retval == 0 && NULL != sk->sk_user_data && peer) {
 		if (sock_def_readable == sk->sk_data_ready) {
 			memcpy(&tdata, &sk->sk_user_data, sizeof (tdata));
-			if (TCPOPT_TOA == tdata.opcode && TCPOLEN_TOA == tdata.opsize) {
+			if ((TCPOPT_TOA == tdata.opcode && TCPOLEN_TOA == tdata.opsize) ||
+				(ali_cip == 1 && TCPOPT_TOA_ALI_CIP == tdata.opcode && TCPOLEN_TOA_ALI_CIP == tdata.opsize)) {
 				TOA_INC_STATS(ext_stats, GETNAME_TOA_OK_CNT);
 				sin->sin6_port = tdata.port;
 				ipv6_addr_set(&sin->sin6_addr, 0, 0, htonl(0x0000FFFF), tdata.ip);

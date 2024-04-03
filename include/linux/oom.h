@@ -112,4 +112,5 @@ extern void oom_killer_enable(void);
 
 extern struct task_struct *find_lock_task_mm(struct task_struct *p);
 
+extern int sysctl_oom_kill_largest_task;
 #endif /* _INCLUDE_LINUX_OOM_H */

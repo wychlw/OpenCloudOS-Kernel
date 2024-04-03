@@ -673,11 +673,12 @@ skip:
 	return read_swap_cache_async(entry, gfp_mask, vma, addr, NULL);
 }
 
-int init_swap_address_space(unsigned int type, unsigned long nr_pages)
+int init_swap_address_space(struct swap_info_struct *si, unsigned long nr_pages)
 {
 	struct address_space *spaces, *space;
-	unsigned int i, nr;
+	unsigned int i, nr, type;
 
+	type = si->type;
 	nr = DIV_ROUND_UP(nr_pages, SWAP_ADDRESS_SPACE_PAGES);
 	spaces = kvcalloc(nr, sizeof(struct address_space), GFP_KERNEL);
 	if (!spaces)
@@ -689,6 +690,10 @@ int init_swap_address_space(unsigned int type, unsigned long nr_pages)
 		space->a_ops = &swap_aops;
 		/* swap cache doesn't use writeback related tags */
 		mapping_set_no_writeback_tags(space);
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+		if (si->bdev && bdev_ramdisk(si->bdev))
+			set_bit(AS_RAM_SWAP, &space->flags);
+#endif
 	}
 	nr_swapper_spaces[type] = nr;
 	swapper_spaces[type] = spaces;

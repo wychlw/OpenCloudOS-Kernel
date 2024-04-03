@@ -134,10 +134,20 @@ static enum sysctl_writes_mode sysctl_writes_strict = SYSCTL_WRITES_STRICT;
     defined(CONFIG_ARCH_WANT_DEFAULT_TOPDOWN_MMAP_LAYOUT)
 int sysctl_legacy_va_layout;
 #endif
+
 #ifdef CONFIG_CGROUPFS
 extern int container_cpuquota_aware;
 extern int cgroupfs_stat_show_cpuacct_info;
 int cgroupfs_mounted;
+#endif
+
+#ifdef CONFIG_EMM_FORCE_SWAPPINESS
+extern int sysctl_vm_force_swappiness;
+#endif
+
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+extern int sysctl_vm_ramdisk_swaptune;
+extern int sysctl_vm_swapcache_fastfree;
 #endif
 
 #endif /* CONFIG_SYSCTL */
@@ -2232,6 +2242,15 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= overcommit_kbytes_handler,
 	},
 	{
+		.procname	= "oom_kill_largest_task",
+		.data		= &sysctl_oom_kill_largest_task,
+		.maxlen		= sizeof(sysctl_oom_kill_largest_task),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
 		.procname	= "page-cluster",
 		.data		= &page_cluster,
 		.maxlen		= sizeof(int),
@@ -2257,6 +2276,37 @@ static struct ctl_table vm_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_TWO_HUNDRED,
 	},
+#ifdef CONFIG_EMM_FORCE_SWAPPINESS
+	{
+		.procname       = "force_swappiness",
+		.data           = &sysctl_vm_force_swappiness,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+#endif
+#ifdef CONFIG_EMM_RAMDISK_SWAP
+	{
+		.procname       = "ramdisk_swaptune",
+		.data           = &sysctl_vm_ramdisk_swaptune,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+	{
+		.procname       = "swapcache_fastfree",
+		.data           = &sysctl_vm_swapcache_fastfree,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+#endif
 #ifdef CONFIG_NUMA
 	{
 		.procname	= "numa_stat",

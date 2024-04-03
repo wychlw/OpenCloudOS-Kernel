@@ -69,6 +69,9 @@
 #include <linux/rethook.h>
 #include <linux/sysfs.h>
 #include <linux/user_events.h>
+#ifdef CONFIG_TEXT_UNEVICTABLE
+#include <linux/unevictable.h>
+#endif
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -856,6 +859,9 @@ void __noreturn do_exit(long code)
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	clean_task_unevict_size(tsk);
+#endif
 	exit_mm();
 
 	if (group_dead)

@@ -238,6 +238,7 @@ __bpf_kfunc void cgroup_rstat_flush(struct cgroup *cgrp)
 	cgroup_rstat_flush_locked(cgrp);
 	spin_unlock_irq(&cgroup_rstat_lock);
 }
+EXPORT_SYMBOL_GPL(cgroup_rstat_flush);
 
 /**
  * cgroup_rstat_flush_hold - flush stats in @cgrp's subtree and hold
