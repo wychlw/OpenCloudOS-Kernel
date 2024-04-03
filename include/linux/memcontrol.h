@@ -326,11 +326,6 @@ struct mem_cgroup {
 	struct list_head event_list;
 	spinlock_t event_list_lock;
 
-	KABI_RESERVE(1);
-	KABI_RESERVE(2);
-	KABI_RESERVE(3);
-	KABI_RESERVE(4);
-
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	struct deferred_split deferred_split_queue;
 #endif
@@ -339,6 +334,11 @@ struct mem_cgroup {
 	/* per-memcg mm_struct list */
 	struct lru_gen_mm_list mm_list;
 #endif
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 
 	struct mem_cgroup_per_node *nodeinfo[];
 };
