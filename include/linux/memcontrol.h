@@ -344,6 +344,11 @@ struct mem_cgroup {
 	struct lru_gen_mm_list mm_list;
 #endif
 
+#ifdef CONFIG_EMM_MEMCG
+	/* EMM: for tracking cgroup level info on the fly and with high performance */
+	void *emm_memcg_data;
+#endif
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);

@@ -1316,4 +1316,12 @@ config EMM_WORKINGSET_TRACKING
 	  the in-memory LRU size and change the workingset size, estimating
 	  a "raw workingset" can help analyze and improve the memory usage.
 
+config EMM_MEMCG
+	bool "Enhanced memory management support for memcg."
+	depends on ENHANCED_MM
+	depends on MEMCG
+	default y
+	help
+	  This enables enhanced memory management support for memcg.
+
 endmenu

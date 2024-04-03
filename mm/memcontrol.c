@@ -63,6 +63,7 @@
 #include <linux/resume_user_mode.h>
 #include <linux/psi.h>
 #include <linux/seq_buf.h>
+#include <linux/emm.h>
 #include <linux/sched/isolation.h>
 #include "internal.h"
 #include <net/sock.h>
@@ -5752,6 +5753,9 @@ static struct mem_cgroup *mem_cgroup_alloc(struct mem_cgroup *parent)
 		if (alloc_mem_cgroup_per_node_info(memcg, node))
 			goto fail;
 
+	if (emm_memcg_init(memcg))
+		goto fail;
+
 	if (memcg_wb_domain_init(memcg, GFP_KERNEL))
 		goto fail;
 
@@ -5919,6 +5923,8 @@ static void mem_cgroup_css_released(struct cgroup_subsys_state *css)
 
 	invalidate_reclaim_iterators(memcg);
 	lru_gen_release_memcg(memcg);
+
+	emm_memcg_exit(memcg);
 }
 
 static void mem_cgroup_css_free(struct cgroup_subsys_state *css)

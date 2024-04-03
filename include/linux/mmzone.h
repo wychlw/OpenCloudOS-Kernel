@@ -649,6 +649,10 @@ struct lruvec {
 	unsigned long			refault_count;
 	unsigned long			total_distance;
 #endif
+
+#ifdef CONFIG_EMM_MEMCG
+	void *emm_lruvec_data;
+#endif
 };
 
 /* Isolate unmapped pages */
