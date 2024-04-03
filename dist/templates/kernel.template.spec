@@ -153,7 +153,7 @@ BuildRequires: numactl-devel
 
 %if %{with_tools}
 BuildRequires: gettext ncurses-devel
-BuildRequires: pciutils-devel libcap-devel libnl3-devel
+BuildRequires: pciutils-devel libcap-devel libnl3-devel libtool
 %endif
 
 %if %{with_doc}
@@ -263,6 +263,32 @@ Requires(pre): kmod
 Requires(postun): kmod
 %description modules
 This package provides commonly used kernel modules for the %{?2:%{2}-}core kernel package.
+
+### Kernel removable media module package
+%package modules-public-removable-media
+Summary: %{rpm_vendor} Kernel removable modules to match the %{rpm_name}-core kernel
+Provides: installonlypkg(kernel-module-removable-media)
+Requires: %{rpm_name} = %{version}-%{release}
+AutoReq: no
+AutoProv: yes
+Requires(pre): kmod
+Requires(postun): kmod
+%description modules-public-removable-media
+This package provides drivers for removable media, e.g. USB disks and CD-ROM,
+for %{name} of version %{version}-%{release}.
+
+### Kernel module public package
+%package modules-public
+Summary: %{rpm_vendor} Kernel modules public to match the %{rpm_name}-core kernel
+Provides: installonlypkg(kernel-module-public)
+Requires: %{rpm_name} = %{version}-%{release}
+AutoReq: no
+AutoProv: yes
+Requires(pre): kmod
+Requires(postun): kmod
+%description modules-public
+This package provides drivers for public release, e.g. nouveau.ko,
+for %{name} of version %{version}-%{release}.
 
 ### Kernel devel package
 %package devel
@@ -1060,7 +1086,19 @@ CollectKernelFile() {
 	# Rest of the modules stay in core package
 	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" non-core-modules >> modules.list || exit $?
 
+	# Do module splitting for removable-media-modules
+	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-public-removable-media >> modules-public-removable-media.list || exit $?
+
+	# Do module splitting for public release modules
+	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-public >> modules-public.list || exit $?
+
 	comm -23 core.list modules.list > core.list.tmp
+	mv core.list.tmp core.list
+
+	comm -23 core.list modules-public-removable-media.list > core.list.tmp
+	mv core.list.tmp core.list
+
+	comm -23 core.list modules-public.list > core.list.tmp
 	mv core.list.tmp core.list
 
 	popd
@@ -1230,6 +1268,19 @@ fi
 %postun modules
 depmod -a %{kernel_unamer}
 
+### Module package
+%post modules-public-removable-media
+depmod -a %{kernel_unamer}
+
+%postun modules-public-removable-media
+depmod -a %{kernel_unamer}
+
+%post modules-public
+depmod -a %{kernel_unamer}
+
+%postun modules-public
+depmod -a %{kernel_unamer}
+
 ### Devel package
 %post devel
 if [ -f /etc/sysconfig/kernel ]; then
@@ -1286,6 +1337,10 @@ fi
 
 %files modules -f modules.list
 %defattr(-,root,root)
+
+%files modules-public-removable-media -f modules-public-removable-media.list
+
+%files modules-public -f modules-public.list
 
 %if %{with_keypkg}
 %files signing-keys -f signing-keys.list

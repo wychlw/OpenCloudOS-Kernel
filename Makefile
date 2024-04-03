@@ -283,7 +283,8 @@ no-dot-config-targets := $(clean-targets) \
 			 cscope gtags TAGS tags help% %docs check% coccicheck \
 			 $(version_h) headers headers_% archheaders archscripts \
 			 %asm-generic kernelversion %src-pkg dt_binding_check \
-			 outputmakefile rustavailable rustfmt rustfmtcheck
+			 outputmakefile rustavailable rustfmt rustfmtcheck \
+			 check-kabi update-kabi create-kabi
 # Installation targets should not require compiler. Unfortunately, vdso_install
 # is an exception where build artifacts may be updated. This must be fixed.
 no-compiler-targets := $(no-dot-config-targets) install dtbs_install \
@@ -1348,6 +1349,12 @@ ifneq ($(wildcard $(resolve_btfids_O)),)
 	$(Q)$(MAKE) -sC $(srctree)/tools/bpf/resolve_btfids O=$(resolve_btfids_O) clean
 endif
 
+tools-clean-targets := sched_ext
+PHONY += $(tools-clean-targets)
+$(tools-clean-targets):
+	$(Q)$(MAKE) -sC tools $@_clean
+tools_clean: $(tools-clean-targets)
+
 # Clear a bunch of variables before executing the submake
 ifeq ($(quiet),silent_)
 tools_silent=s
@@ -1517,7 +1524,7 @@ PHONY += $(mrproper-dirs) mrproper
 $(mrproper-dirs):
 	$(Q)$(MAKE) $(clean)=$(patsubst _mrproper_%,%,$@)
 
-mrproper: clean $(mrproper-dirs)
+mrproper: clean $(mrproper-dirs) tools_clean
 	$(call cmd,rmfiles)
 	@find . $(RCS_FIND_IGNORE) \
 		\( -name '*.rmeta' \) \
@@ -1596,6 +1603,9 @@ help:
 	@echo  ''
 	@echo  'Tools:'
 	@echo  '  nsdeps          - Generate missing symbol namespace dependencies'
+	@echo  '  check-kabi      - Check whether TencentOS Kennel KABI is compatible'
+	@echo  '  update-kabi     - Update TencentOS Kennel KABI file'
+	@echo  '  create-kabi     - Create TencentOS Kennel KABI file'
 	@echo  ''
 	@echo  'Kernel selftest:'
 	@echo  '  kselftest         - Build and run kernel selftest'
@@ -1965,6 +1975,30 @@ PHONY += nsdeps
 nsdeps: export KBUILD_NSDEPS=1
 nsdeps: modules
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/nsdeps
+
+# Check whether TencentOS Kennel KABI is compatible
+# ---------------------------------------------------------------------------
+
+PHONY += check-kabi
+
+check-kabi:
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/tos-kabi.sh check $(ARCH)
+
+# Update TencentOS Kennel KABI file
+# ---------------------------------------------------------------------------
+
+PHONY += update-kabi
+
+update-kabi:
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/tos-kabi.sh update $(ARCH)
+
+# Create TencentOS Kennel KABI file
+# ---------------------------------------------------------------------------
+
+PHONY += create-kabi
+
+create-kabi:
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/tos-kabi.sh create $(ARCH)
 
 # Clang Tooling
 # ---------------------------------------------------------------------------

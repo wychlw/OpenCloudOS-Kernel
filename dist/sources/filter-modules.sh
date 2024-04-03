@@ -158,7 +158,7 @@ case $MODULEPKG in
 		filter_mods "drivers/input/" "$inputdrvs" /
 		filter_mods "drivers/hid/" "$hiddrvs" /
 		filter_mods "drivers/scsi/" "$scsidrvs" /
-		filter_mods "drivers/usb"/ "$usbdrvs" /
+		filter_mods "drivers/usb/" "$usbdrvs" /
 		filter_mods "drivers/gpu/drm/" "$drmdrvs" /
 		filter_mods "net/" "$netprots" /
 		filter_mods "fs/" "$fsdrvs" /
@@ -169,6 +169,13 @@ case $MODULEPKG in
 		filter_mods "" "$singlemods"
 		# Now process the override list to bring those modules back into core
 		filter_override "$overrides"
+		;;
+	modules-public-removable-media )
+		# Filter all mods under /lib/modules/$kver/kernel/drivers/usb/storage
+		filter_mods "drivers/usb/" "storage" /
+		;;
+	modules-public )
+		filter_mods "drivers/gpu/drm/" "nouveau" /
 		;;
 	* )
 		error "Invalid module packaging param '$1'"

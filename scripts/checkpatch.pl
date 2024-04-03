@@ -2635,6 +2635,8 @@ sub process {
 
 	our $clean = 1;
 	my $signoff = 0;
+	my $tencentsign = 0;
+	my $tencentbackport = 0;
 	my $author = '';
 	my $authorsignoff = 0;
 	my $author_sob = '';
@@ -3007,6 +3009,15 @@ sub process {
 			$has_patch_separator = 1;
 			$in_commit_log = 0;
 		}
+		if ($line =~ /^\s*signed-off-by: .*tencent.com/i) {
+			$tencentsign++;
+		}
+		if ($line =~ /^(\s*)commit [0-9a-z].* [a-z].*/i ||
+			$line =~ /^(\s*)[a-z\[].* commit [0-9a-z].*/i ||
+			$line =~ /^(\s*)Upstream commit:/i) {
+			#WARN("NO", "get a reference, $line\n");
+			$tencentbackport++;
+		}
 
 # Check if MAINTAINERS is being updated.  If so, there's probably no need to
 # emit the "does MAINTAINERS need updating?" message on file add/move/delete
@@ -3341,6 +3352,7 @@ sub process {
 			my $id = '0123456789ab';
 			my $orig_desc = "commit description";
 			my $description = "";
+			my $backport = 0;
 			my $herectx = $herecurr;
 			my $has_parens = 0;
 			my $has_quotes = 0;
@@ -3373,6 +3385,8 @@ sub process {
 				$long = 1 if ($input =~ /\bcommit\s+[0-9a-f]{41,}/i);
 				$space = 0 if ($input =~ /\bcommit [0-9a-f]/i);
 				$case = 0 if ($input =~ /\b[Cc]ommit\s+[0-9a-f]{5,40}[^A-F]/);
+				$backport = 1 if(($line =~ /\bcommit\s+[0-9a-f]{12,40}\supstream/i) ||
+							($line =~ /\B\[\s[Uu]pstream\scommit\s+[0-9a-f]{5,}\s\]/));
 			} elsif ($input =~ /\b([0-9a-f]{12,40})\b/i) {
 				$orig_commit = lc($1);
 			}
@@ -3382,7 +3396,7 @@ sub process {
 
 			if (defined($id) &&
 			    ($short || $long || $space || $case || ($orig_desc ne $description) || !$has_quotes) &&
-			    $last_git_commit_id_linenr != $linenr - 1) {
+			    $last_git_commit_id_linenr != $linenr - 1 && !$backport) {
 				ERROR("GIT_COMMIT_ID",
 				      "Please use git commit description style 'commit <12+ chars of sha1> (\"<title line>\")' - ie: '${init_char}ommit $id (\"$description\")'\n" . $herectx);
 			}
@@ -7712,6 +7726,18 @@ sub process {
 				     "From:/Signed-off-by: email subaddress mismatch: $sob_msg\n");
 			}
 		}
+		if ($author !~ /tencent.com/) {
+			if ($tencentsign == 0) {
+				WARN("BAD_SIGN_OFF",
+					"If this commit cherry-pick from upstream, must add Signed-off-by: <*tencent.com> !\n");
+			}
+			if ($tencentbackport == 0) {
+				# It's a backport commit, needs a cid reference
+				WARN("NO_BACKPORT_REF",
+					"If this commit cherry-pick from upstream, must add upstream commid, eg: 'commit xxx upstream.' !\n");
+			}
+		}
+
 	}
 
 	print report_dump();
