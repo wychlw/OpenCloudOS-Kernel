@@ -288,78 +288,77 @@ out:
 EXPORT_SYMBOL(thaw_bdev);
 
 /**
- * bdev_read_page() - Start reading a page from a block device
- * @bdev: The device to read the page from
- * @sector: The offset on the device to read the page to (need not be aligned)
- * @page: The page to read
+ * bdev_swapin_folio() - Start reading a folio from a block device
+ * @bdev: The device to read the folio from
+ * @sector: The offset on the device to read the folio to (need not be aligned)
+ * @folio: The folio to read
  *
- * On entry, the page should be locked.  It will be unlocked when the page
- * has been read.  If the block driver implements rw_page synchronously,
+ * On entry, the folio should be locked.  It will be unlocked when the folio
+ * has been read.  If the block driver implements swap_folio synchronously,
  * that will be true on exit from this function, but it need not be.
  *
  * Errors returned by this function are usually "soft", eg out of memory, or
- * queue full; callers should try a different route to read this page rather
+ * queue full; callers should try a different route to read this folio rather
  * than propagate an error back up the stack.
  *
  * Return: negative errno if an error occurs, 0 if submission was successful.
  */
-int bdev_read_page(struct block_device *bdev, sector_t sector,
-		struct page *page)
+int bdev_swapin_folio(struct block_device *bdev, sector_t sector,
+		struct folio *folio)
 {
 	const struct block_device_operations *ops = bdev->bd_disk->fops;
 	int result;
 
-	if (!ops->rw_page || bdev_get_integrity(bdev))
+	if (!ops->swap_folio || bdev_get_integrity(bdev))
 		return -EOPNOTSUPP;
 
 	result = blk_queue_enter(bdev_get_queue(bdev), 0);
 	if (result)
 		return -EOPNOTSUPP;
-	result = ops->rw_page(bdev, sector + get_start_sect(bdev), page,
+	result = ops->swap_folio(bdev, sector + get_start_sect(bdev), folio,
 			REQ_OP_READ);
 	blk_queue_exit(bdev_get_queue(bdev));
 	return result;
 }
 
 /**
- * bdev_write_page() - Start writing a page to a block device
- * @bdev: The device to write the page to
- * @sector: The offset on the device to write the page to (need not be aligned)
- * @page: The page to write
+ * bdev_swapout_folio() - Start writing a folio to a block device
+ * @bdev: The device to write the folio to
+ * @sector: The offset on the device to write the folio to (need not be aligned)
+ * @folio: The folio to write
  * @wbc: The writeback_control for the write
  *
- * On entry, the page should be locked and not currently under writeback.
- * On exit, if the write started successfully, the page will be unlocked and
+ * On entry, the folio should be locked and not currently under writeback.
+ * On exit, if the write started successfully, the folio will be unlocked and
  * under writeback.  If the write failed already (eg the driver failed to
- * queue the page to the device), the page will still be locked.  If the
- * caller is a ->writepage implementation, it will need to unlock the page.
+ * queue the folio to the device), the folio will still be locked.  If the
+ * caller is a ->writefolio implementation, it will need to unlock the folio.
  *
  * Errors returned by this function are usually "soft", eg out of memory, or
- * queue full; callers should try a different route to write this page rather
+ * queue full; callers should try a different route to write this folio rather
  * than propagate an error back up the stack.
  *
  * Return: negative errno if an error occurs, 0 if submission was successful.
  */
-int bdev_write_page(struct block_device *bdev, sector_t sector,
-		struct page *page, struct writeback_control *wbc)
+int bdev_swapout_folio(struct block_device *bdev, sector_t sector,
+		struct folio *folio, struct writeback_control *wbc)
 {
 	int result;
 	const struct block_device_operations *ops = bdev->bd_disk->fops;
 
-	if (!ops->rw_page || bdev_get_integrity(bdev))
+	if (!ops->swap_folio || bdev_get_integrity(bdev))
 		return -EOPNOTSUPP;
 	result = blk_queue_enter(bdev_get_queue(bdev), 0);
 	if (result)
 		return -EOPNOTSUPP;
 
-	set_page_writeback(page);
-	result = ops->rw_page(bdev, sector + get_start_sect(bdev), page,
+	folio_start_writeback(folio);
+	result = ops->swap_folio(bdev, sector + get_start_sect(bdev), folio,
 			REQ_OP_WRITE);
 	if (result) {
-		end_page_writeback(page);
+		folio_end_writeback(folio);
 	} else {
-		clean_page_buffers(page);
-		unlock_page(page);
+		folio_unlock(folio);
 	}
 	blk_queue_exit(bdev_get_queue(bdev));
 	return result;

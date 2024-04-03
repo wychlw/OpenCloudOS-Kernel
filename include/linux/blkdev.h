@@ -1399,7 +1399,7 @@ struct block_device_operations {
 			unsigned int flags);
 	int (*open)(struct gendisk *disk, blk_mode_t mode);
 	void (*release)(struct gendisk *disk);
-	int (*rw_page)(struct block_device *, sector_t, struct page *, enum req_op);
+	int (*swap_folio)(struct block_device *, sector_t, struct folio *, enum req_op);
 	int (*ioctl)(struct block_device *bdev, blk_mode_t mode,
 			unsigned cmd, unsigned long arg);
 	int (*compat_ioctl)(struct block_device *bdev, blk_mode_t mode,
@@ -1441,8 +1441,8 @@ extern int blkdev_compat_ptr_ioctl(struct block_device *, blk_mode_t,
 #define blkdev_compat_ptr_ioctl NULL
 #endif
 
-extern int bdev_read_page(struct block_device *, sector_t, struct page *);
-extern int bdev_write_page(struct block_device *, sector_t, struct page *,
+extern int bdev_swapin_folio(struct block_device *, sector_t, struct folio *);
+extern int bdev_swapout_folio(struct block_device *, sector_t, struct folio *,
 			   struct writeback_control *);
 
 static inline void blk_wake_io_task(struct task_struct *waiter)

@@ -376,7 +376,7 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc)
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
 	if (data_race(sis->flags & SWP_SYNCHRONOUS_IO)) {
-		int ret = bdev_write_page(sis->bdev, swap_page_sector(page), page, wbc);
+		int ret = bdev_swapout_folio(sis->bdev, swap_page_sector(page), page_folio(page), wbc);
 		if (ret != -EOPNOTSUPP) {
 			if (!ret)
 				count_swpout_vm_event(page_folio(page));
@@ -532,7 +532,7 @@ void swap_readpage(struct page *page, bool synchronous, struct swap_iocb **plug)
 	} else if (data_race(sis->flags & SWP_FS_OPS)) {
 		swap_readpage_fs(page, plug);
 	} else if (synchronous || (sis->flags & SWP_SYNCHRONOUS_IO)) {
-		int ret = bdev_read_page(sis->bdev, swap_page_sector(page), page);
+		int ret = bdev_swapin_folio(sis->bdev, swap_page_sector(page), folio);
 		if (ret != -EOPNOTSUPP) {
 			if (!ret)
 				count_vm_event(PSWPIN);
