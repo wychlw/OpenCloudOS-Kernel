@@ -31,9 +31,16 @@
 #include <linux/kprobes.h>
 #include <linux/workqueue.h>
 #include <linux/pid_namespace.h>
+#ifdef CONFIG_TEXT_UNEVICTABLE
+#include <linux/unevictable.h>
+#endif
 
 #define PROC_NAME	"unevictable"
 #define NAME_BUF	8
+
+#ifdef CONFIG_TEXT_UNEVICTABLE
+DEFINE_STATIC_KEY_FALSE(unevictable_enabled_key);
+#endif
 
 struct evict_pids_t {
 	struct rb_root root;
@@ -538,6 +545,79 @@ const static struct proc_ops del_proc_fops = {
 	.proc_write = proc_write_del_pid,
 };
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+static int __init setup_unevictable(char *s)
+{
+	if (!strcmp(s, "1"))
+		static_branch_enable(&unevictable_enabled_key);
+	else if (!strcmp(s, "0"))
+		static_branch_disable(&unevictable_enabled_key);
+	return 1;
+}
+__setup("unevictable=", setup_unevictable);
+
+#ifdef CONFIG_SYSFS
+static ssize_t unevictable_enabled_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", !!static_branch_unlikely(&unevictable_enabled_key));
+}
+static ssize_t unevictable_enabled_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	static DEFINE_MUTEX(mutex);
+	ssize_t ret = count;
+
+	mutex_lock(&mutex);
+
+	if (!strncmp(buf, "1", 1))
+		static_branch_enable(&unevictable_enabled_key);
+	else if (!strncmp(buf, "0", 1))
+		static_branch_disable(&unevictable_enabled_key);
+	else
+		ret = -EINVAL;
+
+	mutex_unlock(&mutex);
+	return ret;
+}
+static struct kobj_attribute unevictable_enabled_attr =
+	__ATTR(enabled, 0644, unevictable_enabled_show,
+	       unevictable_enabled_store);
+
+static struct attribute *unevictable_attrs[] = {
+	&unevictable_enabled_attr.attr,
+	NULL,
+};
+
+static struct attribute_group unevictable_attr_group = {
+	.attrs = unevictable_attrs,
+};
+
+static int __init unevictable_init_sysfs(void)
+{
+	int err;
+	struct kobject *unevictable_kobj;
+
+	unevictable_kobj = kobject_create_and_add("unevictable", mm_kobj);
+	if (!unevictable_kobj) {
+		pr_err("failed to create unevictable kobject\n");
+		return -ENOMEM;
+	}
+	err = sysfs_create_group(unevictable_kobj, &unevictable_attr_group);
+	if (err) {
+		pr_err("failed to register unevictable group\n");
+		goto delete_obj;
+	}
+	return 0;
+
+delete_obj:
+	kobject_put(unevictable_kobj);
+	return err;
+}
+#endif /* CONFIG_SYSFS */
+#endif /* CONFIG_TEXT_UNEVICTABLE */
+
 static int __init unevictable_init(void)
 {
 	struct proc_dir_entry *monitor_dir, *add_pid_file, *del_pid_file;
@@ -562,6 +642,10 @@ static int __init unevictable_init(void)
 
 	INIT_LIST_HEAD(&pid_list);
 
+#if defined(CONFIG_SYSFS) && defined(CONFIG_TEXT_UNEVICTABLE)
+	if (unevictable_init_sysfs())
+		pr_err("memcg text unevictable sysfs create failed\n");
+#endif
 	return 0;
 
 	pr_err("unevictpid create proc dir failed\n");
