@@ -2242,6 +2242,15 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= overcommit_kbytes_handler,
 	},
 	{
+		.procname	= "oom_kill_largest_task",
+		.data		= &sysctl_oom_kill_largest_task,
+		.maxlen		= sizeof(sysctl_oom_kill_largest_task),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
 		.procname	= "page-cluster",
 		.data		= &page_cluster,
 		.maxlen		= sizeof(int),

@@ -55,6 +55,7 @@
 static int sysctl_panic_on_oom;
 static int sysctl_oom_kill_allocating_task;
 static int sysctl_oom_dump_tasks = 1;
+int sysctl_oom_kill_largest_task;
 
 /*
  * Serializes oom killer invocations (out_of_memory()) from all contexts to
@@ -230,11 +231,14 @@ long oom_badness(struct task_struct *p, unsigned long totalpages)
 	points = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS) +
 		mm_pgtables_bytes(p->mm) / PAGE_SIZE;
 	task_unlock(p);
+	if (sysctl_oom_kill_largest_task)
+		goto ret;
 
 	/* Normalize to oom_score_adj units */
 	adj *= totalpages / 1000;
 	points += adj;
 
+ret:
 	return points;
 }
 
