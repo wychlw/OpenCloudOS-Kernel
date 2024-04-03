@@ -1345,4 +1345,16 @@ config EMM_ZRAM_CONF
 	help
 	  A place holder to Ensure required ZRAM configures are enabled.
 
+config TEXT_UNEVICTABLE
+	bool "Enable memcg granularity code section unevictable"
+	depends on MEMCG
+	default n
+	help
+	  This feature is used to pin code section of processes in memcg for the
+	  corresponding VMAs like mlock does. The reason why add this feature here
+	  is to prevent the performance jitter when some key applications code section
+	  are reclaimed in memcg.
+
+	  If unsure, say N.
+
 endmenu

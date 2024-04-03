@@ -5393,12 +5393,69 @@ static ssize_t memory_max_write(struct kernfs_open_file *of,
 				char *buf, size_t nbytes, loff_t off);
 static int memory_events_show(struct seq_file *m, void *v);
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+static u64 mem_cgroup_allow_unevictable_read(struct cgroup_subsys_state *css,
+					     struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->allow_unevictable;
+}
+
+static int mem_cgroup_allow_unevictable_write(struct cgroup_subsys_state *css,
+					      struct cftype *cft, u64 val)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	if (val > 1)
+		return -EINVAL;
+	if (memcg->allow_unevictable == val)
+		return 0;
+
+	memcg->allow_unevictable = val;
+
+	return 0;
+}
+
+static u64 mem_cgroup_unevictable_percent_read(struct cgroup_subsys_state *css,
+					       struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->unevictable_percent;
+}
+
+static int mem_cgroup_unevictable_percent_write(struct cgroup_subsys_state *css,
+						struct cftype *cft, u64 val)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	if (val > 100)
+		return -EINVAL;
+
+	memcg->unevictable_percent = val;
+	return 0;
+}
+#endif
+
 static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_USAGE),
 		.read_u64 = mem_cgroup_read_u64,
 	},
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	{
+		.name = "allow_text_unevictable",
+		.read_u64 = mem_cgroup_allow_unevictable_read,
+		.write_u64 = mem_cgroup_allow_unevictable_write,
+	},
+	{
+		.name = "text_unevictable_percent",
+		.read_u64 = mem_cgroup_unevictable_percent_read,
+		.write_u64 = mem_cgroup_unevictable_percent_write,
+	},
+ #endif
 	{
 		.name = "max_usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_MAX_USAGE),
@@ -5811,7 +5868,13 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	memcg->zram_max = PAGE_COUNTER_MAX;
 #endif
 	page_counter_set_high(&memcg->swap, PAGE_COUNTER_MAX);
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	memcg->unevictable_percent = 100;
+#endif
 	if (parent) {
+#ifdef CONFIG_TEXT_UNEVICTABLE
+		memcg->allow_unevictable = parent->allow_unevictable;
+#endif
 		WRITE_ONCE(memcg->swappiness, mem_cgroup_swappiness(parent));
 		WRITE_ONCE(memcg->oom_kill_disable, READ_ONCE(parent->oom_kill_disable));
 #ifdef CONFIG_MEMCG_ZRAM

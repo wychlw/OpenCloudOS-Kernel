@@ -349,6 +349,11 @@ struct mem_cgroup {
 	void *emm_memcg_data;
 #endif
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	bool allow_unevictable;
+	unsigned int unevictable_percent;
+#endif
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
