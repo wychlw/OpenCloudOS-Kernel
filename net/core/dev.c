@@ -4698,7 +4698,7 @@ EXPORT_SYMBOL(rps_may_expire_flow);
 /* Called from hardirq (IPI) context */
 static void rps_trigger_softirq(void *data)
 {
-	struct softnet_data *sd = data;
+	struct softnet_data *sd = &per_cpu(softnet_data, smp_processor_id());
 
 	____napi_schedule(sd, &sd->backlog);
 	sd->received_rps++;
@@ -5932,19 +5932,38 @@ static void flush_all_backlogs(void)
 	cpus_read_unlock();
 }
 
+#ifdef CONFIG_RPS
+static DEFINE_PER_CPU_SHARED_ALIGNED(struct cpumask, ____ipi_mask);
+DEFINE_STATIC_KEY_TRUE(rps_using_pvipi);
+#endif
+
 static void net_rps_send_ipi(struct softnet_data *remsd)
 {
 #ifdef CONFIG_RPS
-	while (remsd) {
-		struct softnet_data *next = remsd->rps_ipi_next;
+	if (static_branch_likely(&rps_using_pvipi)) {
+		struct cpumask *tmpmask = this_cpu_ptr(&____ipi_mask);
 
-		if (cpu_online(remsd->cpu))
-			smp_call_function_single_async(remsd->cpu, &remsd->csd);
-		remsd = next;
+		cpumask_clear(tmpmask);
+		smp_call_function_many_async_begin(tmpmask);
+		while (remsd) {
+			struct softnet_data *next = remsd->rps_ipi_next;
+
+			if (cpu_online(remsd->cpu))
+				smp_call_function_many_async(remsd->cpu, &remsd->csd, tmpmask);
+			remsd = next;
+		}
+		smp_call_function_many_async_end(tmpmask);
+	} else {
+		while (remsd) {
+			struct softnet_data *next = remsd->rps_ipi_next;
+
+			if (cpu_online(remsd->cpu))
+				smp_call_function_single_async(remsd->cpu, &remsd->csd);
+			remsd = next;
+		}
 	}
 #endif
 }
-
 /*
  * net_rps_action_and_irq_enable sends any pending IPI's for rps.
  * Note: called with local irq disabled, but exits with local irq enabled.
