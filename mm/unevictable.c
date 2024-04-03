@@ -117,25 +117,44 @@ static void __evict_pid(struct evict_pid_entry *pid)
 	put_task_struct(tsk);
 }
 
-static void evict_pid(pid_t pid)
+static struct evict_pid_entry *lookup_unevict_entry(struct task_struct *tsk)
 {
 	struct evict_pid_entry *entry, *result;
 	struct rb_node *parent = NULL;
 	struct rb_node **link;
-	struct task_struct *tsk;
 	pid_t rootpid;
 
-	if (pid <= 0)
-		return;
+	if (!tsk)
+		return NULL;
 
 	rcu_read_lock();
-	tsk = find_task_by_pid_ns(pid, task_active_pid_ns(current));
-	if (tsk) {
-		get_task_struct(tsk);
-		rootpid = __task_pid_nr_ns(tsk, PIDTYPE_PID, &init_pid_ns);
-		put_task_struct(tsk);
-	}
+	get_task_struct(tsk);
+	rootpid = __task_pid_nr_ns(tsk, PIDTYPE_PID, &init_pid_ns);
+	put_task_struct(tsk);
 	rcu_read_unlock();
+
+	result = NULL;
+	link = &base_tree->root.rb_node;
+	/*maybe unevictable feature not ready */
+	while (*link) {
+		parent = *link;
+		entry = rb_entry(parent, struct evict_pid_entry, node);
+		if (rootpid < entry->rootpid)
+			link = &(*link)->rb_left;
+		else if (rootpid > entry->rootpid)
+			link = &(*link)->rb_right;
+		else {
+			result = entry;
+			break;
+		}
+	}
+
+	return result;
+}
+
+void del_unevict_task(struct task_struct *tsk)
+{
+	struct evict_pid_entry *result;
 
 	if (!tsk) {
 		struct evict_pid_entry *pid_entry, *tmp;
@@ -156,52 +175,44 @@ static void evict_pid(pid_t pid)
 		return;
 	}
 
-	result = NULL;
 	mutex_lock(&pid_mutex);
-	link = &base_tree->root.rb_node;
-	while (*link) {
-		parent = *link;
-		entry = rb_entry(parent, struct evict_pid_entry, node);
-		if (rootpid < entry->rootpid)
-			link = &(*link)->rb_left;
-		else if (rootpid > entry->rootpid)
-			link = &(*link)->rb_right;
-		else {
-			result = entry;
-			break;
-		}
-	}
-
+	result = lookup_unevict_entry(tsk);
 	if (result) {
 		list_del(&result->list);
 		__remove_entry(result);
 		mutex_unlock(&pid_mutex);
 		__evict_pid(result);
 		kfree(result);
-	} else {
+	} else
 		mutex_unlock(&pid_mutex);
-	}
 }
 
-static void unevict_pid(pid_t pid)
+static void evict_pid(pid_t pid)
 {
 	struct task_struct *tsk;
-	struct evict_pid_entry *entry, *new_entry, *result;
-	struct rb_node *parent = NULL;
-	struct rb_node **link;
-	pid_t rootpid;
 
 	if (pid <= 0)
 		return;
 
 	rcu_read_lock();
 	tsk = find_task_by_pid_ns(pid, task_active_pid_ns(current));
-	if (tsk) {
-		get_task_struct(tsk);
-		rootpid = __task_pid_nr_ns(tsk, PIDTYPE_PID, &init_pid_ns);
-		put_task_struct(tsk);
+	if (!tsk) {
+		rcu_read_unlock();
+		return;
 	}
+	get_task_struct(tsk);
 	rcu_read_unlock();
+
+	del_unevict_task(tsk);
+	put_task_struct(tsk);
+}
+
+static void add_unevict_task(struct task_struct *tsk)
+{
+	struct evict_pid_entry *entry, *new_entry, *result;
+	struct rb_node *parent = NULL;
+	struct rb_node **link;
+	pid_t rootpid;
 
 	if (!tsk)
 		return;
@@ -211,6 +222,9 @@ static void unevict_pid(pid_t pid)
 		return;
 
 	result = NULL;
+	get_task_struct(tsk);
+	rootpid = __task_pid_nr_ns(tsk, PIDTYPE_PID, &init_pid_ns);
+	put_task_struct(tsk);
 	mutex_lock(&pid_mutex);
 	link = &base_tree->root.rb_node;
 	while (*link) {
@@ -255,6 +269,26 @@ static void unevict_pid(pid_t pid)
 		mutex_unlock(&pid_mutex);
 		kfree(new_entry);
 	}
+}
+
+static void unevict_pid(pid_t pid)
+{
+	struct task_struct *tsk;
+
+	if (pid <= 0)
+		return;
+
+	rcu_read_lock();
+	tsk = find_task_by_pid_ns(pid, task_active_pid_ns(current));
+	if (!tsk) {
+		rcu_read_unlock();
+		return;
+	}
+	get_task_struct(tsk);
+	rcu_read_unlock();
+
+	add_unevict_task(tsk);
+	put_task_struct(tsk);
 }
 
 struct add_pid_seq_context {
