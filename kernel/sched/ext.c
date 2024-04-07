@@ -200,6 +200,8 @@ struct scx_task_iter {
 
 #define SCX_HAS_OP(op)	static_branch_likely(&scx_has_op[SCX_OP_IDX(op)])
 
+static u32 sysctl_scx_hung_exit = 1;
+
 /* if the highest set bit is N, return a mask with bits [N+1, 31] set */
 static u32 higher_bits(u32 flags)
 {
@@ -2166,10 +2168,19 @@ static bool check_rq_for_timeouts(struct rq *rq)
 					last_runnable + scx_watchdog_timeout))) {
 			u32 dur_ms = jiffies_to_msecs(jiffies - last_runnable);
 
-			scx_ops_error_kind(SCX_EXIT_ERROR_STALL,
-					   "%s[%d] failed to run for %u.%03us",
-					   p->comm, p->pid,
-					   dur_ms / 1000, dur_ms % 1000);
+			if (sysctl_scx_hung_exit)
+				scx_ops_error_kind(SCX_EXIT_ERROR_STALL,
+						   "%s[%d] failed to run for %u.%03us",
+						   p->comm, p->pid,
+						   dur_ms / 1000,
+						   dur_ms % 1000);
+			else
+				pr_warn_ratelimited(
+					"%s[%d] failed to run for %u.%03us\n",
+					p->comm, p->pid,
+					dur_ms / 1000,
+					dur_ms % 1000);
+
 			timed_out = true;
 			break;
 		}
@@ -2914,6 +2925,32 @@ static void scx_ops_fallback_enqueue(struct task_struct *p, u64 enq_flags)
 }
 
 static void scx_ops_fallback_dispatch(s32 cpu, struct task_struct *prev) {}
+
+static struct ctl_table_header *scx_sysctl_table_hdr;
+
+static struct ctl_table scx_sysctl_table[] = {
+	{
+		.procname	= "scx_hung_exit",
+		.data		= &sysctl_scx_hung_exit,
+		.maxlen		= sizeof(u32),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{}
+};
+
+static int scx_register_sysctl(void)
+{
+	if (!scx_sysctl_table_hdr) {
+		scx_sysctl_table_hdr = register_sysctl("kernel",
+						       scx_sysctl_table);
+		if (!scx_sysctl_table_hdr)
+			return -ENOMEM;
+	}
+	return 0;
+}
 
 static void scx_ops_disable_workfn(struct kthread_work *work)
 {
@@ -4460,7 +4497,7 @@ __diag_pop();
  * This can't be done from init_sched_ext_class() as register_btf_kfunc_id_set()
  * needs most of the system to be up.
  */
-static int __init register_ext_kfuncs(void)
+static int register_ext_kfuncs(void)
 {
 	int ret;
 
@@ -4494,4 +4531,17 @@ static int __init register_ext_kfuncs(void)
 
 	return 0;
 }
-__initcall(register_ext_kfuncs);
+
+static int __init scx_init(void)
+{
+	int ret;
+
+	ret = scx_register_sysctl();
+	if (ret)
+		return ret;
+
+	register_ext_kfuncs();
+	return 0;
+}
+
+late_initcall(scx_init);
