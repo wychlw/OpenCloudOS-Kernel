@@ -321,7 +321,11 @@ This package provides kernel signing key for the %{?2:%{2}-}core kernel package.
 ### Kernel debuginfo package
 %package debuginfo
 Summary: Debug information for package %{rpm_name}
-Requires: %{rpm_name}-debuginfo-common
+# TK: Break the chain of dependency, to allow independent distribution of debuginfo/debuginfo-common
+# debuginfo-common contains source code, and because of how `crash` utility works, it's included in
+# this -common package instead of standalone debugsource (which is usually distributed in standlone
+# repo, and causes trouble for uses)
+# Requires: %{rpm_name}-debuginfo-common
 Provides: installonlypkg(kernel)
 Provides: kernel-debuginfo = %{version}-%{release}
 AutoReqProv: no
@@ -382,7 +386,8 @@ of the Linux kernel.
 
 %package -n perf-debuginfo
 Summary: Debug information for package perf
-Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, see comments above
+# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
 AutoReqProv: no
 %description -n perf-debuginfo
 This package provides debug information for the perf package.
@@ -402,7 +407,8 @@ to manipulate perf events.
 
 %package -n python3-perf-debuginfo
 Summary: Debug information for package perf python bindings
-Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, see comments above
+# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
 AutoReqProv: no
 %description -n python3-perf-debuginfo
 This package provides debug information for the perf python bindings.
@@ -453,7 +459,8 @@ the kernel source.
 
 %package -n kernel-tools-debuginfo
 Summary: Debug information for package kernel-tools
-Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, see comments above
+# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
 AutoReqProv: no
 %description -n kernel-tools-debuginfo
 This package provides debug information for package kernel-tools.
@@ -476,7 +483,8 @@ manipulation of eBPF programs and maps.
 
 %package -n bpftool-debuginfo
 Summary: Debug information for package bpftool
-Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, see comments above
+# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
 AutoReqProv: no
 %description -n bpftool-debuginfo
 This package provides debug information for the bpftool package.
