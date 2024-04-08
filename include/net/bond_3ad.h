@@ -262,6 +262,8 @@ struct ad_system {
 #define BOND_AD_INFO(bond)   ((bond)->ad_info)
 #define SLAVE_AD_INFO(slave) ((slave)->ad_info)
 
+extern int bond_8023ad_up;
+
 struct ad_bond_info {
 	struct ad_system system;	/* 802.3ad system structure */
 	struct bond_3ad_stats stats;

@@ -81,6 +81,9 @@
 #include <net/netns/generic.h>
 #include <net/pkt_sched.h>
 #include <linux/rculist.h>
+#include <linux/ipv6.h>
+#include <linux/icmpv6.h>
+#include <net/ndisc.h>
 #include <net/flow_dissector.h>
 #include <net/xfrm.h>
 #include <net/bonding.h>
@@ -1126,7 +1129,12 @@ static bool bond_should_notify_peers(struct bonding *bond)
 	struct slave *slave;
 
 	rcu_read_lock();
-	slave = rcu_dereference(bond->curr_active_slave);
+	if ((bond->params.broadcast_arp || bond->params.broadcast_nd) &&
+	    bond->params.mode == BOND_MODE_8023AD)
+		slave = bond_first_slave_rcu(bond);
+	else
+		slave = rcu_dereference(bond->curr_active_slave);
+
 	rcu_read_unlock();
 
 	if (!slave || !bond->send_peer_notif ||
@@ -2751,6 +2759,8 @@ static void bond_miimon_commit(struct bonding *bond)
 				   slave->duplex ? "full" : "half");
 
 			bond_miimon_link_change(bond, slave, BOND_LINK_UP);
+			if (BOND_MODE(bond) == BOND_MODE_8023AD)
+				bond_8023ad_up = 2;
 
 			active = rtnl_dereference(bond->curr_active_slave);
 			if (!active || slave == primary || slave->prio > active->prio)
@@ -2773,6 +2783,11 @@ static void bond_miimon_commit(struct bonding *bond)
 			slave_info(bond->dev, slave->dev, "link status definitely down, disabling slave\n");
 
 			bond_miimon_link_change(bond, slave, BOND_LINK_DOWN);
+
+			if ((bond->params.broadcast_arp ||
+			     bond->params.broadcast_nd) &&
+			    bond->params.mode == BOND_MODE_8023AD)
+				bond->send_peer_notif++;
 
 			if (slave == rcu_access_pointer(bond->curr_active_slave))
 				do_failover = true;
@@ -5168,6 +5183,8 @@ static struct slave *bond_xdp_xmit_3ad_xor_slave_get(struct bonding *bond,
 	return slaves->arr[hash % count];
 }
 
+static netdev_tx_t bond_xmit_broadcast(struct sk_buff *skb,
+				       struct net_device *bond_dev);
 /* Use this Xmit function for 3AD as well as XOR modes. The current
  * usable slave array is formed in the control path. The xmit function
  * just calculates hash and sends the packet out.
@@ -5178,6 +5195,23 @@ static netdev_tx_t bond_3ad_xor_xmit(struct sk_buff *skb,
 	struct bonding *bond = netdev_priv(dev);
 	struct bond_up_slave *slaves;
 	struct slave *slave;
+
+	/* Broadcast arp to all slaves. */
+	if (bond->params.broadcast_arp && ntohs(skb->protocol) == ETH_P_ARP)
+		return bond_xmit_broadcast(skb, dev);
+	if (bond->params.broadcast_nd && (ntohs(skb->protocol) == ETH_P_IPV6) &&
+	    pskb_may_pull(skb,
+			  sizeof(struct ipv6hdr) + sizeof(struct icmp6hdr))) {
+		if (ipv6_hdr(skb)->nexthdr == IPPROTO_ICMPV6) {
+			struct icmp6hdr *icmph = icmp6_hdr(skb);
+
+			if ((icmph->icmp6_type ==
+			     NDISC_NEIGHBOUR_SOLICITATION) ||
+			    (icmph->icmp6_type ==
+			     NDISC_NEIGHBOUR_ADVERTISEMENT))
+				return bond_xmit_broadcast(skb, dev);
+		}
+	}
 
 	slaves = rcu_dereference(bond->usable_slaves);
 	slave = bond_xmit_3ad_xor_slave_get(bond, skb, slaves);

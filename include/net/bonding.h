@@ -148,6 +148,11 @@ struct bond_params {
 #if IS_ENABLED(CONFIG_IPV6)
 	struct in6_addr ns_targets[BOND_MAX_NS_TARGETS];
 #endif
+	int broadcast_arp;
+	int broadcast_nd;
+	unsigned long last_na;
+	int periodic_na;
+	u32 periodic_na_interval;
 
 	/* 2 bytes of padding : see ether_addr_equal_64bits() */
 	u8 ad_actor_system[ETH_ALEN + 2];
