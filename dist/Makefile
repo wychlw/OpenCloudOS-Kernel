@@ -105,7 +105,7 @@ DISABLED=$(DEFAULT_DISABLED)
 ENABLED=$(DEFAULT_ENABLED)
 # Automatically disable non core package for non standard build
 ifneq ($(CONFIG),generic-release)
-DISABLED=ofed bpftool perf tools
+DISABLED=ofed
 endif
 
 ## A few shortcut for commonly used params:
