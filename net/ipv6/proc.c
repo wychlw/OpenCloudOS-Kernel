@@ -31,6 +31,24 @@
 #define SNMP_MIB_MAX MAX4(UDP_MIB_MAX, TCP_MIB_MAX, \
 			IPSTATS_MIB_MAX, ICMP_MIB_MAX)
 
+static int sockets6_seq_show(struct seq_file *seq, void *v)
+{
+	int lite;
+	struct net *net = seq->private;
+	int sockets, tcp_sock, udp_sock, raw_sock;
+
+	sockets = sock_inuse_get(net);
+	lite = sock_prot_inuse_get(net, &udplitev6_prot);
+	tcp_sock = sock_prot_inuse_get(net, &tcpv6_prot);
+	udp_sock = sock_prot_inuse_get(net, &udpv6_prot);
+	raw_sock = sock_prot_inuse_get(net, &rawv6_prot);
+
+	udp_sock += lite;
+	seq_printf(seq, "%d,%d,%d,%d\n", sockets, tcp_sock, udp_sock,
+		   raw_sock);
+	return 0;
+}
+
 static int sockstat6_seq_show(struct seq_file *seq, void *v)
 {
 	struct net *net = seq->private;
@@ -288,8 +306,15 @@ static int __net_init ipv6_proc_init_net(struct net *net)
 	net->mib.proc_net_devsnmp6 = proc_mkdir("dev_snmp6", net->proc_net);
 	if (!net->mib.proc_net_devsnmp6)
 		goto proc_dev_snmp6_fail;
+
+	if (!proc_create_net_single("sockets6", 0444, net->proc_net,
+				    sockets6_seq_show, NULL))
+		goto out_dropsockets;
+
 	return 0;
 
+out_dropsockets:
+	remove_proc_entry("dev_snmp6", net->proc_net);
 proc_dev_snmp6_fail:
 	remove_proc_entry("snmp6", net->proc_net);
 proc_snmp6_fail:
@@ -302,6 +327,7 @@ static void __net_exit ipv6_proc_exit_net(struct net *net)
 	remove_proc_entry("sockstat6", net->proc_net);
 	remove_proc_entry("dev_snmp6", net->proc_net);
 	remove_proc_entry("snmp6", net->proc_net);
+	remove_proc_entry("sockets6", net->proc_net);
 }
 
 static struct pernet_operations ipv6_proc_ops = {
