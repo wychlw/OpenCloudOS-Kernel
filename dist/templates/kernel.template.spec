@@ -735,7 +735,9 @@ BuildBpfTool() {
 			if grep -q "CONFIG_DEBUG_INFO_BTF=y" "$_KernBuild/.config" && [ -s "$_KernBuild/vmlinux" ]; then
 				tools/bpf/bpftool/bpftool btf dump file "$_KernBuild/vmlinux" format c > $_KernVmlinuxH
 			else
-				tools/bpf/bpftool/bpftool btf dump file /sys/kernel/btf/vmlinux format c > $_KernVmlinuxH
+				if [ -e /sys/kernel/btf/vmlinux ]; then
+					tools/bpf/bpftool/bpftool btf dump file /sys/kernel/btf/vmlinux format c > $_KernVmlinuxH
+				fi
 			fi
 		fi
 		%{host_make} -C tools/bpf/bpftool/ clean
