@@ -23,6 +23,8 @@
 #include <net/sock_reuseport.h>
 #include <net/addrconf.h>
 
+#define PORT_SCALE		100
+
 #if IS_ENABLED(CONFIG_IPV6)
 /* match_sk*_wildcard == true:  IPV6_ADDR_ANY equals to any IPv6 addresses
  *				if IPv6 only, and any IPv4 addresses
@@ -315,6 +317,111 @@ static bool inet_bhash2_addr_any_conflict(const struct sock *sk, int port, int l
 	return false;
 }
 
+static struct inet_bind_hashbucket *
+__inet_csk_find_open_port(const struct sock *sk, struct inet_bind_bucket **tb_ret,
+			struct inet_bind2_bucket **tb2_ret,
+			struct inet_bind_hashbucket **head2_ret, int *port_ret)
+{
+	struct inet_hashinfo *hinfo = tcp_or_dccp_get_hashinfo(sk);
+	int i, low, high, orig_high, scale, attempt_half, port, l3mdev;
+	struct inet_bind_hashbucket *head, *head2;
+	struct net *net = sock_net(sk);
+	struct inet_bind2_bucket *tb2;
+	struct inet_bind_bucket *tb;
+	u32 remaining, offset;
+	bool relax = false;
+
+	l3mdev = inet_sk_bound_l3mdev(sk);
+ports_exhausted:
+	attempt_half = (sk->sk_reuse == SK_CAN_REUSE) ? 1 : 0;
+other_half_scan:
+	inet_sk_get_local_port_range(sk, &low, &high);
+	high++; /* [32768, 60999] -> [32768, 61000[ */
+	remaining = high - low;
+	orig_high = high;
+
+	/* __inet_hash_connect() favors the upper part of the ports
+	 * We do the opposite to not pollute connect() users.
+	 */
+	scale = READ_ONCE(net->ipv4.sysctl_ip_local_port_ratio);
+	remaining = remaining * (PORT_SCALE - scale) / PORT_SCALE;
+	high = low + remaining;
+
+	if (high - low < 4)
+		attempt_half = 0;
+	if (attempt_half) {
+		int half = low + (((high - low) >> 2) << 1);
+
+		if (attempt_half == 1)
+			high = half;
+		else
+			low = half;
+		remaining = high - low;
+	}
+
+other_parity_scan:
+	if (likely(remaining > 0)) {
+		offset = get_random_u32_below(remaining);
+		port = low + offset;
+	}
+
+	for (i = 0; i < remaining; i += 1, port += 1) {
+		if (unlikely(port >= high))
+			port -= remaining;
+		if (inet_is_local_reserved_port(net, port))
+			continue;
+		head = &hinfo->bhash[inet_bhashfn(net, port,
+						  hinfo->bhash_size)];
+		spin_lock_bh(&head->lock);
+		if (inet_use_bhash2_on_bind(sk)) {
+			if (inet_bhash2_addr_any_conflict(sk, port, l3mdev, relax, false))
+				goto next_port;
+		}
+
+		head2 = inet_bhashfn_portaddr(hinfo, sk, net, port);
+		spin_lock(&head2->lock);
+		tb2 = inet_bind2_bucket_find(head2, net, port, l3mdev, sk);
+		inet_bind_bucket_for_each(tb, &head->chain)
+			if (inet_bind_bucket_match(tb, net, port, l3mdev)) {
+				if (!inet_csk_bind_conflict(sk, tb, tb2,
+							    relax, false))
+					goto success;
+				spin_unlock(&head2->lock);
+				goto next_port;
+			}
+		tb = NULL;
+		goto success;
+next_port:
+		spin_unlock_bh(&head->lock);
+		cond_resched();
+	}
+
+	if (attempt_half == 1) {
+		/* OK we now try the upper half of the range */
+		attempt_half = 2;
+		goto other_half_scan;
+	}
+
+	low = high;
+	high = orig_high;
+	remaining = high - low;
+	if (remaining > 0)
+		goto other_parity_scan;
+
+	if (READ_ONCE(net->ipv4.sysctl_ip_autobind_reuse) && !relax) {
+		/* We still have a chance to connect to different destinations */
+		relax = true;
+		goto ports_exhausted;
+	}
+	return NULL;
+success:
+	*port_ret = port;
+	*tb_ret = tb;
+	*tb2_ret = tb2;
+	*head2_ret = head2;
+	return head;
+}
+
 /*
  * Find an open port number for the socket.  Returns with the
  * inet_bind_hashbucket locks held if successful.
@@ -325,13 +432,18 @@ inet_csk_find_open_port(const struct sock *sk, struct inet_bind_bucket **tb_ret,
 			struct inet_bind_hashbucket **head2_ret, int *port_ret)
 {
 	struct inet_hashinfo *hinfo = tcp_or_dccp_get_hashinfo(sk);
-	int i, low, high, attempt_half, port, l3mdev;
+	int i, low, high, scale, attempt_half, port, l3mdev;
 	struct inet_bind_hashbucket *head, *head2;
 	struct net *net = sock_net(sk);
 	struct inet_bind2_bucket *tb2;
 	struct inet_bind_bucket *tb;
 	u32 remaining, offset;
 	bool relax = false;
+
+	scale = READ_ONCE(net->ipv4.sysctl_ip_local_port_ratio);
+	if (scale != 50)
+		return __inet_csk_find_open_port(sk, tb_ret, tb2_ret,
+						 head2_ret, port_ret);
 
 	l3mdev = inet_sk_bound_l3mdev(sk);
 ports_exhausted:

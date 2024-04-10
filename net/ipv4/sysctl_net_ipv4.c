@@ -23,6 +23,8 @@
 static int tcp_retr1_max = 255;
 static int ip_local_port_range_min[] = { 1, 1 };
 static int ip_local_port_range_max[] = { 65535, 65535 };
+static int ip_local_port_ratio_min;
+static int ip_local_port_ratio_max = 100;
 static int tcp_adv_win_scale_min = -31;
 static int tcp_adv_win_scale_max = 31;
 static int tcp_app_win_max = 31;
@@ -767,6 +769,15 @@ static struct ctl_table ipv4_net_table[] = {
 		.data		= &init_net.ipv4.ip_local_ports.range,
 		.mode		= 0644,
 		.proc_handler	= ipv4_local_port_range,
+	},
+	{
+		.procname	= "ip_local_port_ratio",
+		.data		= &init_net.ipv4.sysctl_ip_local_port_ratio,
+		.maxlen		= sizeof(u8),
+		.mode		= 0644,
+		.proc_handler	= proc_dou8vec_minmax,
+		.extra1		= &ip_local_port_ratio_min,
+		.extra2		= &ip_local_port_ratio_max,
 	},
 	{
 		.procname	= "ip_local_reserved_ports",
