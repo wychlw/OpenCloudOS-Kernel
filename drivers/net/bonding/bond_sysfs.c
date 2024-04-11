@@ -793,6 +793,123 @@ out:
 static DEVICE_ATTR(broadcast_arp, S_IRUGO | S_IWUSR,
 				   bonding_show_broadcast_arp, bonding_store_broadcast_arp);
 
+static ssize_t bonding_show_broadcast_nd(struct device *d,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct bonding *bond = to_bond(d);
+
+	return sprintf(buf, "%d\n", bond->params.broadcast_nd);
+}
+
+static ssize_t bonding_store_broadcast_nd(struct device *d,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	int new_value, ret = count;
+	struct bonding *bond = to_bond(d);
+
+	if (sscanf(buf, "%d", &new_value) != 1) {
+		pr_err("%s: no broadcast_nd value specified.\n",
+		       bond->dev->name);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (new_value != 0 && new_value != 1) {
+		pr_err("%s: Invalid broadcast_nd value %d not in range 0-1; rejected.\n",
+		       bond->dev->name, new_value);
+		ret = -EINVAL;
+		goto out;
+	}
+	pr_info("%s: Setting broadcast_nd to %d.\n",
+		bond->dev->name, new_value);
+	bond->params.broadcast_nd = new_value;
+
+out:
+	return ret;
+}
+
+static DEVICE_ATTR(broadcast_nd, S_IRUGO | S_IWUSR,
+		   bonding_show_broadcast_nd,
+		   bonding_store_broadcast_nd);
+
+static ssize_t bonding_show_periodic_na(struct device *d,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct bonding *bond = to_bond(d);
+
+	return sprintf(buf, "%d\n", bond->params.periodic_na);
+}
+
+static ssize_t bonding_store_periodic_na(struct device *d,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	int new_value, ret = count;
+	struct bonding *bond = to_bond(d);
+
+	if (sscanf(buf, "%d", &new_value) != 1) {
+		pr_err("%s: no periodic_na value specified.\n",
+		       bond->dev->name);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (new_value != 0 && new_value != 1) {
+		pr_err("%s: Invalid periodic_na value %d not in range 0-1; rejected.\n",
+		       bond->dev->name, new_value);
+		ret = -EINVAL;
+		goto out;
+	}
+	pr_info("%s: Setting periodic_na to %d.\n",
+		bond->dev->name, new_value);
+	bond->params.periodic_na = new_value;
+
+out:
+	return ret;
+}
+
+static DEVICE_ATTR(periodic_na, S_IRUGO | S_IWUSR,
+		   bonding_show_periodic_na,
+		   bonding_store_periodic_na);
+
+static ssize_t bonding_show_periodic_na_interval(struct device *d,
+						 struct device_attribute *attr,
+						 char *buf)
+{
+	struct bonding *bond = to_bond(d);
+
+	return sprintf(buf, "%d\n", bond->params.periodic_na_interval);
+}
+
+static ssize_t bonding_store_periodic_na_interval(struct device *d,
+						  struct device_attribute *attr,
+						  const char *buf, size_t count)
+{
+	int new_value, ret = count;
+	struct bonding *bond = to_bond(d);
+
+	if (sscanf(buf, "%u", &new_value) != 1) {
+		pr_err("%s: no periodic_na_interval value specified.\n",
+		       bond->dev->name);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	pr_info("%s: Setting periodic_na_interval to %u.\n",
+		bond->dev->name, new_value);
+	bond->params.periodic_na_interval = new_value;
+
+out:
+	return ret;
+}
+
+static DEVICE_ATTR(periodic_na_interval, S_IRUGO | S_IWUSR,
+		   bonding_show_periodic_na_interval,
+		   bonding_store_periodic_na_interval);
+
 static struct attribute *per_bond_attrs[] = {
 	&dev_attr_slaves.attr,
 	&dev_attr_mode.attr,
@@ -833,6 +950,9 @@ static struct attribute *per_bond_attrs[] = {
 	&dev_attr_ad_user_port_key.attr,
 	&dev_attr_arp_missed_max.attr,
 	&dev_attr_broadcast_arp.attr,
+	&dev_attr_broadcast_nd.attr,
+	&dev_attr_periodic_na.attr,
+	&dev_attr_periodic_na_interval.attr,
 	NULL,
 };
 

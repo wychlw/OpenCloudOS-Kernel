@@ -210,14 +210,19 @@ static void bond_info_show_slave(struct seq_file *seq,
 	seq_printf(seq, "Permanent HW addr: %*phC\n",
 		   slave->dev->addr_len, slave->perm_hwaddr);
 	seq_printf(seq, "Slave queue ID: %d\n", slave->queue_id);
+	seq_printf(seq, "Slave active: %d\n", !slave->backup);
 
 	if (BOND_MODE(bond) == BOND_MODE_8023AD) {
 		const struct port *port = &SLAVE_AD_INFO(slave)->port;
 		const struct aggregator *agg = port->aggregator;
 
+		seq_printf(seq, "Slave sm_vars: 0x%x\n",
+			   port->sm_vars);
 		if (agg) {
 			seq_printf(seq, "Aggregator ID: %d\n",
 				   agg->aggregator_identifier);
+			seq_printf(seq, "Aggregator active: %d\n",
+				   agg->is_active);
 			seq_printf(seq, "Actor Churn State: %s\n",
 				   bond_3ad_churn_desc(port->sm_churn_actor_state));
 			seq_printf(seq, "Partner Churn State: %s\n",

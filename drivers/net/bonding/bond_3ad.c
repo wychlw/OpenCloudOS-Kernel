@@ -116,6 +116,7 @@ static void ad_marker_response_received(struct bond_marker *marker,
 					struct port *port);
 static void ad_update_actor_keys(struct port *port, bool reset);
 
+int bond_8023ad_up;
 
 /* ================= api to bonding and kernel code ================== */
 
@@ -1223,6 +1224,13 @@ static void ad_rx_machine(struct lacpdu *lacpdu, struct port *port)
 			__record_pdu(lacpdu, port);
 			port->sm_rx_timer_counter = __ad_timer_to_ticks(AD_CURRENT_WHILE_TIMER, (u16)(port->actor_oper_port_state & LACP_STATE_LACP_TIMEOUT));
 			port->actor_oper_port_state &= ~LACP_STATE_EXPIRED;
+
+			if ((last_state != AD_RX_CURRENT) &&
+			    port->slave &&
+			    port->slave->bond &&
+			    (port->slave->bond->params.broadcast_arp ||
+			     port->slave->bond->params.broadcast_nd))
+				port->slave->bond->send_peer_notif++;
 			break;
 		default:
 			break;
@@ -2373,6 +2381,22 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 		/* turn off the BEGIN bit, since we already handled it */
 		if (port->sm_vars & AD_PORT_BEGIN)
 			port->sm_vars &= ~AD_PORT_BEGIN;
+	}
+
+	if (bond_8023ad_up > 0 &&
+	    (jiffies >= bond->params.last_na +
+	     msecs_to_jiffies(5 * 1000))) {
+		bond->send_peer_notif++;
+		bond->params.last_na = jiffies;
+		bond_8023ad_up--;
+	}
+
+	if (bond->params.periodic_na &&
+	    (bond->params.periodic_na_interval >= 1) &&
+	    (jiffies >= bond->params.last_na +
+	     msecs_to_jiffies(bond->params.periodic_na_interval * 1000))) {
+		bond->send_peer_notif++;
+		bond->params.last_na = jiffies;
 	}
 
 re_arm:
