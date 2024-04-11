@@ -506,10 +506,10 @@ static void lru_gen_refault(struct folio *folio, void *shadow)
 			 * Beyound PID protection range, no point increasing refs
 			 * for highest tier, but we can activate file page.
 			 */
-			set_mask_bits(&folio->flags, 0, (refs - workingset) << LRU_REFS_PGOFF);
+			set_mask_bits(&folio->flags, 0, (unsigned long)(refs - workingset) << LRU_REFS_PGOFF);
 			folio_set_workingset(folio);
 		} else {
-			set_mask_bits(&folio->flags, 0, 1 << LRU_REFS_PGOFF);
+			set_mask_bits(&folio->flags, 0, 1UL << LRU_REFS_PGOFF);
 		}
 		mod_lruvec_state(lruvec, WORKINGSET_RESTORE_BASE + type, delta);
 	}
