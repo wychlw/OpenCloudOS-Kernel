@@ -94,6 +94,7 @@ struct netns_ipv4 {
 	u8 sysctl_tcp_ecn;
 	u8 sysctl_tcp_ecn_fallback;
 
+	u8 sysctl_ip_local_port_ratio;
 	u8 sysctl_ip_default_ttl;
 	u8 sysctl_ip_no_pmtu_disc;
 	u8 sysctl_ip_fwd_use_pmtu;
@@ -241,5 +242,6 @@ struct netns_ipv4 {
 
 	atomic_t	rt_genid;
 	siphash_key_t	ip_id_key;
+	int sysctl_tcp_wan_timestamps;
 };
 #endif
