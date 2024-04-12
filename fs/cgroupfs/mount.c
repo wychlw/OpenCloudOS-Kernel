@@ -477,7 +477,9 @@ static int cgroupfs_fill_super(struct super_block *sb, void *data, int silent)
 	cgroupfs_new_entry(sb, "stat", proc, CGROUPFS_TYPE_STAT, f_mode);
 	cgroupfs_new_entry(sb, "uptime", proc, CGROUPFS_TYPE_UPTIME, f_mode);
 	cgroupfs_new_entry(sb, "loadavg", proc, CGROUPFS_TYPE_LOADAVG, f_mode);
+#ifdef CONFIG_BLK_CGROUP_DISKSTATS
 	cgroupfs_new_entry(sb, "diskstats", proc, CGROUPFS_TYPE_DKSTATS, f_mode);
+#endif
 	cgroupfs_new_entry(sb, "vmstat", proc, CGROUPFS_TYPE_VMSTAT, f_mode);
 
 	entry = cgroupfs_new_entry(sb, "devices", sys, CGROUPFS_TYPE_NORMAL_DIR, d_mode);

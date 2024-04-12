@@ -15,7 +15,9 @@ extern int cpuset_cgroupfs_stat_show(struct seq_file *m, void *v);
 extern int mem_cgroupfs_meminfo_show(struct seq_file *m, void *v);
 extern int cpuacct_cgroupfs_uptime_show(struct seq_file *m, void *v);
 extern int cpuset_cgroupfs_loadavg_show(struct seq_file *m, void *v);
+#ifdef CONFIG_BLK_CGROUP_DISKSTATS
 extern int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v);
+#endif
 extern int mem_cgroupfs_vmstat_show(struct seq_file *m, void *v);
 extern int cpu_get_max_cpus(struct task_struct *p);
 extern int cpuset_cgroupfs_get_cpu_count(void);
@@ -50,8 +52,10 @@ static int cgroup_fs_show(struct seq_file *m, void *v)
 		return cpuacct_cgroupfs_uptime_show(m, v);
 	case CGROUPFS_TYPE_LOADAVG:
 		return cpuset_cgroupfs_loadavg_show(m, v);
+#ifdef CONFIG_BLK_CGROUP_DISKSTATS
 	case CGROUPFS_TYPE_DKSTATS:
 		return blkcg_cgroupfs_dkstats_show(m, v);
+#endif
 	case CGROUPFS_TYPE_VMSTAT:
 		return mem_cgroupfs_vmstat_show(m, v);
 	case CGROUPFS_TYPE_CPU_ONLINE:

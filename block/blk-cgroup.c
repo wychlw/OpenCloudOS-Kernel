@@ -999,7 +999,7 @@ static int blkcg_reset_stats(struct cgroup_subsys_state *css,
 	return 0;
 }
 
-#ifdef CONFIG_CGROUPFS
+#if defined(CONFIG_CGROUPFS) && defined(CONFIG_BLK_CGROUP_DISKSTATS)
 int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v)
 {
 	int ret;
