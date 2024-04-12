@@ -48,6 +48,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/time.h>
+#include "legacy_boot.h"
 
 #define SMBIOS_BIOSSIZE_OFFSET		0x09
 #define SMBIOS_BIOSEXTERN_OFFSET	0x13
@@ -67,6 +68,8 @@ EXPORT_SYMBOL(cpu_data);
 
 struct loongson_board_info b_info;
 static const char dmi_empty_string[] = "        ";
+
+static phys_addr_t crashmem_start, crashmem_size;
 
 /*
  * Setup information
@@ -134,9 +137,23 @@ static void __init parse_cpu_table(const struct dmi_header *dm)
 
 static void __init parse_bios_table(const struct dmi_header *dm)
 {
+	int bios_extern;
 	char *dmi_data = (char *)dm;
 
+	bios_extern = *(dmi_data + SMBIOS_BIOSEXTERN_OFFSET);
 	b_info.bios_size = (*(dmi_data + SMBIOS_BIOSSIZE_OFFSET) + 1) << 6;
+
+	if (bpi_version == BPI_VERSION_V2) {
+		if ((!!(efi_bp->flags & BPI_FLAGS_UEFI_SUPPORTED))
+				!= (!!(bios_extern & LOONGSON_EFI_ENABLE)))
+			pr_err("There is a conflict of definitions between efi_bp->flags and smbios\n");
+		return;
+	}
+
+	if (bios_extern & LOONGSON_EFI_ENABLE)
+		set_bit(EFI_BOOT, &efi.flags);
+	else
+		clear_bit(EFI_BOOT, &efi.flags);
 }
 
 static void __init find_tokens(const struct dmi_header *dm, void *dummy)
@@ -192,16 +209,6 @@ static int __init early_parse_mem(char *p)
 		return -EINVAL;
 	}
 
-	/*
-	 * If a user specifies memory size, we
-	 * blow away any automatically generated
-	 * size.
-	 */
-	if (usermem == 0) {
-		usermem = 1;
-		memblock_remove(memblock_start_of_DRAM(),
-			memblock_end_of_DRAM() - memblock_start_of_DRAM());
-	}
 	start = 0;
 	size = memparse(p, &p);
 	if (*p == '@')
@@ -209,6 +216,23 @@ static int __init early_parse_mem(char *p)
 	else {
 		pr_err("Invalid format!\n");
 		return -EINVAL;
+	}
+
+	/*
+	 * If a user specifies memory size, we
+	 * blow away any automatically generated
+	 * size.
+	 */
+	if (usermem == 0) {
+		usermem = 1;
+		if (!strstr(boot_command_line, "elfcorehdr")) {
+			memblock_remove(memblock_start_of_DRAM(),
+				memblock_end_of_DRAM() - memblock_start_of_DRAM());
+		} else {
+			crashmem_start = start;
+			crashmem_size = size;
+			return 0;
+		}
 	}
 
 	if (!IS_ENABLED(CONFIG_NUMA))
@@ -355,11 +379,59 @@ out:
 	*cmdline_p = boot_command_line;
 }
 
+/*
+ * After the kdump operation is performed to enter the capture kernel, the
+ * memory area used by the previous production kernel should be reserved to
+ * avoid destroy to the captured data.
+ */
+static void reserve_oldmem_region(int node, unsigned long s0, unsigned long e0)
+{
+#ifdef CONFIG_CRASH_DUMP
+	unsigned long s1, e1;
+
+	if (!is_kdump_kernel())
+		return;
+
+	if ((e0 - s0) > (SZ_1G >> PAGE_SHIFT))
+		e0 = e0 - (SZ_512M >> PAGE_SHIFT);
+
+	/* crashmem_start is crashk_res reserved by primary production kernel */
+	s1 = PFN_UP(crashmem_start);
+	e1 = PFN_DOWN(crashmem_start + crashmem_size);
+
+	if (s1 == 0)
+		return;
+
+	if (node == 0) {
+		memblock_reserve(PFN_PHYS(s0), (s1 - s0) << PAGE_SHIFT);
+		memblock_reserve(PFN_PHYS(e1), (e0 - e1) << PAGE_SHIFT);
+	} else {
+		memblock_reserve(PFN_PHYS(s0), (e0 - s0) << PAGE_SHIFT);
+	}
+#endif
+}
+
+/* Traditionally, LoongArch's contiguous low memory is 256M, so crashkernel=X@Y is
+ * unable to be large enough in some cases. Thus, if the total memory of a node
+ * is more than 1GB, we reserve the top 512MB for the capture kernel
+ */
+static void reserve_crashm_region(int node, unsigned long s0, unsigned long e0)
+{
+#ifdef CONFIG_KEXEC
+	if (crashk_res.start == crashk_res.end)
+		return;
+
+	if ((e0 - s0) <= (SZ_1G >> PAGE_SHIFT))
+		return;
+
+	s0 = e0 - (SZ_512M >> PAGE_SHIFT);
+
+	memblock_reserve(PFN_PHYS(s0), (e0 - s0) << PAGE_SHIFT);
+#endif
+}
+
 void __init platform_init(void)
 {
-	arch_reserve_vmcore();
-	arch_parse_crashkernel();
-
 #ifdef CONFIG_ACPI_TABLE_UPGRADE
 	acpi_table_upgrade();
 #endif
@@ -397,6 +469,17 @@ static void __init check_kernel_sections_mem(void)
  */
 static void __init arch_mem_init(char **cmdline_p)
 {
+	unsigned int node;
+	unsigned long start_pfn, end_pfn;
+
+	arch_reserve_vmcore();
+	arch_parse_crashkernel();
+	for_each_online_node(node) {
+		get_pfn_range_for_nid(node, &start_pfn, &end_pfn);
+		reserve_crashm_region(node, start_pfn, end_pfn);
+		reserve_oldmem_region(node, start_pfn, end_pfn);
+	}
+
 	if (usermem)
 		pr_info("User-defined physical RAM map overwrite\n");
 
@@ -614,7 +697,9 @@ void __init setup_arch(char **cmdline_p)
 	pagetable_init();
 	bootcmdline_init(cmdline_p);
 	parse_early_param();
-	reserve_initrd_mem();
+	/* The small fdt method should be skipped directly to avoid two reserved operations. */
+	if (fw_arg2)
+		reserve_initrd_mem();
 
 	platform_init();
 	arch_mem_init(cmdline_p);

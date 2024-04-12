@@ -144,6 +144,7 @@ config LOONGARCH
 	select HAVE_SAMPLE_FTRACE_DIRECT_MULTI
 	select HAVE_SETUP_PER_CPU_AREA if NUMA
 	select HAVE_STACKPROTECTOR
+	select ARCH_HAS_PHYS_TO_DMA
 	select HAVE_SYSCALL_TRACEPOINTS
 	select HAVE_TIF_NOHZ
 	select HAVE_VIRT_CPU_ACCOUNTING_GEN if !SMP
@@ -423,7 +424,6 @@ config SMP
 config HOTPLUG_CPU
 	bool "Support for hot-pluggable CPUs"
 	depends on SMP
-	select GENERIC_IRQ_MIGRATION
 	help
 	  Say Y here to allow turning CPUs off and on. CPUs can be
 	  controlled through /sys/devices/system/cpu.
@@ -653,6 +653,7 @@ config ARCH_SUSPEND_POSSIBLE
 config ARCH_HIBERNATION_POSSIBLE
 	def_bool y
 
+source "drivers/cpufreq/Kconfig"
 source "kernel/power/Kconfig"
 source "drivers/acpi/Kconfig"
 
