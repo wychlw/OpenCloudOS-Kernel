@@ -6,6 +6,10 @@
 subdir-ccflags-y += -I$(src)/comm
 subdir-ccflags-y += -I$(src)/ne6x
 subdir-ccflags-y += -I$(src)/ne6x_vf
+ccflags-y += -I$(srctree)/$(src)
+ccflags-y += -I$(srctree)/drivers/net/ethernet/bzwx/nce/comm
+ccflags-y += -I$(srctree)/drivers/net/ethernet/bzwx/nce/ne6x
+ccflags-y += -I$(srctree)/drivers/net/ethernet/bzwx/nce/ne6x_vf
 
 obj-$(CONFIG_NE6X) += ncepf.o
 ncepf-objs := comm/txrx.o	\
