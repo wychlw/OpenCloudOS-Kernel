@@ -9,6 +9,7 @@
 #include <linux/pm_wakeup.h>
 #include <linux/atomic.h>
 #include <linux/jiffies.h>
+#include <linux/pci.h>
 #include "power.h"
 
 /*
@@ -108,7 +109,19 @@ static ssize_t control_show(struct device *dev, struct device_attribute *attr,
 static ssize_t control_store(struct device * dev, struct device_attribute *attr,
 			     const char * buf, size_t n)
 {
+	struct pci_dev *pdev = (!dev || !dev_is_pci(dev)) ? NULL : to_pci_dev(dev);
+
 	device_lock(dev);
+
+	/* Zhaoxin sata controller may occur error when resume from runtime pm, so disable it */
+	if (pdev &&
+		pdev->vendor == PCI_VENDOR_ID_ZHAOXIN &&
+		pdev->device == 0x9083 &&
+		pdev->revision <= 0x20) {
+		device_unlock(dev);
+		return -EPERM;
+	}
+
 	if (sysfs_streq(buf, ctrl_auto))
 		pm_runtime_allow(dev);
 	else if (sysfs_streq(buf, ctrl_on))

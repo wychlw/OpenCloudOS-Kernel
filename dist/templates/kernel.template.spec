@@ -849,7 +849,8 @@ InstKernelBasic() {
 
 	%ifarch loongarch64
 	INSTALL_DTB_ARCH_PATH=
-	install -m 644 $_KernBuild/vmlinuz vmlinuz
+	strip -s $_KernBuild/vmlinux -o $_KernBuild/vmlinux.elf
+	install -m 644 $_KernBuild/vmlinux.elf vmlinuz
 	%endif
 
 	# Install Arch DTB if exists
@@ -963,13 +964,6 @@ InstKernelDevel() {
 	mkdir -p arch/$Arch
 	cp -a $_KernSrc/arch/$Arch/include arch/$Arch/
 	cp -a $_KernBuild/arch/$Arch/include arch/$Arch/
-
-%ifarch loongarch64
-	if [ -f $_KernSrc/arch/$Arch/la64/Platform ]; then
-		mkdir -p arch/$Arch/la64
-		cp -a $_KernSrc/arch/$Arch/la64/Platform arch/$Arch/la64
-	fi
-%endif
 
 	if [ -d $_KernBuild/arch/$Arch/scripts ]; then
 		cp -a $_KernBuild/arch/$Arch/scripts arch/$Arch/ || :

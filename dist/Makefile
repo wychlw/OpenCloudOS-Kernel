@@ -29,7 +29,7 @@ NATIVE_ARCH := $(shell uname -m | sed -e 's/amd64/x86_64/;s/arm64/aarch64/;s/*86
 # When building binary package, which arch to build against
 ARCH := $(NATIVE_ARCH)
 # ARCH to be covered by spec file
-SPEC_ARCH := x86_64 aarch64 riscv64
+SPEC_ARCH := x86_64 aarch64 riscv64 loongarch64
 # Which kernel config to use, this build system supports multiple config targets,
 # Get the available config by scripts/ls-config.sh
 CONFIG := $(shell $(DISTDIR)/scripts/ls-config-targets.sh | tail -n 1)
@@ -55,7 +55,7 @@ DISTFILES = $(DISTDIR) $(DISTTEMPLATES) $(DISTCONFIGS) $(DISTSCRIPTS) $(DISTSOUR
 BUILD_ARCH := $(ARCH)
 override BUILD_ARCH := $(shell echo $(BUILD_ARCH) | sed -e 's/amd64/x86_64/;s/arm64/aarch64/;s/*86$$/x86/')
 # ARCH is for Kbuild
-override ARCH := $(shell echo $(BUILD_ARCH) | sed -e 's/amd64/x86_64/;s/aarch64/arm64/;s/*86$$/x86/')
+override ARCH := $(shell echo $(BUILD_ARCH) | sed -e 's/amd64/x86_64/;s/aarch64/arm64/;s/*86$$/x86/;s/loongarch64/loongarch/')
 
 ### Check if TAG is valid
 TAG := HEAD
