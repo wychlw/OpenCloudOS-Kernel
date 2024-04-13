@@ -24,7 +24,7 @@ enum cpuid_leafs
 	CPUID_LNX_2,
 	CPUID_LNX_3,
 	CPUID_7_0_EBX,
-	CPUID_D_1_EAX,
+	CPUID_D_1_EAX,		/* 10 */
 	CPUID_LNX_4,
 	CPUID_7_1_EAX,
 	CPUID_8000_0008_EBX,
@@ -34,7 +34,8 @@ enum cpuid_leafs
 	CPUID_8000_0007_EBX,
 	CPUID_7_EDX,
 	CPUID_8000_001F_EAX,
-	CPUID_8000_0021_EAX,
+	CPUID_8000_0021_EAX,	/* 20 */
+	CPUID_LNX_5,
 	CPUID_RESERVED_1,
 	CPUID_RESERVED_2,
 	CPUID_RESERVED_3,
@@ -43,8 +44,13 @@ enum cpuid_leafs
 	CPUID_RESERVED_6,
 	CPUID_RESERVED_7,
 	CPUID_RESERVED_8,
-	CPUID_RESERVED_9,
-	CPUID_C000_0006_EAX,
+	/*
+	 * Becareful! X86_FEATURE_ZXPAUSE rely on CPUID_C000_0006_EAX's position!
+	 * CPUID_C000_0006_EAX must keep at the 30th position (count from 0)!
+	 * NR_CPUID_WORDS can not bigger than 31 (the cpuid_leafs only 32 bits!).
+	 */
+	CPUID_C000_0006_EAX,	/* 30 */
+	NR_CPUID_WORDS,
 };
 
 #define X86_CAP_FMT_NUM "%d:%d"
