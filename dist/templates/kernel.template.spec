@@ -338,7 +338,9 @@ Summary: Debug information for package %{rpm_name}
 # debuginfo-common contains source code, and because of how `crash` utility works, it's included in
 # this -common package instead of standalone debugsource (which is usually distributed in standlone
 # repo, and causes trouble for uses)
-# Requires: %{rpm_name}-debuginfo-common
+# Removed "Requires: kernel--debuginfo-common = xxx"
+# More info, pls run "git blame dist/templates/kernel.template.spec" (or "git log -p dist/templates/kernel.template.spec")
+# to find and read the relevant commit.
 Provides: installonlypkg(kernel)
 Provides: kernel-debuginfo = %{version}-%{release}
 AutoReqProv: no
@@ -399,8 +401,8 @@ of the Linux kernel.
 
 %package -n perf-debuginfo
 Summary: Debug information for package perf
-# TK: Break the chain of dependency, see comments above
-# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, removed "Requires: kernel--debuginfo-common = xxx"
+# More info, pls run "git blame dist/templates/kernel.template.spec" to find and read the relevant commit.
 AutoReqProv: no
 %description -n perf-debuginfo
 This package provides debug information for the perf package.
@@ -420,8 +422,8 @@ to manipulate perf events.
 
 %package -n python3-perf-debuginfo
 Summary: Debug information for package perf python bindings
-# TK: Break the chain of dependency, see comments above
-# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, removed "Requires: kernel--debuginfo-common = xxx"
+# More info, pls run "git blame dist/templates/kernel.template.spec" to find and read the relevant commit.
 AutoReqProv: no
 %description -n python3-perf-debuginfo
 This package provides debug information for the perf python bindings.
@@ -472,8 +474,8 @@ the kernel source.
 
 %package -n kernel-tools-debuginfo
 Summary: Debug information for package kernel-tools
-# TK: Break the chain of dependency, see comments above
-# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, removed "Requires: kernel--debuginfo-common = xxx"
+# More info, pls run "git blame dist/templates/kernel.template.spec" to find and read the relevant commit.
 AutoReqProv: no
 %description -n kernel-tools-debuginfo
 This package provides debug information for package kernel-tools.
@@ -496,8 +498,8 @@ manipulation of eBPF programs and maps.
 
 %package -n bpftool-debuginfo
 Summary: Debug information for package bpftool
-# TK: Break the chain of dependency, see comments above
-# Requires: %{rpm_name}-debuginfo-common = %{version}-%{release}
+# TK: Break the chain of dependency, removed "Requires: kernel--debuginfo-common = xxx"
+# More info, pls run "git blame dist/templates/kernel.template.spec" to find and read the relevant commit.
 AutoReqProv: no
 %description -n bpftool-debuginfo
 This package provides debug information for the bpftool package.
