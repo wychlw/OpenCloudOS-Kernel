@@ -59,15 +59,6 @@ static __be32			nfsd_init_request(struct svc_rqst *,
  * nfsd_mutex protects nn->nfsd_serv -- both the pointer itself and some members
  * of the svc_serv struct such as ->sv_temp_socks and ->sv_permsocks.
  *
- * If (out side the lock) nn->nfsd_serv is non-NULL, then it must point to a
- * properly initialised 'struct svc_serv' with ->sv_nrthreads > 0 (unless
- * nn->keep_active is set).  That number of nfsd threads must
- * exist and each must be listed in ->sp_all_threads in some entry of
- * ->sv_pools[].
- *
- * Each active thread holds a counted reference on nn->nfsd_serv, as does
- * the nn->keep_active flag and various transient calls to svc_get().
- *
  * Finally, the nfsd_mutex also protects some of the global variables that are
  * accessed when nfsd starts and that are settable via the write_* routines in
  * nfsctl.c. In particular:
@@ -574,6 +565,7 @@ void nfsd_last_thread(struct net *net)
 	nfsd_shutdown_net(net);
 	pr_info("nfsd: last server has exited, flushing export cache\n");
 	nfsd_export_flush(net);
+	svc_destroy(&serv);
 }
 
 void nfsd_reset_versions(struct nfsd_net *nn)
@@ -648,11 +640,9 @@ void nfsd_shutdown_threads(struct net *net)
 		return;
 	}
 
-	svc_get(serv);
 	/* Kill outstanding nfsd threads */
 	svc_set_num_threads(serv, NULL, 0);
 	nfsd_last_thread(net);
-	svc_put(serv);
 	mutex_unlock(&nfsd_mutex);
 }
 
@@ -668,10 +658,9 @@ int nfsd_create_serv(struct net *net)
 	struct svc_serv *serv;
 
 	WARN_ON(!mutex_is_locked(&nfsd_mutex));
-	if (nn->nfsd_serv) {
-		svc_get(nn->nfsd_serv);
+	if (nn->nfsd_serv)
 		return 0;
-	}
+
 	if (nfsd_max_blksize == 0)
 		nfsd_max_blksize = nfsd_get_default_max_blksize();
 	nfsd_reset_versions(nn);
@@ -682,7 +671,7 @@ int nfsd_create_serv(struct net *net)
 	serv->sv_maxconn = nn->max_connections;
 	error = svc_bind(serv, net);
 	if (error < 0) {
-		svc_put(serv);
+		svc_destroy(&serv);
 		return error;
 	}
 	spin_lock(&nfsd_notifier_lock);
@@ -767,7 +756,6 @@ int nfsd_set_nrthreads(int n, int *nthreads, struct net *net)
 		nthreads[0] = 1;
 
 	/* apply the new numbers */
-	svc_get(nn->nfsd_serv);
 	for (i = 0; i < n; i++) {
 		err = svc_set_num_threads(nn->nfsd_serv,
 					  &nn->nfsd_serv->sv_pools[i],
@@ -775,7 +763,6 @@ int nfsd_set_nrthreads(int n, int *nthreads, struct net *net)
 		if (err)
 			break;
 	}
-	svc_put(nn->nfsd_serv);
 	return err;
 }
 
@@ -825,10 +812,6 @@ out_shutdown:
 	if (error < 0 && !nfsd_up_before)
 		nfsd_shutdown_net(net);
 out_put:
-	/* Threads now hold service active */
-	if (xchg(&nn->keep_active, 0))
-		svc_put(serv);
-	svc_put(serv);
 out:
 	mutex_unlock(&nfsd_mutex);
 	return error;
