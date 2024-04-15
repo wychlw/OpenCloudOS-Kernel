@@ -178,7 +178,7 @@ static const struct file_operations pool_stats_operations = {
 	.open		= nfsd_pool_stats_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
-	.release	= nfsd_pool_stats_release,
+	.release	= seq_release,
 };
 
 DEFINE_SHOW_ATTRIBUTE(nfsd_reply_cache_stats);
@@ -706,12 +706,8 @@ static ssize_t __write_ports_addfd(char *buf, struct net *net, const struct cred
 	serv = nn->nfsd_serv;
 	err = svc_addsock(serv, net, fd, buf, SIMPLE_TRANSACTION_LIMIT, cred);
 
-	if (err < 0 && !serv->sv_nrthreads && !nn->keep_active)
+	if (!serv->sv_nrthreads && list_empty(&nn->nfsd_serv->sv_permsocks))
 		nfsd_last_thread(net);
-	else if (err >= 0 && !serv->sv_nrthreads && !xchg(&nn->keep_active, 1))
-		svc_get(serv);
-
-	svc_put(serv);
 	return err;
 }
 
@@ -749,10 +745,6 @@ static ssize_t __write_ports_addxprt(char *buf, struct net *net, const struct cr
 	if (err < 0 && err != -EAFNOSUPPORT)
 		goto out_close;
 
-	if (!serv->sv_nrthreads && !xchg(&nn->keep_active, 1))
-		svc_get(serv);
-
-	svc_put(serv);
 	return 0;
 out_close:
 	xprt = svc_find_xprt(serv, transport, net, PF_INET, port);
@@ -761,10 +753,9 @@ out_close:
 		svc_xprt_put(xprt);
 	}
 out_err:
-	if (!serv->sv_nrthreads && !nn->keep_active)
+	if (!serv->sv_nrthreads && list_empty(&nn->nfsd_serv->sv_permsocks))
 		nfsd_last_thread(net);
 
-	svc_put(serv);
 	return err;
 }
 
