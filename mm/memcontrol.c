@@ -78,6 +78,10 @@
 
 #include <trace/events/vmscan.h>
 
+#ifdef CONFIG_MEMCG_ZRAM
+bool zram_memcg_nocharge = true;
+#endif
+
 struct cgroup_subsys memory_cgrp_subsys __read_mostly;
 EXPORT_SYMBOL(memory_cgrp_subsys);
 
@@ -3722,9 +3726,13 @@ static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 			val += memcg_page_state(memcg, MEMCG_ZRAM_B) / PAGE_SIZE;
 #endif
 	} else {
-		if (!swap)
+		if (!swap) {
 			val = page_counter_read(&memcg->memory);
-		else
+#ifdef CONFIG_MEMCG_ZRAM
+			if (zram_memcg_nocharge)
+				val += memcg_page_state(memcg, MEMCG_ZRAM_B) / PAGE_SIZE;
+#endif
+		} else
 			val = page_counter_read(&memcg->memsw);
 	}
 	return val;
@@ -6966,7 +6974,7 @@ static u64 memory_current_read(struct cgroup_subsys_state *css,
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 
-	return (u64)page_counter_read(&memcg->memory) * PAGE_SIZE;
+	return (u64)mem_cgroup_usage(memcg, false) * PAGE_SIZE;
 }
 
 static u64 memory_peak_read(struct cgroup_subsys_state *css,
