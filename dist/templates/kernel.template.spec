@@ -17,7 +17,7 @@
 {{VERSIONSPEC}}
 
 %if "%{kernel_unamer_force}" == ""
-%define kernel_unamer %{kernel_unamer_base}
+%define kernel_unamer %{kernel_unamer_base}%{?dist}.%{_target_cpu}%{kernel_variant}
 %else
 %define kernel_unamer %{kernel_unamer_force}
 %endif
