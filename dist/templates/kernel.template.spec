@@ -8,19 +8,12 @@
 # %%{kernel_relver}: Kernel RPM package release, eg. 2207.1, 0.20211115git1135ec008ef3.rc0.2207, 0009.11
 # %%{kernel_variant}: Kernel RPM package release, eg. 2207.1, 0.20211115git1135ec008ef3.rc0.2207, 0009.11
 # %%{kernel_tarname} Kernel Source tar's basename and prefix after untar, eg. 5.16.0.20211115git1135ec008ef3.rc0.2207
-# %%{kernel_unamer_base}: base part of `uname -r` output, used to generate %%kernel_unamer, needed by scriptlets so prepare it early. eg. 5.18.19-2207.2.1.tks, 5.18.19-2207.2.1.tks+debug, 5.4.119-1-0009.1
-# %%{kernel_unamer_force}: force use a unamer, usually for historical reason.
+# %%{kernel_unamer}: Define `uname -r` output, needed by scriptlets so prepare it early. (KVER.%{{?dist}}.%{{_target_cpu}}%{{kernel_variant}})
 # %%{rpm_name}: Kernel RPM package name, eg. kernel, kernel-tlinux4, kernel-stream kernel-stream-debug
 # %%{rpm_vendor}: RPM package vendor
 # %%{rpm_url}: RPM url
 # TODO: kernel_unamer don't have distro mark
 {{VERSIONSPEC}}
-
-%if "%{kernel_unamer_force}" == ""
-%define kernel_unamer %{kernel_unamer_base}%{?dist}.%{_target_cpu}%{kernel_variant}
-%else
-%define kernel_unamer %{kernel_unamer_force}
-%endif
 
 # This section defines following value:
 # %%{kernel_arch}

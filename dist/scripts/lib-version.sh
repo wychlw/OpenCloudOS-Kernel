@@ -115,6 +115,7 @@ KGIT_SUB_RELEASE_NUM=
 
 ### The formal kernel version and release
 # Simulate base part of uname output, which is always "$KVERSION.$KPATCHLEVEL.$KSUBLEVEL$KEXTRAVERSION"
+export KERNEL_UNAMER=
 # The full `uname -r` will also include <dist>.<arch>[+<flavor>]
 export KERNEL_UNAMER_BASE=
 # Force set a value for `uname -r`, see KFORCEUNAMER.
@@ -563,6 +564,15 @@ _prepare_kernel_ver() {
 	fi
 }
 
+# Get `uname -r` output before bulid, for preview
+_prepare_kernel_unamer() {
+	# <dist> <arch> and <variant> will be determinded in kernel.template.spec
+	KERNEL_UNAMER="$KERNEL_UNAMER_BASE%{?dist}.%{_target_cpu}%{kernel_variant}"
+	if [[ $KERNEL_UNAMER_FORCE ]]; then
+		KERNEL_UNAMER="$KERNEL_UNAMER_FORCE"
+	fi
+}
+
 ### Generate a RPM friendly version based on kernel tag and commit info
 #
 # Examples:
@@ -663,6 +673,8 @@ prepare_kernel_ver() {
 			KERNEL_UNAMER_FORCE="$KERNEL_UNAMER_FORCE+$localversion"
 		fi
 	fi
+
+	_prepare_kernel_unamer
 }
 
 ### Generate formal release version based on kernel tag and commit info
@@ -712,7 +724,7 @@ prepare_next_kernel_ver() {
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
 	KERNEL_RELVER="$krelease"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
+	_prepare_kernel_unamer
 }
 
 # Get next formal kernel version based on previous git tag
@@ -739,5 +751,5 @@ prepare_next_sub_kernel_ver() {
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
 	KERNEL_RELVER="$krelease"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
+	_prepare_kernel_unamer
 }

@@ -17,7 +17,7 @@ case $2 in
 	nvr )
 		echo "$KERNEL_NAME"-"$KERNEL_MAJVER"-"$KERNEL_RELVER"
 		;;
-	* | unamer )
+	* )
 		echo "$KERNEL_UNAMER"
 		;;
 esac
