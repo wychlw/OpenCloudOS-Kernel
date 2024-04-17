@@ -142,6 +142,10 @@ _is_num() {
 	[ "$1" -eq "$1" ] &>/dev/null
 }
 
+_is_dec_num() {
+	[ "$1" = "$(( $1 * 1 ))" ] &>/dev/null
+}
+
 # Get the tag of a git ref, if the git ref itself is a valid tag, just return itself
 # else, search latest tag before this git ref.
 _get_git_tag_of() {
@@ -649,13 +653,11 @@ prepare_kernel_ver() {
 		fi
 	fi
 
-	case $krelease in
-		*.* )
-			;;
-		*)
-			krelease=0.$krelease
-			;;
-	esac
+	# If somehow krelease is still not starting with a decimal number,
+	# (the most common case is when KTAGRELEASE is set above), force fix that.
+	if ! _is_dec_num "${krelease%%.*}"; then
+		krelease=0.$krelease
+	fi
 
 	KERNEL_NAME="kernel${KDIST:+-$KDIST}"
 	if [[ $localversion ]]; then
