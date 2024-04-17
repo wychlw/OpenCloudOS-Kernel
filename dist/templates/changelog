@@ -1,3 +1,86 @@
+* Wed Apr 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.26-1
+- SUNRPC: discard sv_refcnt, and svc_get/svc_put
+- svc: don't hold reference for poolstats, only mutex.
+- config: support phytium soc and ampereone pmu
+- sched/eevdf: fix soft lockup while __pick_eevdf failed
+- Merge linux 6.6.26
+- Merge linux 6.6.25
+- Merge linux 6.6.24
+- Merge linux 6.6.23
+- Merge linux 6.6.22
+- Merge linux 6.6.21
+- x86/perf: Add PMU uncore support for Zhaoxin CPU
+- BeiZhongWangXin:Add Chengdu BeiZhongWangXin Technology N5/N6 Series Network Card Driver
+- Hygon：Add HGSC_CERT_IMPORT ioctl interface for Hygon CPUs.
+- Loogarch:add steal time hypcall software breakpoint pmu support for loongarch kvm
+- Add Phytium Display Engine support to the linux-6.6
+- Intel: Backport QuickAssist Technology(QAT) in-tree driver
+- Loongarch: support loongarch and add kvm support for loongarch
+- platform/x86/intel/ifs: Call release_firmware() when handling errors.
+- crypto: ccp: Add support to detect Hygon PSP on Hygon 2nd/3rd CPUs
+- crypto: ccp: Fixup the capability of Hygon PSP during initialization
+- Support zhaoxin cpu
+- zhaoxin: Fix CRC32C instruction low performance issue
+- crypto: x86/crc32c-intel Exclude low performance CRC32C instruction CPUs
+- x86/cpu: Set low performance CRC32C flag on some Zhaoxin CPUs
+- x86/cpufeatures: Add low performance CRC32C instruction CPU feature
+- ALSA: hda: Add support of Zhaoxin SB HDAC
+- x86/cpu: Add detect extended topology for Zhaoxin CPUs
+- x86/cpufeatures: Add Zhaoxin feature bits
+- btrfs: fix double free of anonymous device after snapshot creation failure
+- arm64: Work around Ampere Altra erratum #82288 PCIE_65
+- rue/io: fix blkcg_dkstats_show_comm implicit declaration error
+- emm: fix compile error of MEMCG_ZRAM_B undeclared
+- tcp/dccp: add support for port usage in proportion to allocation
+- cgroup: add cgroup.id to show each css id within a cgroup
+- tcp: fix issues when enabling tcp_wan_timestamps feature.
+- tcp: initialize sysctl_tcp_wan_timestamps to 1 by default.
+- net: add net.ipv4.tcp_wan_timestamps sysctl to switch timestamps function
+- mm/workingset: fix compile error when using allyesconfig in aarch64
+- ck: mm: Pin code section of process in memory
+- mm, oom_kill: introduce oom_kill_largest_task sysctl interface
+- emm: configs: enabled EMM related configs
+- emm: memcg/reclaim: adapt for enhanced memory reclaim interface
+- emm: memcg/reclaim: add support for enhanced memory reclaim
+- emm: memcg: add support for core memcg handling
+- emm: mm: support forcing swappiness for global reclaim
+- emm: mm: Kconfig: add EMM config
+- emm: memcg, zram: add support for ZRAM memory accounting
+- ocfs2: Avoid touching renamed directory if parent does not change
+- rue/scx/sched_ext: Add a basic, userland vruntime scheduler
+- rue/scx/sched_ext: Implement core-sched support
+- rue/scx/sched_ext: Implement sched_ext_ops.cpu_online/offline()
+- rue/scx/sched_ext: Implement sched_ext_ops.cpu_acquire/release()
+- rue/scx/sched_ext: Implement runnable task stall watchdog
+- rue/scx/sched_ext: Implement BPF extensible scheduler class
+- script: update check-kabi script
+- kabi: provide kabi check/update/create commands for local users
+- config: add kernel/configs/tkci.config
+- pci: bypass NVMe when booting PCIe storage with 5s delay
+- pci: prohibit storage probe delay of virtio block device
+- pci: delay 5s to proble multiple storage controllers
+- perf vendor events arm64 AmpereOneX: Add core PMU events and metrics
+- KVM: arm64: Always invalidate TLB for stage-2 permission faults
+- KVM: arm64: Avoid soft lockups due to I-cache maintenance
+- arm64: tlbflush: Rename MAX_TLBI_OPS
+- docs/perf: Add ampere_cspmu to toctree to fix a build warning
+- perf: arm_cspmu: ampere_cspmu: Add support for Ampere SoC PMU
+- perf: arm_cspmu: Support implementation specific validation
+- perf: arm_cspmu: Support implementation specific filters
+- perf: arm_cspmu: Split 64-bit write to 32-bit writes
+- perf: arm_cspmu: Separate Arm and vendor module
+- x86 and arm64 config: add more module config
+- config: enable slub debug as default in debug.config
+- config: enable CONFIG_HARDLOCKUP_DETECTOR
+- Add support for Hygon model 4h~6h processors Merge
+- Intel: Backport GNR/SRF PMU uncore support to kernel v6.6
+- Intel: Backport SRF/GRR perf cstate support to kernel v6.6
+- Intel: Backport SRF LBR branch counter support to kernel v6.6
+- Intel-SIG: microcode restructuring backport Merge pull request
+- Intel-SIG: backport cluster scheduler wakeup optimization
+- SAF & Array BIST support for GNR & SRF
+- RDT non-contiguous CBM support
+
 * Wed Dec 20 2023 Kairui Song <kasong@tencent.com> - 6.6.6-2401.0.1
 - kabi: freeze kabi for x86_64 and arm64
 - x86/mpparse, kexec: switch apic driver early when x2apic is pre-enabled
