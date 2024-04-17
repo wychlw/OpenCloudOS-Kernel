@@ -19,7 +19,7 @@ case $1 in
 esac
 AUTHOR_NAME=$(git config user.name) || die "Failed getting author name info from git config"
 AUTHOR_MAIL=$(git config user.email) || die "Failed getting author email info from git config"
-GITLOG=$(git -C "$TOPDIR" log "$KERNEL_PREV_RELREASE_TAG..$COMMIT" --pretty=oneline) || die "Failed getting changelog from git log"
+GITLOG=$(git -C "$TOPDIR" log --topo-order "$KERNEL_PREV_RELREASE_TAG..$COMMIT" --pretty=oneline) || die "Failed getting changelog from git log"
 
 if [[ "$KTAGRELEASE" ]]; then
 	warn "You are generating changelog from a tagged release commit, however changelog update"
