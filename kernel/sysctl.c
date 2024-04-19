@@ -66,6 +66,10 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+#include <linux/blk-cgroup.h>
+#endif
+
 #include "../lib/kstrtox.h"
 
 #include <linux/uaccess.h>
@@ -2645,6 +2649,17 @@ static struct ctl_table kern_table[] = {
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+	{
+		.procname	= "io_buffered_write_bps_hierarchy",
+		.data		= &sysctl_buffered_write_bps_hierarchy,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 #endif
 #ifdef CONFIG_RQM

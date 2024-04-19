@@ -289,17 +289,6 @@ struct cgroup_subsys_state *bio_blkcg_css(struct bio *bio)
 EXPORT_SYMBOL_GPL(bio_blkcg_css);
 
 /**
- * blkcg_parent - get the parent of a blkcg
- * @blkcg: blkcg of interest
- *
- * Return the parent blkcg of @blkcg.  Can be called anytime.
- */
-static inline struct blkcg *blkcg_parent(struct blkcg *blkcg)
-{
-	return css_to_blkcg(blkcg->css.parent);
-}
-
-/**
  * blkg_alloc - allocate a blkg
  * @blkcg: block cgroup the new blkg is associated with
  * @disk: gendisk the new blkg is associated with

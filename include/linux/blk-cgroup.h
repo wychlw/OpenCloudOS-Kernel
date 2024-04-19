@@ -418,7 +418,25 @@ struct rue_io_module_ops {
 };
 extern struct rue_io_module_ops rue_io_ops;
 
+static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
+{
+	return css ? container_of(css, struct blkcg, css) : NULL;
+}
+
+/**
+ * blkcg_parent - get the parent of a blkcg
+ * @blkcg: blkcg of interest
+ *
+ * Return the parent blkcg of @blkcg.  Can be called anytime.
+ */
+static inline struct blkcg *blkcg_parent(struct blkcg *blkcg)
+{
+	return css_to_blkcg(blkcg->css.parent);
+}
+
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+extern unsigned int sysctl_buffered_write_bps_hierarchy __read_mostly;
+
 static inline uint64_t blkcg_buffered_write_bps(struct blkcg *blkcg)
 {
 	return blkcg->buffered_write_bps;
@@ -427,6 +445,24 @@ static inline uint64_t blkcg_buffered_write_bps(struct blkcg *blkcg)
 static inline unsigned long blkcg_dirty_ratelimit(struct blkcg *blkcg)
 {
 	return blkcg->dirty_ratelimit;
+}
+
+static inline int blkcg_buffered_write_bps_enabled(struct blkcg *blkcg)
+{
+	if (!rue_io_enabled())
+		return 0;
+
+	if (!sysctl_buffered_write_bps_hierarchy)
+		return blkcg_buffered_write_bps(blkcg);
+
+	while (blkcg) {
+		if (blkcg->buffered_write_bps)
+			return blkcg_buffered_write_bps(blkcg);
+
+		blkcg = blkcg_parent(blkcg);
+	}
+
+	return 0;
 }
 
 static inline struct blkcg *get_task_blkcg(struct task_struct *tsk)

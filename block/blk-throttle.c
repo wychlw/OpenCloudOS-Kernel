@@ -44,6 +44,8 @@
 static struct workqueue_struct *kthrotld_workqueue;
 static bool throtl_hierarchy __read_mostly = true;
 
+unsigned int sysctl_skip_throttle_prio_req;
+
 #define rb_entry_tg(node)	rb_entry((node), struct throtl_grp, rb_node)
 
 static void throtl_pending_timer_fn(struct timer_list *t);
@@ -1504,13 +1506,25 @@ static int tg_print_rwstat_recursive(struct seq_file *sf, void *v)
 }
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+/*
+ * Initial write bandwidth: 1000 MB/s (wb_init is 100 MB/s)
+ * The bandwidth will be updated via blkcg_update_bandwidth()
+ */
+#define INIT_DIRTY_BW     (1000 << (20 - PAGE_SHIFT))
+
 static int tg_set_buffered_write_bps(struct cgroup_subsys_state *css,
 				     struct cftype *cft,
 				     u64 val)
 {
 	struct blkcg *blkcg = css_to_blkcg(css);
-	if (blkcg)
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+	if (blkcg) {
 		blkcg->buffered_write_bps = val;
+		blkcg->dirty_ratelimit = INIT_DIRTY_BW;
+	}
 	return 0;
 }
 static u64 tg_read_buffered_write_bps(struct cgroup_subsys_state *css,

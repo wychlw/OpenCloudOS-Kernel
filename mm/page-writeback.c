@@ -111,6 +111,15 @@ EXPORT_SYMBOL_GPL(dirty_writeback_interval);
  */
 unsigned int dirty_expire_interval = 30 * 100; /* centiseconds */
 
+
+/*
+ * Support buffer write bps hierarchy
+ * Enable this will check all parents's limitations
+ */
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+unsigned int sysctl_buffered_write_bps_hierarchy;
+#endif
+
 /*
  * Flag that puts the machine in "laptop mode". Doubles as a timeout in jiffies:
  * a full sync is triggered after this time elapses without any disk activity.
@@ -1721,6 +1730,7 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 	int ret = 0;
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 	struct blkcg *blkcg = get_task_blkcg(current);
+	struct blkcg *parent_blkcg;
 #endif
 
 	for (;;) {
@@ -1810,7 +1820,7 @@ free_running:
 			m_intv = ULONG_MAX;
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-			if (blkcg_buffered_write_bps(blkcg))
+			if (blkcg && blkcg_buffered_write_bps_enabled(blkcg))
 				goto blkcg_bps;
 #endif
 
@@ -1894,12 +1904,32 @@ free_running:
 							RATELIMIT_CALC_SHIFT;
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-		if (blkcg_buffered_write_bps(blkcg) &&
+		if (blkcg && blkcg_buffered_write_bps_enabled(blkcg) &&
 			task_ratelimit > blkcg_dirty_ratelimit(blkcg)) {
 blkcg_bps:
+			if (likely(sysctl_buffered_write_bps_hierarchy)) {
+				dirty_ratelimit = blkcg_dirty_ratelimit(blkcg);
+				parent_blkcg = blkcg;
+
+				while (parent_blkcg) {
+					if (blkcg_buffered_write_bps(parent_blkcg)) {
+						RUE_CALL_VOID(IO, blkcg_update_bandwidth,
+								parent_blkcg);
+						if (dirty_ratelimit > blkcg_dirty_ratelimit(parent_blkcg))
+							dirty_ratelimit = blkcg_dirty_ratelimit(parent_blkcg);
+					}
+
+					parent_blkcg = blkcg_parent(parent_blkcg);
+				}
+			} else {
 				RUE_CALL_VOID(IO, blkcg_update_bandwidth, blkcg);
 				dirty_ratelimit = blkcg_dirty_ratelimit(blkcg);
-				task_ratelimit = dirty_ratelimit;
+			}
+			task_ratelimit = dirty_ratelimit;
+
+			trace_blkcg_calc_task_ratelimit(blkcg->css.cgroup->kn->name,
+					blkcg_buffered_write_bps(blkcg), blkcg_dirty_ratelimit(blkcg),
+					task_ratelimit);
 		}
 #endif
 

@@ -572,7 +572,7 @@ TRACE_EVENT(global_dirty_state,
 
 #define KBps(x)			((x) << (PAGE_SHIFT - 10))
 
-#ifdef CONFIG_BLK_DEV_THROTTLING
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 TRACE_EVENT(blkcg_dirty_ratelimit,
 
 	TP_PROTO(unsigned long bps,
@@ -604,6 +604,40 @@ TRACE_EVENT(blkcg_dirty_ratelimit,
 		  __entry->dirty_rate,
 		  __entry->dirty_ratelimit,
 		  __entry->balanced_dirty_ratelimit
+	)
+);
+
+TRACE_EVENT(blkcg_calc_task_ratelimit,
+
+	TP_PROTO(const char	*blkcg_name,
+		 unsigned long blkcg_buffered_write_bps,
+		 unsigned long blkcg_dirty_ratelimit,
+		 unsigned long task_ratelimit),
+
+	TP_ARGS(blkcg_name, blkcg_buffered_write_bps,
+		blkcg_dirty_ratelimit, task_ratelimit),
+
+	TP_STRUCT__entry(
+		__array(char,		name, 256)
+		__field(unsigned long,	blkcg_bps)
+		__field(unsigned long,	blkcg_dirty_ratelimit)
+		__field(unsigned long,	task_ratelimit)
+	),
+
+	TP_fast_assign(
+		strscpy_pad(__entry->name, blkcg_name, 256);
+		__entry->blkcg_bps = blkcg_buffered_write_bps;
+		__entry->blkcg_dirty_ratelimit = KBps(blkcg_dirty_ratelimit);
+		__entry->task_ratelimit = KBps(task_ratelimit);
+	),
+
+	TP_printk("cgroup=%s blkcg_bps=%lu "
+		  "blkcg_dirty_ratelimit=%lu "
+		  "task_ratelimit_kbps=%lu",
+		  __entry->name,
+		  __entry->blkcg_bps,
+		  __entry->blkcg_dirty_ratelimit,
+		  __entry->task_ratelimit
 	)
 );
 #endif

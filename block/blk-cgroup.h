@@ -29,10 +29,6 @@ struct blkg_policy_data;
 #define BLKG_STAT_CPU_BATCH	(INT_MAX / 2)
 
 #ifdef CONFIG_BLK_CGROUP
-static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
-{
-	return css ? container_of(css, struct blkcg, css) : NULL;
-}
 
 #ifdef CONFIG_BLK_CGROUP_DISKSTATS
 /*
