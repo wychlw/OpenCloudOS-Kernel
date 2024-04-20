@@ -396,6 +396,19 @@ static void quirk_tigerpoint_bm_sts(struct pci_dev *dev)
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_TGP_LPC, quirk_tigerpoint_bm_sts);
 #endif
 
+static void loongson_pcie_msi_quirk(struct pci_dev *dev)
+{
+	u16 val;
+	u16 class;
+	class = dev->class >> 8;
+	if (class == PCI_CLASS_BRIDGE_HOST) {
+		pci_read_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, &val);
+		val |= PCI_MSI_FLAGS_ENABLE;
+		pci_write_config_word(dev, dev->msi_cap + PCI_MSI_FLAGS, val);
+	}
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_LOONGSON, 0x7a59, loongson_pcie_msi_quirk);
+
 /* Chipsets where PCI->PCI transfers vanish or hang */
 static void quirk_nopcipci(struct pci_dev *dev)
 {
