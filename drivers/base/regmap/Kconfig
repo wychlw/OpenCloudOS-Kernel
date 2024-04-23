@@ -60,6 +60,7 @@ config REGMAP_MDIO
 	tristate
 
 config REGMAP_MMIO
+	default y
 	tristate
 
 config REGMAP_IRQ
