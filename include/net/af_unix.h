@@ -102,10 +102,10 @@ static inline int unix_sysctl_register(struct net *net) { return 0; }
 static inline void unix_sysctl_unregister(struct net *net) {}
 #endif
 
-#ifdef CONFIG_BPF_SYSCALL
 extern struct proto unix_dgram_proto;
 extern struct proto unix_stream_proto;
 
+#ifdef CONFIG_BPF_SYSCALL
 int unix_dgram_bpf_update_proto(struct sock *sk, struct sk_psock *psock, bool restore);
 int unix_stream_bpf_update_proto(struct sock *sk, struct sk_psock *psock, bool restore);
 void __init unix_bpf_build_proto(void);

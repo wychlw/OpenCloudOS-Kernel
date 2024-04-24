@@ -629,11 +629,12 @@ static void netlink_remove(struct sock *sk)
 	netlink_table_ungrab();
 }
 
-static struct proto netlink_proto = {
+struct proto netlink_proto = {
 	.name	  = "NETLINK",
 	.owner	  = THIS_MODULE,
 	.obj_size = sizeof(struct netlink_sock),
 };
+EXPORT_SYMBOL(netlink_proto);
 
 static int __netlink_create(struct net *net, struct socket *sock,
 			    struct mutex *cb_mutex, int protocol,

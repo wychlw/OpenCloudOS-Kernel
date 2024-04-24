@@ -1737,6 +1737,10 @@ int proc_do_static_key(struct ctl_table *table, int write,
 	return ret;
 }
 
+#ifdef CONFIG_RPS
+DECLARE_STATIC_KEY_TRUE(rps_using_pvipi);
+#endif
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname	= "panic",
@@ -2180,6 +2184,15 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_RPS
+	{
+		.procname       = "rps_using_pvipi",
+		.data           = &rps_using_pvipi.key,
+		.maxlen         = sizeof(rps_using_pvipi),
+		.mode           = 0644,
+		.proc_handler   = proc_do_static_key,
 	},
 #endif
 #ifdef CONFIG_CPUSETS
