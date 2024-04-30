@@ -1,0 +1,3 @@
+[submodule "kernel/tkernel/outtree/emm"]
+	path = kernel/tkernel/outtree/emm
+	url = git@git.woa.com:tlinux/EMM/kmod-emm.git
