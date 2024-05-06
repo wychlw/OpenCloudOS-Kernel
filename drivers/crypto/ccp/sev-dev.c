@@ -107,7 +107,8 @@ static void sev_irq_handler(int irq, void *data, unsigned int status)
 
 	/* Check if it is SEV command completion: */
 	reg = ioread32(sev->io_regs + sev->vdata->cmdresp_reg);
-	if (FIELD_GET(PSP_CMDRESP_RESP, reg)) {
+	if (FIELD_GET(PSP_CMDRESP_RESP, reg) ||
+	    (is_vendor_hygon() && csv_in_ring_buffer_mode())) {
 		sev->int_rcvd = 1;
 		wake_up(&sev->int_queue);
 	}
@@ -555,6 +556,10 @@ static int __sev_platform_shutdown_locked(int *error)
 	if (ret)
 		return ret;
 
+	/* RING BUFFER mode exits if a SHUTDOWN command is executed */
+	if (is_vendor_hygon() && csv_in_ring_buffer_mode())
+		csv_restore_mailbox_mode_postprocess();
+
 	sev->state = SEV_STATE_UNINIT;
 	dev_dbg(sev->dev, "SEV firmware shutdown\n");
 
@@ -758,6 +763,14 @@ static int sev_get_firmware(struct device *dev,
 	char fw_name_specific[SEV_FW_NAME_SIZE];
 	char fw_name_subset[SEV_FW_NAME_SIZE];
 
+	if (is_vendor_hygon()) {
+		/* Check for CSV FW to using generic name: csv.fw */
+		if (firmware_request_nowarn(firmware, CSV_FW_FILE, dev) >= 0)
+			return 0;
+		else
+			return -ENOENT;
+	}
+
 	snprintf(fw_name_specific, sizeof(fw_name_specific),
 		 "amd/amd_sev_fam%.2xh_model%.2xh.sbin",
 		 boot_cpu_data.x86, boot_cpu_data.x86_model);
@@ -796,13 +809,15 @@ static int sev_update_firmware(struct device *dev)
 	struct page *p;
 	u64 data_size;
 
-	if (!sev_version_greater_or_equal(0, 15)) {
+	if (!sev_version_greater_or_equal(0, 15) &&
+	    !(is_vendor_hygon() && csv_version_greater_or_equal(1667))) {
 		dev_dbg(dev, "DOWNLOAD_FIRMWARE not supported\n");
 		return -1;
 	}
 
 	if (sev_get_firmware(dev, &firmware) == -ENOENT) {
-		dev_dbg(dev, "No SEV firmware file present\n");
+		dev_dbg(dev, "No %s firmware file present\n",
+			is_vendor_hygon() ? "CSV" : "SEV");
 		return -1;
 	}
 
@@ -842,9 +857,11 @@ static int sev_update_firmware(struct device *dev)
 		ret = sev_do_cmd(SEV_CMD_DOWNLOAD_FIRMWARE, data, &error);
 
 	if (ret)
-		dev_dbg(dev, "Failed to update SEV firmware: %#x\n", error);
+		dev_dbg(dev, "Failed to update %s firmware: %#x\n",
+			is_vendor_hygon() ? "CSV" : "SEV", error);
 	else
-		dev_info(dev, "SEV firmware update successful\n");
+		dev_info(dev, "%s firmware update successful\n",
+			 is_vendor_hygon() ? "CSV" : "SEV");
 
 	__free_pages(p, order);
 
@@ -1250,7 +1267,14 @@ static int sev_misc_init(struct sev_device *sev)
 static void sev_dev_install_hooks(void)
 {
 	hygon_psp_hooks.sev_cmd_mutex = &sev_cmd_mutex;
+	hygon_psp_hooks.psp_dead = &psp_dead;
+	hygon_psp_hooks.psp_timeout = &psp_timeout;
+	hygon_psp_hooks.psp_cmd_timeout = &psp_cmd_timeout;
+	hygon_psp_hooks.sev_cmd_buffer_len = sev_cmd_buffer_len;
 	hygon_psp_hooks.__sev_do_cmd_locked = __sev_do_cmd_locked;
+	hygon_psp_hooks.__sev_platform_init_locked = __sev_platform_init_locked;
+	hygon_psp_hooks.__sev_platform_shutdown_locked = __sev_platform_shutdown_locked;
+	hygon_psp_hooks.sev_wait_cmd_ioc = sev_wait_cmd_ioc;
 	hygon_psp_hooks.sev_ioctl = sev_ioctl;
 
 	hygon_psp_hooks.sev_dev_hooks_installed = true;
