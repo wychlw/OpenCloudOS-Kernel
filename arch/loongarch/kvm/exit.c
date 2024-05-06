@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/preempt.h>
 #include <linux/vmalloc.h>
+#include <trace/events/kvm.h>
 #include <asm/fpu.h>
 #include <asm/inst.h>
 #include <asm/loongarch.h>
@@ -484,6 +485,8 @@ int kvm_emu_mmio_read(struct kvm_vcpu *vcpu, larch_inst inst)
 		vcpu->arch.io_gpr = rd;
 		run->mmio.is_write = 0;
 		vcpu->mmio_is_write = 0;
+		trace_kvm_mmio(KVM_TRACE_MMIO_READ_UNSATISFIED, run->mmio.len,
+				run->mmio.phys_addr, NULL);
 		return EMULATE_DO_MMIO;
 	}
 
@@ -530,6 +533,9 @@ int kvm_complete_mmio_read(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		er = EMULATE_FAIL;
 		break;
 	}
+
+	trace_kvm_mmio(KVM_TRACE_MMIO_READ, run->mmio.len,
+			run->mmio.phys_addr, run->mmio.data);
 
 	return er;
 }
@@ -642,6 +648,8 @@ int kvm_emu_mmio_write(struct kvm_vcpu *vcpu, larch_inst inst)
 		run->mmio.is_write = 1;
 		vcpu->mmio_needed = 1;
 		vcpu->mmio_is_write = 1;
+		trace_kvm_mmio(KVM_TRACE_MMIO_WRITE, run->mmio.len,
+				run->mmio.phys_addr, data);
 		return EMULATE_DO_MMIO;
 	}
 
