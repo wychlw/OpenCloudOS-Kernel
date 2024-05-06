@@ -782,7 +782,7 @@ static int kvm_get_one_reg(struct kvm_vcpu *vcpu,
 			*v = drdtime() + vcpu->kvm->arch.time_offset;
 			break;
 		case KVM_REG_LOONGARCH_DEBUG_INST:
-			*v = INSN_HVCL + KVM_HCALL_SWDBG;
+			*v = INSN_HVCL | KVM_HCALL_SWDBG;
 			break;
 		default:
 			ret = -EINVAL;
