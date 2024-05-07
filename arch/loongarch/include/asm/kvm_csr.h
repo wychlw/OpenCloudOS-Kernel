@@ -30,6 +30,7 @@
 		: [val] "+r" (__v)				\
 		: [reg] "i" (csr)				\
 		: "memory");					\
+	__v;							\
 })
 
 #define gcsr_xchg(v, m, csr)					\
@@ -180,6 +181,7 @@ __BUILD_GCSR_OP(tlbidx)
 
 #define kvm_save_hw_gcsr(csr, gid)	(csr->csrs[gid] = gcsr_read(gid))
 #define kvm_restore_hw_gcsr(csr, gid)	(gcsr_write(csr->csrs[gid], gid))
+#define kvm_read_clear_hw_gcsr(csr, gid)	(csr->csrs[gid] = gcsr_write(0, gid))
 
 int kvm_emu_iocsr(larch_inst inst, struct kvm_run *run, struct kvm_vcpu *vcpu);
 
@@ -209,6 +211,11 @@ static __always_inline void kvm_change_sw_gcsr(struct loongarch_csrs *csr,
 }
 
 #define KVM_PMU_PLV_ENABLE     (CSR_PERFCTRL_PLV0 |		\
+					CSR_PERFCTRL_PLV1 |	\
+					CSR_PERFCTRL_PLV2 |	\
+					CSR_PERFCTRL_PLV3)
+
+#define KVM_PMU_EVENT_ENABLED	(CSR_PERFCTRL_PLV0 |		\
 					CSR_PERFCTRL_PLV1 |	\
 					CSR_PERFCTRL_PLV2 |	\
 					CSR_PERFCTRL_PLV3)
