@@ -7869,6 +7869,9 @@ void batch_shrink_page_cache(gfp_t mask)
 
 void shrink_page_cache(gfp_t mask, struct page *page)
 {
+	if (lru_gen_enabled())
+		return;
+
 	if (!sysctl_vm_memory_qos || !vm_pagecache_limit_global)
 		return;
 
@@ -7881,7 +7884,7 @@ void shrink_page_cache(gfp_t mask, struct page *page)
 long shrink_page_cache_memcg(gfp_t mask, struct mem_cgroup *memcg,
 			     unsigned long nr_pages)
 {
-	if (!vm_pagecache_limit_global)
+	if (!vm_pagecache_limit_global && !lru_gen_enabled())
 		return __shrink_page_cache(mask, memcg, nr_pages);
 
 	return -EINVAL;
