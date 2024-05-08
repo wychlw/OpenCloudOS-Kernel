@@ -53,6 +53,19 @@ config HYGON_GM
 	help
 	  Hygon GM ccp driver
 
+config CRYPTO_DEV_HCT
+	tristate "HCT CCP device"
+	default m
+	depends on X86_64
+	select VFIO_MDEV
+	help
+	  Provides hygon crypto technology ccp device driver.
+	  Support virtualize ccp devices based on mediated devices.
+	  Support multi-process and virtual machines.
+	  Support host-noiommu mode memory encryption function.
+	  Support compiling hct.ko when mdev module is disabled.
+	  If you choose 'M' here, this module will be called hct ccp.
+
 config CRYPTO_DEV_CCP_DEBUGFS
 	bool "Enable CCP Internals in DebugFS"
 	default n
@@ -60,3 +73,10 @@ config CRYPTO_DEV_CCP_DEBUGFS
 	help
 	  Expose CCP device information such as operation statistics, feature
 	  information, and descriptor queue contents.
+
+config HYGON_PSP2CPU_CMD
+	bool "Hygon PSP2CPU Command Interface"
+	default y
+	depends on CRYPTO_DEV_SP_PSP
+	help
+	  Hygon PSP2CPU Command Support

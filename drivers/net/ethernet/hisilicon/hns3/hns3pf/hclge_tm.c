@@ -185,8 +185,8 @@ int hclge_pfc_pause_en_cfg(struct hclge_dev *hdev, u8 tx_rx_bitmap,
 	return hclge_cmd_send(&hdev->hw, &desc, 1);
 }
 
-static int hclge_pause_param_cfg(struct hclge_dev *hdev, const u8 *addr,
-				 u8 pause_trans_gap, u16 pause_trans_time)
+int hclge_pause_param_cfg(struct hclge_dev *hdev, const u8 *addr,
+			  u8 pause_trans_gap, u16 pause_trans_time)
 {
 	struct hclge_cfg_pause_param_cmd *pause_param;
 	struct hclge_desc desc;
@@ -1498,7 +1498,7 @@ static int hclge_pause_param_setup_hw(struct hclge_dev *hdev)
 
 	return hclge_pause_param_cfg(hdev, mac->mac_addr,
 				     HCLGE_DEFAULT_PAUSE_TRANS_GAP,
-				     HCLGE_DEFAULT_PAUSE_TRANS_TIME);
+				     hdev->tm_info.pause_time);
 }
 
 static int hclge_pfc_setup_hw(struct hclge_dev *hdev)
@@ -1692,6 +1692,7 @@ int hclge_tm_schd_init(struct hclge_dev *hdev)
 	/* fc_mode is HCLGE_FC_FULL on reset */
 	hdev->tm_info.fc_mode = HCLGE_FC_FULL;
 	hdev->fc_mode_last_time = hdev->tm_info.fc_mode;
+	hdev->tm_info.pause_time = HCLGE_DEFAULT_PAUSE_TRANS_TIME;
 
 	if (hdev->tx_sch_mode != HCLGE_FLAG_TC_BASE_SCH_MODE &&
 	    hdev->tm_info.num_pg != 1)
@@ -2142,4 +2143,20 @@ int hclge_tm_flush_cfg(struct hclge_dev *hdev, bool enable)
 		msleep(HCLGE_TM_FLUSH_TIME_MS);
 
 	return ret;
+}
+
+void hclge_reset_tc_config(struct hclge_dev *hdev)
+{
+	struct hclge_vport *vport = &hdev->vport[0];
+	struct hnae3_knic_private_info *kinfo;
+
+	kinfo = &vport->nic.kinfo;
+
+	if (!kinfo->tc_info.mqprio_destroy)
+		return;
+
+	/* clear tc info, including mqprio_destroy and mqprio_active */
+	memset(&kinfo->tc_info, 0, sizeof(kinfo->tc_info));
+	hclge_tm_schd_info_update(hdev, 0);
+	hclge_comm_rss_indir_init_cfg(hdev->ae_dev, &hdev->rss_cfg);
 }

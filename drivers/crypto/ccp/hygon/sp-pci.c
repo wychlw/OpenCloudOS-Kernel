@@ -22,10 +22,26 @@ static const struct sev_vdata csvv1 = {
 
 static const struct psp_vdata pspv1 = {
 	.sev			= &csvv1,
-	.bootloader_info_reg	= 0x105ec,	/* C2PMSG_59 */
 	.feature_reg		= 0x105fc,	/* C2PMSG_63 */
 	.inten_reg		= 0x10610,	/* P2CMSG_INTEN */
 	.intsts_reg		= 0x10614,	/* P2CMSG_INTSTS */
+#ifdef CONFIG_HYGON_PSP2CPU_CMD
+	.p2c_cmdresp_reg	= 0x105e8,
+	.p2c_cmdbuff_addr_lo_reg = 0x105ec,
+	.p2c_cmdbuff_addr_hi_reg = 0x105f0,
+#endif
+};
+
+static const struct psp_vdata pspv2 = {
+	.sev			= &csvv1,
+	.feature_reg		= 0x105fc,
+	.inten_reg		= 0x10670,
+	.intsts_reg		= 0x10674,
+#ifdef CONFIG_HYGON_PSP2CPU_CMD
+	.p2c_cmdresp_reg        = 0x105e8,
+	.p2c_cmdbuff_addr_lo_reg = 0x105ec,
+	.p2c_cmdbuff_addr_hi_reg = 0x105f0,
+#endif
 };
 
 #endif
@@ -34,7 +50,7 @@ const struct sp_dev_vdata hygon_dev_vdata[] = {
 	{	/* 0 */
 		.bar = 2,
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
-		.ccp_vdata = &ccpv5a,
+		.ccp_vdata = &ccpv5a_hygon,
 #endif
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP
 		.psp_vdata = &pspv1,
@@ -43,7 +59,16 @@ const struct sp_dev_vdata hygon_dev_vdata[] = {
 	{	/* 1 */
 		.bar = 2,
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
-		.ccp_vdata = &ccpv5b,
+		.ccp_vdata = &ccpv5b_hygon,
+#endif
+	},
+	{	/* 2 */
+		.bar = 2,
+#ifdef CONFIG_CRYPTO_DEV_SP_CCP
+		.ccp_vdata = &ccpv5a_hygon,
+#endif
+#ifdef CONFIG_CRYPTO_DEV_SP_PSP
+		.psp_vdata = &pspv2,
 #endif
 	},
 };
