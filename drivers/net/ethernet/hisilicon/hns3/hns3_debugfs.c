@@ -414,6 +414,9 @@ static struct hns3_dbg_cap_info hns3_dbg_cap[] = {
 	}, {
 		.name = "support tm flush",
 		.cap_bit = HNAE3_DEV_SUPPORT_TM_FLUSH_B,
+	}, {
+		.name = "support vf fault detect",
+		.cap_bit = HNAE3_DEV_SUPPORT_VF_FAULT_B,
 	}
 };
 
@@ -959,7 +962,7 @@ static const struct hns3_dbg_item tx_bd_info_items[] = {
 	{ "OT_VLAN_TAG", 3 },
 	{ "TV", 5 },
 	{ "OLT_VLAN_LEN", 2 },
-	{ "PAYLEN_OL4CS", 2 },
+	{ "PAYLEN_FDOP_OL4CS", 2 },
 	{ "BD_FE_SC_VLD", 2 },
 	{ "MSS_HW_CSUM", 0 },
 };
@@ -978,7 +981,7 @@ static void hns3_dump_tx_bd_info(struct hns3_desc *desc, char **result, int idx)
 	sprintf(result[j++], "%u", le16_to_cpu(desc->tx.tv));
 	sprintf(result[j++], "%u",
 		le32_to_cpu(desc->tx.ol_type_vlan_len_msec));
-	sprintf(result[j++], "%#x", le32_to_cpu(desc->tx.paylen_ol4cs));
+	sprintf(result[j++], "%#x", le32_to_cpu(desc->tx.paylen_fdop_ol4cs));
 	sprintf(result[j++], "%#x", le16_to_cpu(desc->tx.bdtp_fe_sc_vld_ra_ri));
 	sprintf(result[j++], "%u", le16_to_cpu(desc->tx.mss_hw_csum));
 }
@@ -1094,6 +1097,8 @@ hns3_dbg_dev_specs(struct hnae3_handle *h, char *buf, int len, int *pos)
 	*pos += scnprintf(buf + *pos, len - *pos,
 			  "TX timeout threshold: %d seconds\n",
 			  dev->watchdog_timeo / HZ);
+	*pos += scnprintf(buf + *pos, len - *pos, "Hilink Version: %u\n",
+			  dev_specs->hilink_version);
 }
 
 static int hns3_dbg_dev_info(struct hnae3_handle *h, char *buf, int len)

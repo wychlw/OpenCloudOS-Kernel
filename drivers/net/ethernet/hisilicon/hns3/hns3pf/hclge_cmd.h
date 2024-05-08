@@ -354,6 +354,12 @@ struct hclge_sfp_info_cmd {
 	u8 rsv[6];
 };
 
+struct hclge_port_fault_cmd {
+	__le32 fault_status;
+	__le32 port_type;
+	u8 rsv[16];
+};
+
 #define HCLGE_MAC_CFG_FEC_AUTO_EN_B	0
 #define HCLGE_MAC_CFG_FEC_MODE_S	1
 #define HCLGE_MAC_CFG_FEC_MODE_M	GENMASK(3, 1)
@@ -727,11 +733,11 @@ struct hclge_fd_tcam_config_3_cmd {
 
 #define HCLGE_FD_AD_DROP_B		0
 #define HCLGE_FD_AD_DIRECT_QID_B	1
-#define HCLGE_FD_AD_QID_S		2
-#define HCLGE_FD_AD_QID_M		GENMASK(11, 2)
+#define HCLGE_FD_AD_QID_L_S		2
+#define HCLGE_FD_AD_QID_L_M		GENMASK(11, 2)
 #define HCLGE_FD_AD_USE_COUNTER_B	12
-#define HCLGE_FD_AD_COUNTER_NUM_S	13
-#define HCLGE_FD_AD_COUNTER_NUM_M	GENMASK(20, 13)
+#define HCLGE_FD_AD_COUNTER_NUM_L_S	13
+#define HCLGE_FD_AD_COUNTER_NUM_L_M	GENMASK(19, 13)
 #define HCLGE_FD_AD_NXT_STEP_B		20
 #define HCLGE_FD_AD_NXT_KEY_S		21
 #define HCLGE_FD_AD_NXT_KEY_M		GENMASK(25, 21)
@@ -741,6 +747,8 @@ struct hclge_fd_tcam_config_3_cmd {
 #define HCLGE_FD_AD_TC_OVRD_B		16
 #define HCLGE_FD_AD_TC_SIZE_S		17
 #define HCLGE_FD_AD_TC_SIZE_M		GENMASK(20, 17)
+#define HCLGE_FD_AD_QID_H_B		21
+#define HCLGE_FD_AD_COUNTER_NUM_H_B	26
 
 struct hclge_fd_ad_config_cmd {
 	u8 stage;
@@ -756,6 +764,24 @@ struct hclge_fd_ad_cnt_read_cmd {
 	u8 rsv1[2];
 	__le64 cnt;
 	u8 rsv2[8];
+};
+
+struct hclge_fd_qb_cfg_cmd {
+	u8 en;
+	u8 vf_id;
+	u8 rsv[22];
+};
+
+#define HCLGE_FD_QB_AD_RULE_ID_VLD_B	0
+#define HCLGE_FD_QB_AD_COUNTER_VLD_B	1
+struct hclge_fd_qb_ad_cmd {
+	u8 vf_id;
+	u8 rsv1;
+	u8 ad_sel;
+	u8 rsv2;
+	__le16 hit_rule_id;
+	u8 counter_id;
+	u8 rsv3[17];
 };
 
 #define HCLGE_FD_USER_DEF_OFT_S		0
@@ -828,7 +854,8 @@ struct hclge_dev_specs_1_cmd {
 	__le16 mc_mac_size;
 	u8 rsv1[6];
 	u8 tnl_num;
-	u8 rsv2[5];
+	u8 hilink_version;
+	u8 rsv2[4];
 };
 
 /* mac speed type defined in firmware command */
@@ -867,11 +894,17 @@ struct hclge_phy_link_ksetting_1_cmd {
 	u8 rsv[22];
 };
 
+#define HCLGE_PHY_RW_DIRECTLY	0
+#define HCLGE_PHY_RW_WITH_PAGE	1
 struct hclge_phy_reg_cmd {
 	__le16 reg_addr;
 	u8 rsv0[2];
 	__le16 reg_val;
-	u8 rsv1[18];
+	u8 rsv1[2];
+	u8 type;
+	u8 dev_addr;
+	__le16 page;
+	u8 rsv2[12];
 };
 
 struct hclge_wol_cfg_cmd {

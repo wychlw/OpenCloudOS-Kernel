@@ -244,6 +244,8 @@ int hclge_tm_init_hw(struct hclge_dev *hdev, bool init);
 int hclge_pfc_pause_en_cfg(struct hclge_dev *hdev, u8 tx_rx_bitmap,
 			   u8 pfc_bitmap);
 int hclge_mac_pause_en_cfg(struct hclge_dev *hdev, bool tx, bool rx);
+int hclge_pause_param_cfg(struct hclge_dev *hdev, const u8 *addr,
+			  u8 pause_trans_gap, u16 pause_trans_time);
 int hclge_pause_addr_cfg(struct hclge_dev *hdev, const u8 *mac_addr);
 int hclge_mac_pause_setup_hw(struct hclge_dev *hdev);
 void hclge_pfc_rx_stats_get(struct hclge_dev *hdev, u64 *stats);
@@ -277,4 +279,5 @@ int hclge_tm_get_port_shaper(struct hclge_dev *hdev,
 int hclge_up_to_tc_map(struct hclge_dev *hdev);
 int hclge_dscp_to_tc_map(struct hclge_dev *hdev);
 int hclge_tm_flush_cfg(struct hclge_dev *hdev, bool enable);
+void hclge_reset_tc_config(struct hclge_dev *hdev);
 #endif
