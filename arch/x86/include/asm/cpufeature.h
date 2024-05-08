@@ -43,7 +43,7 @@ enum cpuid_leafs
 	CPUID_RESERVED_5,
 	CPUID_RESERVED_6,
 	CPUID_RESERVED_7,
-	CPUID_RESERVED_8,
+	CPUID_8C86_0000_EDX,	/* 29 */
 	/*
 	 * Becareful! X86_FEATURE_ZXPAUSE rely on CPUID_C000_0006_EAX's position!
 	 * CPUID_C000_0006_EAX must keep at the 30th position (count from 0)!
