@@ -172,13 +172,6 @@ case $MODULEPKG in
 		# Now process the override list to bring those modules back into core
 		filter_override "$overrides"
 		;;
-	modules-public-removable-media )
-		# Filter all mods under /lib/modules/$kver/kernel/drivers/usb/storage
-		filter_mods "drivers/usb/" "storage" /
-		;;
-	modules-public )
-		filter_mods "drivers/gpu/drm/" "nouveau" /
-		;;
 	modules-private )
 		filter_mods "" "$privatemods" /
 		;;
