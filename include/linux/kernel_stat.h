@@ -118,6 +118,7 @@ extern void account_system_index_time(struct task_struct *, u64,
 extern void account_steal_time(u64);
 extern void account_idle_time(u64);
 extern u64 get_idle_time(struct kernel_cpustat *kcs, int cpu);
+extern u64 get_iowait_time(struct kernel_cpustat *kcs, int cpu);
 
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
 static inline void account_process_tick(struct task_struct *tsk, int user)

@@ -3018,23 +3018,6 @@ static s64 cpuset_read_s64(struct cgroup_subsys_state *css, struct cftype *cft)
 	return 0;
 }
 
-static u64 get_iowait_time(int cpu)
-{
-	u64 iowait, iowait_time = -1ULL;
-
-	if (cpu_online(cpu))
-		iowait_time = get_cpu_iowait_time_us(cpu, NULL);
-
-	if (iowait_time == -1ULL)
-		/* !NO_HZ or cpu offline so we can rely on cpustat.iowait */
-		iowait = kcpustat_cpu(cpu).cpustat[CPUTIME_IOWAIT];
-	else
-		iowait = div_u64(iowait_time, NSEC_PER_USEC);
-
-	return iowait;
-}
-
-
 extern int cpu_get_max_cpus(struct task_struct *p);
 static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpuset *cs, int max_cpu)
 {
@@ -3065,7 +3048,7 @@ static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpu
 		system += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
 		kcpustat_cpu_fetch(&kcs, i);
 		idle += get_idle_time(&kcs, i);
-		iowait += get_iowait_time(i);
+		iowait += get_iowait_time(&kcs, i);
 		irq += kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
 		softirq += kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
 		steal += kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
@@ -3108,7 +3091,7 @@ static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpu
 		system = kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
 		kcpustat_cpu_fetch(&kcs, i);
 		idle += get_idle_time(&kcs, i);
-		iowait = get_iowait_time(i);
+		iowait = get_iowait_time(&kcs, i);
 		irq = kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
 		softirq = kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
 		steal = kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
@@ -3216,7 +3199,7 @@ int cpuset_cgroupfs_stat_cpuacct(struct cpuset *cs, struct seq_file *m, void *v,
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_USER];
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_NICE];
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
-		cpu_total += get_iowait_time(i);
+		cpu_total += get_iowait_time(&kcs, i);
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
 		cpu_total += kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
