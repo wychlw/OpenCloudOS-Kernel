@@ -1,3 +1,143 @@
+* Thu May  9 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-2
+- irqchip/loongson-pch-pic: Update interrupt registration policy
+- Merge linux 6.6.30
+- Merge linux 6.6.29
+- Merge branch 'ock/next'
+- !146 [next-6.6]kunpeng：Backport hns3 features and bugfixes Merge pull request !146 from hongrongxuan/linux-6.6/next-ronson-dev
+- net: hns3: add support for Hisilicon ptp sync device
+- net: hns3: fix port vlan filter not disabled problem in dynamic vlan mode
+- net: hns3: default select PAGE_POOL_STATS
+- net: hns3: fix kernel crash when devlink reload during vf initialization
+- net: hns3: support set/get VxLAN rule of rx flow director by ethtool
+- net: ethtool: add VxLAN to the NFC API
+- net: hns3: Add support for some CMIS transceiver modules
+- net: sfp: Synchronize some CMIS transceiver modules from ethtool
+- net: hns3: add command queue trace for hns3
+- net: hns3: dump more reg info based on ras mod
+- net: hns3: add support for page_pool_get_stats
+- net: hns3: add support to query scc version by devlink info
+- net: hns3: correct the logic of hclge_sync_vf_qb_mode()
+- net: hns3: add support for FD counter
+- net: hns3: allocate fd counter for queue bonding
+- net: hns3: refactor the debugfs for dumping FD tcam
+- net: hns3: add queue bonding mode support for VF
+- net: hns3: add support for queue bonding mode of flow director
+- net: hns3: add checking for vf id of mailbox
+- net: hns3: fix reset timeout under full functions and queues
+- net: hns3: fix delete tc fail issue
+- net: hns3: Disable SerDes serial loopback for HiLink H60
+- net: hns3: add new 200G link modes for hisilicon device
+- net: hns3: add input parameters checking
+- net: hns3: add extend interface support for read and write phy register
+- net: hns3: add support set led
+- net: hns3: add support set mac state
+- net: hns3: add support detect port wire type
+- net: hns3: add support PF provides customized interfaces to detect port faults.
+- net: hns3: support set pfc pause trans time
+- net: hns3: add support disable nic clock
+- net: hns3: add support config and query serdes lane status
+- net: hns3: add supports configure optical module enable
+- net: hns3: add support query the presence of optical module
+- net: hns3: add support modified tx timeout
+- net: hns3: add support query port ext information
+- net: hns3: add support configuring function-level interrupt affinity
+- net: hns3: add support clear mac statistics
+- net: hns3: add support to get/set 1d torus param
+- net: hns3: add supports fast reporting of faulty nodes
+- net: hns3: add supports pfc storm detection and suppression
+- net: hns3: add support customized exception handling interfaces
+- net: hns3: add some link modes for hisilicon device
+- net: hns3: add vf fault detect support
+- net: hns3: add hns3 vf fault detect cap bit support
+- kunpeng：Backport some bugfixes for hisi_sas Merge pull request !143 from chenyi/linux-6.6/next-cy-dev
+- scsi: hisi_sas: Modify the deadline for ata_wait_after_reset()
+- scsi: hisi_sas: Remove hisi_hba->timer for v3 hw
+- scsi: hisi_sas: Check whether debugfs is enabled before removing or releasing it
+- scsi: libsas: Allocation SMP request is aligned to ARCH_DMA_MINALIGN
+- scsi: hisi_sas: Fix the deadlock issue that occurs during automatic dump
+- scsi: hisi_sas: Handle the NCQ error returned by D2H frame
+- scsi: hisi_sas: Remove redundant checks for automatic debugfs dump
+- scsi: hisi_sas: Allocate DFX memory during dump trigger
+- scsi: hisi_sas: Directly call register snapshot instead of using workqueue
+- scsi: hisi_sas: Check usage count only when the runtime PM status is RPM_SUSPENDING
+- scsi: hisi_sas: Add slave_destroy interface for v3 hw
+- Revert "scsi: hisi_sas: Disable SATA disk phy for severe I_T nexus reset failure"
+- Hygon:Update ccp-crypto driver to support Hygon 4th CPU & add hct.ko module which needed by HCT engine Merge pull request !149 from partyCoder/next
+- Commit Message: Support 1024 processes simutaneously in the hct-mdev mode.
+- Commit Message: Change the maximum number of supported ccps from 16 to 48.
+- Commit Message: Compiling hct.ko when the module mdev is disabled.
+- ccp: supporting memory encryption features for host vfio-noiommu mode, and wb attribute for the bar memory of virtual machine.
+- Add mediated ccp driver support for hygon crypto technology.
+- ccp: ccp-crypto support sm2 on Hygon generation 4th CPU
+- Hygon:Support CSV(2) guest attestation, CSV firmware update, CSV(2) guest migration, CSV(2) guest reboot, x86-psp communicate interfaces Merge pull request !148 from hanliyang/next
+- KVM: SVM: Force flush caches before reboot CSV guest
+- KVM: SVM: Add support for rebooting CSV2 guest
+- KVM: x86: Introduce control_{pre,post}_system_reset ioctl interfaces
+- KVM: SVM: Export MSR_AMD64_SEV_ES_GHCB to userspace for CSV2 guest
+- KVM: x86: Restore control registers in __set_sregs() to support CSV2 guest live migration
+- KVM: SVM: Add KVM_SEV_RECEIVE_UPDATE_VMSA command
+- KVM: SVM: Add KVM_SEV_SEND_UPDATE_VMSA command
+- crypto: ccp: Fix definition of struct sev_data_send_update_vmsa
+- crypto: ccp: Add another mailbox interrupt support for PSP sending command to X86
+- crypto: ccp: Add a new interface for X86 sending command to PSP
+- KVM: SVM: Add RECEIVE_UPDATE_DATA command helper to support KVM_CSV_COMMAND_BATCH
+- KVM: SVM: Add SEND_UPDATE_DATA command helper to support KVM_CSV_COMMAND_BATCH
+- KVM: SVM: Prepare memory pool to allocate buffers for KVM_CSV_COMMAND_BATCH
+- KVM: SVM: Add KVM_CSV_COMMAND_BATCH command for applying CSV RING_BUFFER mode
+- crypto: ccp: Add support for issue commands in CSV RING_BUFFER mode
+- crypto: ccp: Add support to switch to CSV RING_BUFFER mode
+- crypto: ccp: Add support for dequeue status in CSV RING_BUFFER mode
+- crypto: ccp: Add support for enqueue command pointers in CSV RING_BUFFER mode
+- crypto: ccp: Introduce init and free helpers to manage CSV RING_BUFFER queues
+- crypto: ccp: Implement CSV_DOWNLOAD_FIRMWARE ioctl command
+- crypto: ccp: Implement CSV_PLATFORM_SHUTDOWN ioctl command
+- crypto: ccp: Implement CSV_PLATFORM_INIT ioctl command
+- crypto: ccp: Support DOWNLOAD_FIRMWARE when detect CSV
+- driver/virt/coco: Add HYGON CSV Guest dirver.
+- KVM: x86: Support VM_ATTESTATION hypercall
+- Montage：add support for Montage Mont-TSSE Driver Merge pull request !147 from carrie.cai/next
+- add support for Montage Mont-TSSE driver
+- Support PSP identification for Hygon 4th CPU and print secure features when running on Hygon CPUs Merge pull request !144 from hanliyang/next_ident-hygon-cc-all-others
+- x86/config: Set CONFIG_HYGON_CSV by default
+- x86/cpu/hygon: Clear SME feature flag when not in use
+- x86/cpufeatures: Add CSV3 CPU feature
+- x86/cpufeatures: Add CPUID_8C86_0000_EDX CPUID leaf
+- x86/cpu: Detect memory encryption features on Hygon CPUs
+- KVM: SVM: Print Hygon CSV support info if support is detected
+- crypto: ccp: Print Hygon CSV API version when CSV support is detected
+- x86/mm: Print CSV info into the kernel log
+- x86/mm: Provide a Kconfig entry to build the HYGON memory encryption support into the kernel
+- Documentation/arch/x86: Add HYGON secure virtualization description
+- crypto: ccp: Add support to detect CCP devices on Hygon 4th CPUs
+- !141 add 3snic 3s9xx NIC driver Merge pull request !141 from cleanerleon/next
+- add 3snic 3s9xx driver
+- Hyper-V: support Hyper-V synthetic video device
+- amdkfd: use calloc instead of kzalloc to avoid integer overflow
+- emm: add submodule of emm
+- block: fix deadlock between bd_link_disk_holder and partition scan
+- md: fix kmemleak of rdev->serial
+- Kconfig: delete intel atom and apple human interface device support
+- driver: compile mdev.ko by default
+- Kconfig: update many tencent.config of x86
+- driver: make regmap-mmio.c compiled in by default
+- net/proc: added sockets details statistics
+- net: rps using pvipi
+- smp: introduce a new interface smp_call_function_many_async
+- virtio_net: disable napi_tx by default
+- tcp: backport two patch from tk4 about gso
+- Merge linux 6.6.28
+- Merge linux 6.6.27
+- dist: config: add LOCALVERSION="+debug" for debug config
+- config: enable CONFIG_DEBUG_INFO_BTF in eks config
+- exit: wait_task_zombie: kill the no longer necessary spin_lock_irq(siglock)
+- fs/proc: do_task_stat: use sig->stats_lock to gather the threads/children stats
+- fs/proc: do_task_stat: use __for_each_thread()
+- net: ip_tunnel: prevent perpetual headroom growth
+- dist: ensure release start with decimal number
+- dist: sanitize usage of unamer
+- dist: add missing place holder for loongarch64 kabi
+- emm/oversell: fix memsw page counter
+
 * Wed Apr 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.26-1
 - SUNRPC: discard sv_refcnt, and svc_get/svc_put
 - svc: don't hold reference for poolstats, only mutex.
