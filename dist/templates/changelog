@@ -1,3 +1,6 @@
+* Sat May 11 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-3
+- config: add some drm configs to support more drm
+
 * Thu May  9 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-2
 - irqchip/loongson-pch-pic: Update interrupt registration policy
 - Merge linux 6.6.30
