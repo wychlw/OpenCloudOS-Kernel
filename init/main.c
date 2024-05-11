@@ -51,6 +51,7 @@
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
 #include <linux/cgroup.h>
+#include <linux/mbuf.h>
 #include <linux/efi.h>
 #include <linux/tick.h>
 #include <linux/sched/isolation.h>
@@ -929,10 +930,16 @@ void start_kernel(void)
 	 * initalization of page allocator
 	 */
 	setup_log_buf(0);
+#ifdef CONFIG_RQM
+	setup_mbuf();
+#endif
 	vfs_caches_init_early();
 	sort_main_extable();
 	trap_init();
 	mm_core_init();
+#ifdef CONFIG_RQM
+	mbuf_bmap_init();
+#endif
 	poking_init();
 	ftrace_init();
 

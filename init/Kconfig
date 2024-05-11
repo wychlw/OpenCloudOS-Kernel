@@ -636,6 +636,18 @@ config TASK_IO_ACCOUNTING
 
 	  Say N if unsure.
 
+config RQM
+	bool "Resource Quality Monitor"
+	depends on PSI
+	help
+	  Collect metrics that indicate how the CPU, memory, IO and net scores
+	  are in the system.
+
+	  If you say Y here, the kernel will create /proc/rue/qulity with the scores
+	  files CPU, memory, IO and  network. And you can get the specific cgroup's
+	  quality metrics from the cgroup directory(cgroupv2 only).
+	  Say N if unsure.
+
 config PSI
 	bool "Pressure stall information tracking"
 	select KERNFS
