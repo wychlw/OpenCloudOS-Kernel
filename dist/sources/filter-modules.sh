@@ -45,7 +45,7 @@ singlemods="ntb_netdev iscsi_ibft iscsi_boot_sysfs megaraid pmcraid qedi qla1280
 privatemods="rue emm_extentions emm_coreutils emm_zram"
 
 # Overrides is individual modules which need to remain in kernel-core due to deps.
-overrides="cec wmi"
+overrides="cec mfd-core mlx5_core mlxfw wmi"
 
 BASE_DIR=$1
 KERNEL_UNAMER=$2
