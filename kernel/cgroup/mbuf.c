@@ -252,7 +252,7 @@ static int mbuf_prepare(struct mbuf_ring *mring, u32 msg_size)
 }
 
 /* Write monitor buffer message */
-static ssize_t do_mbuf_write(struct cgroup *cg, char *buffer, size_t size)
+static ssize_t do_mbuf_write(struct mbuf_slot *mbuf, char *buffer, size_t size)
 {
 	struct mbuf_ring *mring;
 	struct mbuf_ring_desc *desc;
@@ -265,13 +265,13 @@ static ssize_t do_mbuf_write(struct cgroup *cg, char *buffer, size_t size)
 		return 0;
 	}
 
-	mring = cg->mbuf->mring;
+	mring = mbuf->mring;
 	len = sizeof(struct mbuf_ring_desc) + size;
 
-	write_seqlock_irqsave(&cg->mbuf->slot_lock, flags);
+	write_seqlock_irqsave(&mbuf->slot_lock, flags);
 
 	if (mbuf_prepare(mring, len)) {
-		write_sequnlock_irqrestore(&cg->mbuf->slot_lock, flags);
+		write_sequnlock_irqrestore(&mbuf->slot_lock, flags);
 		pr_err("mbuf: Can not find enough space.\n");
 		return 0;
 	}
@@ -290,20 +290,23 @@ static ssize_t do_mbuf_write(struct cgroup *cg, char *buffer, size_t size)
 	mring->next_idx += desc->len;
 	mring->next_seq++;
 
-	write_sequnlock_irqrestore(&cg->mbuf->slot_lock, flags);
+	write_sequnlock_irqrestore(&mbuf->slot_lock, flags);
 
 	return size;
 }
 
-void mbuf_reset(struct mbuf_ring *mring)
+void mbuf_reset(struct mbuf_slot *mbuf)
 {
-	mring->first_idx = mring->base_idx;
-	mring->first_seq = 0;
-	mring->next_idx = mring->base_idx;
-	mring->next_seq = 0;
+	write_seqlock(&mbuf->slot_lock);
+	mbuf->mring->first_idx = mbuf->mring->base_idx;
+	mbuf->mring->first_seq = 0;
+	mbuf->mring->next_idx = mbuf->mring->base_idx;
+	mbuf->mring->next_seq = 0;
+	write_sequnlock(&mbuf->slot_lock);
 }
+EXPORT_SYMBOL(mbuf_reset);
 
-static ssize_t mbuf_write(struct cgroup *cg, const char *fmt, va_list args)
+static ssize_t mbuf_write(struct mbuf_slot *mbuf, const char *fmt, va_list args)
 {
 	static char buf[MBUF_MSG_LEN_MAX];
 	char *text = buf;
@@ -313,7 +316,7 @@ static ssize_t mbuf_write(struct cgroup *cg, const char *fmt, va_list args)
 	t_len = vscnprintf(text, sizeof(buf), fmt, args);
 
 	/* Write string to mbuf */
-	ret = do_mbuf_write(cg, text, t_len);
+	ret = do_mbuf_write(mbuf, text, t_len);
 
 	return ret;
 }
@@ -335,11 +338,17 @@ static int get_next_mbuf_id(unsigned long *addr, u32 start)
 	return index;
 }
 
-static void mbuf_slot_init(struct mbuf_slot *mb, struct cgroup *cg, u32 index)
+static void mbuf_slot_init(struct mbuf_slot *mb,
+			   void *owner, u32 index, struct mbuf_operations *ops)
 {
-	mb->owner = cg;
+	mb->owner = owner;
 	mb->idx = index;
-	mb->ops = &mbuf_ops;
+
+	if (!ops)
+		mb->ops = &mbuf_ops;
+	else
+		mb->ops = ops;
+
 	seqlock_init(&mb->slot_lock);
 	ratelimit_state_init(&mb->ratelimit, 5 * HZ, 50);
 
@@ -349,10 +358,10 @@ static void mbuf_slot_init(struct mbuf_slot *mb, struct cgroup *cg, u32 index)
 				+ sizeof(struct mbuf_ring);
 	mb->mring->end_idx = (index + 1) * g_mbuf.mbuf_size_per_cg - 1;
 
-	mbuf_reset(mb->mring);
+	mbuf_reset(mb);
 }
 
-struct mbuf_slot *mbuf_slot_alloc(struct cgroup *cg)
+struct mbuf_slot *mbuf_slot_alloc_v2(void *owner, struct mbuf_operations *ops)
 {
 	struct mbuf_slot *mb;
 	u32 index = 0;
@@ -401,26 +410,38 @@ again:
 	g_mbuf.mbuf_next_id = index;
 
 	mb = (struct mbuf_slot *)(g_mbuf.mbuf + index * g_mbuf.mbuf_size_per_cg);
-	mbuf_slot_init(mb, cg, index);
+	mbuf_slot_init(mb, owner, index, ops);
 	g_mbuf.mbuf_frees--;
 
 	spin_unlock_irqrestore(&g_mbuf.mbuf_lock, flags);
 
 	return mb;
 }
+EXPORT_SYMBOL(mbuf_slot_alloc_v2);
 
-void mbuf_free(struct cgroup *cg)
+struct mbuf_slot *mbuf_slot_alloc(struct cgroup *cg)
+{
+	return mbuf_slot_alloc_v2((void *)cg, NULL);
+}
+EXPORT_SYMBOL(mbuf_slot_alloc);
+
+void mbuf_free_slot(struct mbuf_slot *slot)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&g_mbuf.mbuf_lock, flags);
-
 	/* Make current idx the next available buffer */
-	g_mbuf.mbuf_next_id = cg->mbuf->idx;
+	g_mbuf.mbuf_next_id = slot->idx;
 	__clear_bit(g_mbuf.mbuf_next_id, g_mbuf.mbuf_bitmap);
-
 	g_mbuf.mbuf_frees++;
 	spin_unlock_irqrestore(&g_mbuf.mbuf_lock, flags);
+
+}
+EXPORT_SYMBOL(mbuf_free_slot);
+
+void mbuf_free(struct cgroup *cg)
+{
+	mbuf_free_slot(cg->mbuf);
 }
 
 static u32 rd_mbuf_next(struct mbuf_ring *mring, u32 curr_idx)

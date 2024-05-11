@@ -43,7 +43,9 @@
 #include <linux/skbuff.h>
 #include <linux/notifier.h>
 #include <linux/xarray.h>
-
+#ifdef CONFIG_NETNS_MBUF
+#include <net/netns_mbuf.h>
+#endif
 struct user_namespace;
 struct proc_dir_entry;
 struct net_device;
@@ -189,6 +191,9 @@ struct net {
 	struct sock		*diag_nlsk;
 #if IS_ENABLED(CONFIG_SMC)
 	struct netns_smc	smc;
+#endif
+#ifdef CONFIG_NETNS_MBUF
+	struct net_mbuf		mbuf;
 #endif
 } __randomize_layout;
 

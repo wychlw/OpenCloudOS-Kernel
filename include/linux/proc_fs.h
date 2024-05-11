@@ -161,6 +161,15 @@ int proc_pid_arch_status(struct seq_file *m, struct pid_namespace *ns,
 void arch_report_meminfo(struct seq_file *m);
 void arch_proc_pid_thread_features(struct seq_file *m, struct task_struct *task);
 
+#ifdef CONFIG_NETNS_MBUF
+void *seq_open_net_large_private(struct inode *inode, struct file *file);
+struct proc_dir_entry *proc_create_net_data_ops(const char *name, umode_t mode,
+					       struct proc_dir_entry *parent,
+					       const struct seq_operations *seq_ops,
+					       unsigned int state_size, void *data,
+					       const struct proc_ops *proc_ops);
+#endif
+
 #else /* CONFIG_PROC_FS */
 
 static inline void proc_root_init(void)

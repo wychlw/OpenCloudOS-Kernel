@@ -124,6 +124,16 @@ source "net/mptcp/Kconfig"
 
 endif # if INET
 
+config NETNS_MBUF
+	bool "attach a mbuf to net namespace"
+	default y
+	depends on RQM && INET && PROC_FS
+	help
+	  this allows attach a mbuf to each net namespace. mbuf is a ring
+	  buffer of log, you can used to print log to it.
+
+	  if you are unsure how to answer this question, answer N.
+
 config NETWORK_SECMARK
 	bool "Security Marking"
 	help

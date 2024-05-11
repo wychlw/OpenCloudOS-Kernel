@@ -49,7 +49,7 @@ struct mbuf_slot {
 	seqlock_t slot_lock;
 	/* rate limit */
 	struct ratelimit_state ratelimit;
-	struct cgroup *owner;
+	void *owner;
 	const struct mbuf_operations *ops;
 	struct mbuf_ring *mring;
 };
@@ -62,7 +62,7 @@ struct mbuf_operations {
 	u32 (*next)(struct mbuf_ring *mring, u32 idx);
 
 	/* write message */
-	ssize_t (*write)(struct cgroup *cg, const char *fmt, va_list);
+	ssize_t (*write)(struct mbuf_slot *mbuf, const char *fmt, va_list args);
 } ____cacheline_aligned;
 
 
@@ -70,9 +70,13 @@ void __init mbuf_bmap_init(void);
 void __init setup_mbuf(void);
 
 struct mbuf_slot *mbuf_slot_alloc(struct cgroup *cg);
+struct mbuf_slot *mbuf_slot_alloc_v2(void *owner, struct mbuf_operations *ops);
 void mbuf_free(struct cgroup *cg);
+
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...);
 void snapshot_mbuf(struct mbuf_slot *, struct mbuf_slot*, seqlock_t *);
 u32 get_mbuf_slot_len(void);
+void mbuf_free_slot(struct mbuf_slot *slot);
+void mbuf_reset(struct mbuf_slot *mbuf);
 #endif
 #endif

@@ -63,6 +63,62 @@ static int seq_open_net(struct inode *inode, struct file *file)
 	return 0;
 }
 
+#ifdef CONFIG_NETNS_MBUF
+/* token from seq_open_net, all is same except the private is
+ * alloc by vmalloc, why?
+ *
+ * sameone may need a big private, wasting continuous phy mem
+ * they can use this function to use vmalloc private
+ *
+ * from now if you using this open abi place write a write
+ * fops like proc_simple_write we delete the pde->write check
+ */
+void *seq_open_net_large_private(struct inode *inode, struct file *file)
+{
+	struct net *net;
+	struct seq_file *seq;
+	struct seq_net_private *p;
+	int ret;
+
+	unsigned int state_size = PDE(inode)->state_size;
+
+	WARN_ON_ONCE(state_size < sizeof(struct seq_net_private));
+
+	net = get_proc_net(inode);
+	if (!net) {
+		ret = -ENXIO;
+		goto out;
+	}
+
+	p = vmalloc(state_size);
+	if (!p) {
+		ret = -ENOMEM;
+		goto put_out;
+	}
+	memset(p, 0, state_size);
+
+	ret = seq_open(file, PDE(inode)->seq_ops);
+	if (ret < 0)
+		goto free_out;
+
+	seq = file->private_data;
+	seq->private = (void *)p;
+
+#ifdef CONFIG_NET_NS
+	p->net = net;
+#endif
+	return p;
+
+free_out:
+	vfree(p);
+put_out:
+	put_net(net);
+out:
+	return ERR_PTR(ret);
+}
+EXPORT_SYMBOL(seq_open_net_large_private);
+#endif
+
 static void seq_file_net_put_net(struct seq_file *seq)
 {
 #ifdef CONFIG_NET_NS
@@ -82,6 +138,31 @@ static int seq_release_net(struct inode *ino, struct file *f)
 	seq_release_private(ino, f);
 	return 0;
 }
+
+#ifdef CONFIG_NETNS_MBUF
+/* add a ext-abi to allow someone define the fops by themself, this is all
+ * alike proc_create_net_data except has a extra f_ops parameter
+ */
+struct proc_dir_entry *proc_create_net_data_ops(const char *name, umode_t mode,
+						struct proc_dir_entry *parent,
+						const struct seq_operations *seq_ops,
+						unsigned int state_size, void *data,
+						const struct proc_ops *proc_ops)
+{
+	struct proc_dir_entry *p;
+
+	p = proc_create_reg(name, mode, &parent, data);
+	if (!p)
+		return NULL;
+
+	pde_force_lookup(p);
+	p->proc_ops = proc_ops;
+	p->seq_ops = seq_ops;
+	p->state_size = state_size;
+	return proc_register(parent, p);
+}
+EXPORT_SYMBOL_GPL(proc_create_net_data_ops);
+#endif
 
 static const struct proc_ops proc_net_seq_ops = {
 	.proc_open	= seq_open_net,
