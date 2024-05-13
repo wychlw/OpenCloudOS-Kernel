@@ -32,6 +32,7 @@ ccp-crypto-objs := ccp-crypto-main.o \
 		   ccp-crypto-des3.o \
 		   ccp-crypto-rsa.o \
 		   ccp-crypto-sha.o
+obj-$(CONFIG_TDM_KERNEL_GUARD) += hygon/tdm-kernel-guard.o
 
 $(obj)/ccp_sm2_sign.asn1.o: $(obj)/ccp_sm2_sign.asn1.c $(obj)/ccp_sm2_sign.asn1.h
 $(obj)/ccp-crypto-sm2-hygon.o: $(obj)/ccp_sm2_sign.asn1.h
