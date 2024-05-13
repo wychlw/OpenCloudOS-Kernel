@@ -1,3 +1,31 @@
+* Mon May 13 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-4
+- 3snic：change sssnic kernel driver name Merge pull request !159 from cleanerleon/next
+- change kernel driver name to sssnic
+- Hygon: CSV3 patch series part 1 (Secure memory management and initialization) Merge pull request !157 from hanliyang/next_CSV3-host-cma-smr-smcr
+- crypto: ccp: Add SET_SMR/SET_SMCR commands for CSV3
+- x86/mm: Manage CSV3 guest's private memory by CMA
+- crypto: ccp: Define CSV3 key management command id
+- KVM: SEV: Pin SEV guest memory out of CMA area
+- Hygon：Fixed bugs related to THP allocation and memory page migration Merge pull request !154 from hanliyang/next_mm-fix
+- mm/gup: don't check if a page is in lru before draining it
+- mm/page_alloc: don't use PCP list for THP-sized allocations when using PF_MEMALLOC_PIN
+- Hygon: Support reuse ASID feature for Hygon CSV Merge pull request !156 from hanliyang/next_CSV-reuse-ASID
+- KVM: SVM: Add support for different CSV guests to reuse the same ASID
+- Hygon: Support passthru DCU to virtual machine Merge pull request !151 from hanliyang/next_hydcu
+- drm/hygon: Add support to passthrough Hygon DCU to virtual machine
+- Hygon: Some enhancement and bugfixes for HYGON SME/CSV/CSV2 Merge pull request !150 from hanliyang/next_SME_CSV1_CSV2_robust
+- KVM: SVM: Unmap ghcb pages if they're still mapped when destroy guest
+- anolis: x86/setup: Preserve _ENC flag when initrd is being relocated
+- anolis: mm/early_ioremap.c: Always build early_memremap_prot() in x86
+- KVM: x86: Fix KVM_GET_MSRS stack info leak
+- KVM: SEV: Do not intercept accesses to MSR_IA32_XSS for SEV-ES guests
+- x86/head/64: Flush caches for .bss..decrypted section after CR3 switches to early_top_pgt
+- KVM: x86: Calls is_64_bit_hypercall() instead of is_64_bit_mode() in complete_hypercall_exit()
+- x86/csv2: Keep in atomic context when holding ghcb page if the #VC comes from userspace
+- KVM: SVM: Fix the available ASID range for CSV2 guest
+- mm/unevictable: avoid root memcg calling mem_cgroup_scan_tasks to  trigger BUG_ON
+- config: add SIMPLEFB and SIMPLEDRM
+
 * Sat May 11 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-3
 - config: add some drm configs to support more drm
 
