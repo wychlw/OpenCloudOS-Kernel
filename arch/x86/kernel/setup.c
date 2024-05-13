@@ -55,6 +55,7 @@
 #include <asm/unwind.h>
 #include <asm/vsyscall.h>
 #include <linux/vmalloc.h>
+#include <asm/csv.h>
 
 /*
  * max_low_pfn_mapped: highest directly mapped pfn < 4 GB
@@ -251,6 +252,34 @@ static u64 __init get_ramdisk_size(void)
 	return ramdisk_size;
 }
 
+#define MAX_MAP_CHUNK	(NR_FIX_BTMAPS << PAGE_SHIFT)
+
+static void __init copy_early_initrd(void *dest, phys_addr_t src,
+				     unsigned long size)
+{
+	unsigned long slop, clen;
+	char *p;
+
+	while (size) {
+		slop = offset_in_page(src);
+		clen = size;
+		if (clen > MAX_MAP_CHUNK - slop)
+			clen = MAX_MAP_CHUNK - slop;
+		/*
+		 * _ENC flag should be preserved so that when SME is enabled initrd
+		 * can be mapped as encrypted, as it had been encrypted earlier.
+		 * This flag won't impact on other platforms like TDX/SEV enabled.
+		 */
+		p = early_memremap_prot(src & PAGE_MASK, clen + slop,
+					pgprot_val(FIXMAP_PAGE_NORMAL));
+		memcpy(dest, p + slop, clen);
+		early_memunmap(p, clen + slop);
+		dest += clen;
+		src += clen;
+		size -= clen;
+	}
+}
+
 static void __init relocate_initrd(void)
 {
 	/* Assume only end is not page aligned */
@@ -270,7 +299,7 @@ static void __init relocate_initrd(void)
 	printk(KERN_INFO "Allocated new RAMDISK: [mem %#010llx-%#010llx]\n",
 	       relocated_ramdisk, relocated_ramdisk + ramdisk_size - 1);
 
-	copy_from_early_mem((void *)initrd_start, ramdisk_image, ramdisk_size);
+	copy_early_initrd((void *)initrd_start, ramdisk_image, ramdisk_size);
 
 	printk(KERN_INFO "Move RAMDISK from [mem %#010llx-%#010llx] to"
 		" [mem %#010llx-%#010llx]\n",
@@ -1217,6 +1246,10 @@ void __init setup_arch(char **cmdline_p)
 	early_acpi_boot_init();
 
 	initmem_init();
+
+	/* Try to reserve contiguous memory to support CSV3 */
+	early_csv_reserve_mem();
+
 	dma_contiguous_reserve(max_pfn_mapped << PAGE_SHIFT);
 
 	if (boot_cpu_has(X86_FEATURE_GBPAGES))

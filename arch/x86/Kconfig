@@ -100,6 +100,7 @@ config X86
 	select ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
 	select ARCH_HAS_SYSCALL_WRAPPER
 	select ARCH_HAS_UBSAN_SANITIZE_ALL
+	select ARCH_USE_MEMREMAP_PROT
 	select ARCH_HAS_DEBUG_WX
 	select ARCH_HAS_ZONE_DMA_SET if EXPERT
 	select ARCH_HAVE_NMI_SAFE_CMPXCHG
@@ -2053,6 +2054,8 @@ config HYGON_CSV
 	bool "Hygon secure virtualization CSV support"
 	default y
 	depends on CPU_SUP_HYGON && AMD_MEM_ENCRYPT
+	select MMU
+	select CMA
 	help
 	  Hygon CSV integrates secure processor, memory encryption and
 	  memory isolation to provide the ability to protect guest's private
