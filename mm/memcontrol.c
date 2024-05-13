@@ -1304,7 +1304,12 @@ void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
 	struct mem_cgroup *iter;
 	int ret = 0;
 
+#ifdef CONFIG_TEXT_UNEVICTABLE
+	if (memcg->allow_unevictable)
+		WARN_ON(mem_cgroup_is_root(memcg));
+#else
 	BUG_ON(mem_cgroup_is_root(memcg));
+#endif
 
 	for_each_mem_cgroup_tree(iter, memcg) {
 		struct css_task_iter it;
