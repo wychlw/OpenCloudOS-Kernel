@@ -853,6 +853,8 @@ InstKernelBasic() {
 		if [ -e $_KernBuild/certs/signing_key.pem ]; then
 			install -m 0644 $_KernBuild/certs/signing_key.pem %{buildroot}/%{_datadir}/doc/kernel-keys/$KernUnameR/kernel-signing-ca.pem
 		fi
+%else
+		echo "# This is a dummy file as private key is not exported." > %{buildroot}/%{_datadir}/doc/kernel-keys/$KernUnameR/kernel-signing-ca.pem
 %endif
 	fi
 
@@ -1051,6 +1053,7 @@ CollectKernelFile() {
 	# Collect all module files, dtb files, and dirs
 	{
 		# Install certs in core package if found
+		# Echo a dir so it don't fail as a empty list if signing is disabled.
 		echo "%%dir %{_datadir}/doc/kernel-keys"
 		if [ -e "%{buildroot}/%{_datadir}/doc/kernel-keys/%{kernel_unamer}/kernel-signing-ca.cer" ]; then
 			echo %{_datadir}/doc/kernel-keys/%{kernel_unamer}/kernel-signing-ca.cer
@@ -1060,14 +1063,17 @@ CollectKernelFile() {
 		find lib/modules/$KernUnameR/ boot/dtb-$KernUnameR/ -type d -printf '%%%%dir /%%p\n' 2>/dev/null
 	} | sort -u > core.list
 
-%if %{with_keypkg}
 	# Install private key in cert package if found
 	# Echo a dir so it don't fail as a empty list if signing is disabled.
-	echo "%%dir %{_datadir}/doc/kernel-keys" > signing-keys.list
+	echo "%%dir %{_datadir}/doc/kernel-keys" >> signing-keys.list
 	if [ -e "%{buildroot}/%{_datadir}/doc/kernel-keys/%{kernel_unamer}/kernel-signing-ca.pem" ]; then
+%if %{with_keypkg}
 		echo %{_datadir}/doc/kernel-keys/%{kernel_unamer}/kernel-signing-ca.pem >> signing-keys.list
-	fi
+%else
+		# Dummy key goes to kernel-core pkg, kernel-keys dir created above
+		echo %{_datadir}/doc/kernel-keys/%{kernel_unamer}/kernel-signing-ca.pem >> core.list
 %endif
+	fi
 
 	# Do module splitting, filter-modules.sh will generate a list of
 	# modules to be split into external module package
