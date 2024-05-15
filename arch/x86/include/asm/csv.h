@@ -48,6 +48,40 @@ static inline uint32_t csv_get_smr_entry_shift(void) { return 0; }
 
 #endif	/* CONFIG_HYGON_CSV */
 
+#define CPUID_VENDOR_HygonGenuine_ebx	0x6f677948
+#define CPUID_VENDOR_HygonGenuine_ecx	0x656e6975
+#define CPUID_VENDOR_HygonGenuine_edx	0x6e65476e
+
+#define MSR_CSV3_ENABLED_BIT		30
+#define MSR_CSV3_ENABLED		BIT_ULL(MSR_CSV3_ENABLED_BIT)
+
+#ifdef CONFIG_HYGON_CSV
+
+bool csv3_active(void);
+
+void __init csv_early_reset_memory(struct boot_params *bp);
+void __init csv_early_update_memory_enc(u64 vaddr, u64 pages);
+void __init csv_early_update_memory_dec(u64 vaddr, u64 pages);
+
+void __init csv_early_memory_enc_dec(u64 vaddr, u64 size, bool enc);
+
+void csv_memory_enc_dec(u64 vaddr, u64 pages, bool enc);
+
+#else	/* !CONFIG_HYGON_CSV */
+
+static inline bool csv3_active(void) { return false; }
+
+static inline void __init csv_early_reset_memory(struct boot_params *bp) { }
+static inline void __init csv_early_update_memory_enc(u64 vaddr, u64 pages) { }
+static inline void __init csv_early_update_memory_dec(u64 vaddr, u64 pages) { }
+
+static inline void __init csv_early_memory_enc_dec(u64 vaddr, u64 size,
+						   bool enc) { }
+
+static inline void csv_memory_enc_dec(u64 vaddr, u64 pages, bool enc) { }
+
+#endif	/* CONFIG_HYGON_CSV */
+
 #endif	/* __ASSEMBLY__ */
 
 #endif	/* __ASM_X86_CSV_H__ */

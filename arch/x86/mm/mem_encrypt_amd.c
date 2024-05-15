@@ -35,6 +35,7 @@
 #include <asm/cmdline.h>
 #include <asm/sev.h>
 #include <asm/ia32.h>
+#include <asm/csv.h>
 
 #include "mm_internal.h"
 
@@ -344,6 +345,14 @@ static bool amd_enc_status_change_finish(unsigned long vaddr, int npages, bool e
 	if (!cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT))
 		enc_dec_hypercall(vaddr, npages << PAGE_SHIFT, enc);
 
+	/*
+	 * On CSV3, the shared and private page attr changes should be managed
+	 * by secure processor. Private pages live in isolated memory region,
+	 * while shared pages live out of isolated memory region.
+	 */
+	if (csv3_active())
+		csv_memory_enc_dec(vaddr, npages, enc);
+
 	return true;
 }
 
@@ -377,6 +386,9 @@ static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 	 */
 	clflush_cache_range(__va(pa), size);
 
+	if (csv3_active())
+		goto skip_in_place_enc_dec;
+
 	/* Encrypt/decrypt the contents in-place */
 	if (enc) {
 		sme_early_encrypt(pa, size);
@@ -390,6 +402,7 @@ static void __init __set_clr_pte_enc(pte_t *kpte, int level, bool enc)
 		early_snp_set_memory_shared((unsigned long)__va(pa), pa, 1);
 	}
 
+skip_in_place_enc_dec:
 	/* Change the page encryption mask. */
 	new_pte = pfn_pte(pfn, new_prot);
 	set_pte_atomic(kpte, new_pte);
@@ -469,6 +482,15 @@ static int __init early_set_memory_enc_dec(unsigned long vaddr,
 	early_set_mem_enc_dec_hypercall(start, size, enc);
 out:
 	__flush_tlb_all();
+
+	/*
+	 * On CSV3, the shared and private page attr changes should be managed
+	 * by secure processor. Private pages live in isolated memory region,
+	 * while shared pages live out of isolated memory region.
+	 */
+	if (csv3_active())
+		csv_early_memory_enc_dec(vaddr_end - size, size, enc);
+
 	return ret;
 }
 
