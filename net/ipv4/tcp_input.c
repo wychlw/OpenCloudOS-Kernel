@@ -4802,6 +4802,7 @@ static void tcp_ofo_queue(struct sock *sk)
 		eaten = tail && tcp_try_coalesce(sk, tail, skb, &fragstolen);
 		tcp_rcv_nxt_update(tp, TCP_SKB_CB(skb)->end_seq);
 		fin = TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN;
+		netlat_queue_check(sk, skb, QUEUE_FLAG_OFO);
 		if (!eaten)
 			__skb_queue_tail(&sk->sk_receive_queue, skb);
 		else
@@ -4989,7 +4990,7 @@ static int __must_check tcp_queue_rcv(struct sock *sk, struct sk_buff *skb,
 	int eaten;
 	struct sk_buff *tail = skb_peek_tail(&sk->sk_receive_queue);
 
-	netlat_queue_check(sk, skb);
+	netlat_queue_check(sk, skb, QUEUE_FLAG_RCV);
 	eaten = (tail &&
 		 tcp_try_coalesce(sk, tail,
 				  skb, fragstolen)) ? 1 : 0;

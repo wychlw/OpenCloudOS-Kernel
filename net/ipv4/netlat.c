@@ -11,6 +11,7 @@
 #include<net/tcp.h>
 #include<net/netns/generic.h>
 #include<net/netns_mbuf.h>
+#include "netlat.h"
 
 struct netlat_net_data {
 	int ack;
@@ -427,7 +428,7 @@ static void netlat_exit_ipv4_ctl_table(struct net *net)
 /* print msg to per net mbuf when latency from
  * netif to queued on tcp receive queue
  */
-void netlat_queue_check(struct sock *sk, struct sk_buff *skb)
+void netlat_queue_check(struct sock *sk, struct sk_buff *skb, int flags)
 {
 	struct net *net;
 	s64 lat;
@@ -456,11 +457,16 @@ void netlat_queue_check(struct sock *sk, struct sk_buff *skb)
 	lat = lat < 0 ? 0 : lat;
 	if (lat < thresh)
 		return;
-
-	net_mbuf_print(net, "TCP QU %u %pI4 %d %pI4 %d\n",
-		       (unsigned int)lat,
-		       &sk->sk_rcv_saddr, (int)sk->sk_num,
-		       &sk->sk_daddr, (int)ntohs(sk->sk_dport));
+	if (flags & QUEUE_FLAG_RCV)
+		net_mbuf_print(net, "TCP QU %u %pI4 %d %pI4 %d\n",
+			       (unsigned int)lat,
+			       &sk->sk_rcv_saddr, (int)sk->sk_num,
+			       &sk->sk_daddr, (int)ntohs(sk->sk_dport));
+	else /* QUEUE_FLAG_OFO for now */
+		net_mbuf_print(net, "TCP OO %u %pI4 %d %pI4 %d\n",
+			       (unsigned int)lat,
+			       &sk->sk_rcv_saddr, (int)sk->sk_num,
+			       &sk->sk_daddr, (int)ntohs(sk->sk_dport));
 }
 EXPORT_SYMBOL(netlat_queue_check);
 
