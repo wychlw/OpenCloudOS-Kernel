@@ -899,6 +899,12 @@ struct tcp_skb_cb {
 			has_rxtstamp:1,	/* SKB has a RX timestamp	*/
 			unused:5;
 	__u32		ack_seq;	/* Sequence number ACK'd	*/
+
+	/* sk_buff.cb has 48B, current tcp_skb_cb is 44B, leaved precious 4B
+	 * for us. but, here we may make troubles for future rebase, when
+	 * some get trouble, just revert the patch.
+	 */
+	__u32           first_xmit_time;
 	union {
 		struct {
 #define TCPCB_DELIVERED_CE_MASK ((1U<<20) - 1)

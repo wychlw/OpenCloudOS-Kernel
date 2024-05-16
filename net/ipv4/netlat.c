@@ -57,29 +57,14 @@ static inline long *get_net_ports(struct net *net)
 	return pdata->ports;
 }
 
-/* this function is only can be used with skb on rtx queue
- * because the skb on rtx queue is never be transmit down
- * so the ack_seq is not used for all the skb on trx queue
- * if we add a field in skb, the kapi is changed, we need a
- * delt time from `skb enqueue to rtx queue` to `skb dequeue
- * from rtx queue`, because all the current field about
- * timestamp is reflesh when skb is restransmitted, we can
- * not use thoese field, we borrow the ack_seq to record the
- * time when skb enqueue to rtx queue.
- *
- * !! in next version allow change the kabi, please add a
- * field in skb, and change the follow thress function to
- * using the new added field.
- * borrow the ack_seq is so trick!!
- */
 static inline u32 get_rtxq_skb_jiffies(struct sk_buff *skb)
 {
-	return TCP_SKB_CB(skb)->ack_seq;
+	return TCP_SKB_CB(skb)->first_xmit_time;
 }
 
 static inline void set_rtxq_skb_jiffies(struct sk_buff *skb)
 {
-	TCP_SKB_CB(skb)->ack_seq = tcp_jiffies32;
+	TCP_SKB_CB(skb)->first_xmit_time = tcp_jiffies32;
 }
 
 /* sk is not used for now, but, may be used in the future
@@ -89,7 +74,7 @@ void netlat_copy_rtxq_skb(struct sock *sk, struct sk_buff *dst,
 {
 	if (!static_branch_unlikely(&enable_netlat))
 		return;
-	TCP_SKB_CB(dst)->ack_seq = TCP_SKB_CB(src)->ack_seq;
+	TCP_SKB_CB(dst)->first_xmit_time = TCP_SKB_CB(src)->first_xmit_time;
 }
 EXPORT_SYMBOL(netlat_copy_rtxq_skb);
 
