@@ -1,3 +1,14 @@
+* Fri May 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-5
+- emm: update emm to v0.1.4
+- config: enable CONFIG_SQUASHFS_ZSTD
+- KVM: x86: Use actual kvm_cpuid.base for clearing KVM_FEATURE_PV_UNHALT
+- KVM: x86: Introduce __kvm_get_hypervisor_cpuid() helper
+- ksmbd: fix slab-out-of-bounds in smb_strndup_from_utf16()
+- ksmbd: fix potencial out-of-bounds when buffer offset is invalid
+- KVM: x86: Virtualize HWCR.TscFreqSel[bit 24]
+- KVM: x86: Allow HWCR.McStatusWrEn to be cleared once set
+- cpustat: make get_iowait_time external
+
 * Mon May 13 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-4
 - 3snic：change sssnic kernel driver name Merge pull request !159 from cleanerleon/next
 - change kernel driver name to sssnic
