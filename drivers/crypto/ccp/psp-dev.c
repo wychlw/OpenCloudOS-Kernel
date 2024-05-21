@@ -18,6 +18,9 @@
 #include "dbc.h"
 
 #include "hygon/psp-dev.h"
+#ifdef CONFIG_TDM_DEV_HYGON
+#include "hygon/tdm-dev.h"
+#endif
 
 struct psp_device *psp_master;
 
@@ -153,6 +156,14 @@ static int psp_init(struct psp_device *psp)
 	if (psp->vdata->platform_access)
 		psp_init_platform_access(psp);
 
+#ifdef CONFIG_TDM_DEV_HYGON
+	if (is_vendor_hygon()) {
+		ret = tdm_dev_init();
+		if (ret)
+			return ret;
+	}
+#endif
+
 	return 0;
 }
 
@@ -188,6 +199,11 @@ int psp_dev_init(struct sp_device *sp)
 
 	/* Request an irq */
 	if (is_vendor_hygon()) {
+		ret = hygon_psp_additional_setup(sp);
+		if (ret) {
+			dev_err(dev, "psp: unable to do additional setup\n");
+			goto e_err;
+		}
 		ret = sp_request_hygon_psp_irq(psp->sp, psp_irq_handler, psp->name, psp);
 	} else {
 		ret = sp_request_psp_irq(psp->sp, psp_irq_handler, psp->name, psp);
@@ -237,6 +253,11 @@ void psp_dev_destroy(struct sp_device *sp)
 	if (!psp)
 		return;
 
+#ifdef CONFIG_TDM_DEV_HYGON
+	if (is_vendor_hygon())
+		tdm_dev_destroy();
+#endif
+
 	sev_dev_destroy(psp);
 
 	tee_dev_destroy(psp);
@@ -246,6 +267,9 @@ void psp_dev_destroy(struct sp_device *sp)
 	platform_access_dev_destroy(psp);
 
 	sp_free_psp_irq(sp, psp);
+
+	if (is_vendor_hygon() && hygon_psp_hooks.psp_misc)
+		kref_put(&hygon_psp_hooks.psp_misc->refcount, hygon_psp_exit);
 
 	if (sp->clear_psp_master_device)
 		sp->clear_psp_master_device(sp);

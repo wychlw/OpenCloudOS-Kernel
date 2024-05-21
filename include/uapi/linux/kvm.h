@@ -2310,4 +2310,70 @@ struct kvm_csv_init {
 #define KVM_CONTROL_PRE_SYSTEM_RESET	 _IO(KVMIO, 0xe8)
 #define KVM_CONTROL_POST_SYSTEM_RESET	 _IO(KVMIO, 0xe9)
 
+/* CSV3 command */
+enum csv3_cmd_id {
+	KVM_CSV3_NR_MIN = 0xc0,
+
+	KVM_CSV3_INIT = KVM_CSV3_NR_MIN,
+	KVM_CSV3_LAUNCH_ENCRYPT_DATA,
+	KVM_CSV3_LAUNCH_ENCRYPT_VMCB,
+	KVM_CSV3_SEND_ENCRYPT_DATA,
+	KVM_CSV3_SEND_ENCRYPT_CONTEXT,
+	KVM_CSV3_RECEIVE_ENCRYPT_DATA,
+	KVM_CSV3_RECEIVE_ENCRYPT_CONTEXT,
+	KVM_CSV3_HANDLE_MEMORY,
+
+	KVM_CSV3_NR_MAX,
+};
+
+struct kvm_csv3_init_data {
+	__u64 nodemask;
+};
+
+struct kvm_csv3_launch_encrypt_data {
+	__u64 gpa;
+	__u64 uaddr;
+	__u32 len;
+};
+
+struct kvm_csv3_send_encrypt_data {
+	__u64 hdr_uaddr;
+	__u32 hdr_len;
+	__u64 guest_addr_data;
+	__u32 guest_addr_len;
+	__u64 trans_uaddr;
+	__u32 trans_len;
+};
+
+struct kvm_csv3_send_encrypt_context {
+	__u64 hdr_uaddr;
+	__u32 hdr_len;
+	__u64 trans_uaddr;
+	__u32 trans_len;
+};
+
+struct kvm_csv3_receive_encrypt_data {
+	__u64 hdr_uaddr;
+	__u32 hdr_len;
+	__u64 guest_addr_data;
+	__u32 guest_addr_len;
+	__u64 trans_uaddr;
+	__u32 trans_len;
+};
+
+struct kvm_csv3_receive_encrypt_context {
+	__u64 hdr_uaddr;
+	__u32 hdr_len;
+	__u64 trans_uaddr;
+	__u32 trans_len;
+};
+
+#define KVM_CSV3_RELEASE_SHARED_MEMORY (0x0001)
+
+struct kvm_csv3_handle_memory {
+	__u64 gpa;
+	__u32 num_pages;
+	__u32 opcode;
+};
+
 #endif /* __LINUX_KVM_H */

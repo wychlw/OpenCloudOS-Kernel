@@ -397,6 +397,16 @@ SYM_CODE_START(startup_64)
 	movq	%r15, %rdi
 	call	sev_enable
 #endif
+#ifdef CONFIG_HYGON_CSV
+	/*
+	 * Check CSV active status. The CSV and CSV2 guest are indicated by
+	 * MSR_AMD64_SEV_ENABLED_BIT and MSR_AMD64_SEV_ES_ENABLED_BIT in MSR
+	 * register 0xc0010131, respectively.
+	 * The CSV3 guest is indicated by MSR_CSV3_ENABLED in MSR register
+	 * 0xc0010131.
+	 */
+	call	csv_set_status
+#endif
 
 	/*
 	 * configure_5level_paging() updates the number of paging levels using
@@ -462,6 +472,16 @@ SYM_FUNC_START_LOCAL_NOALIGN(.Lrelocated)
 	/* Pass boot_params to initialize_identity_maps() */
 	movq	%r15, %rdi
 	call	initialize_identity_maps
+
+#ifdef CONFIG_HYGON_CSV
+	/*
+	 * If running as a CSV3 guest, secure call pages must be mapped in
+	 * the identity page table before jumping to the decompressed kernel.
+	 * Scan secure call pages here in safe.
+	 */
+	movq	%r15, %rdi
+	call	csv_init_secure_call_pages
+#endif
 
 /*
  * Do the extraction, and jump to the new kernel..

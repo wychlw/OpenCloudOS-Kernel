@@ -17,7 +17,10 @@ ccp-$(CONFIG_CRYPTO_DEV_SP_PSP) += psp-dev.o \
                                    dbc.o \
                                    hygon/psp-dev.o \
                                    hygon/csv-dev.o \
-                                   hygon/ring-buffer.o
+                                   hygon/ring-buffer.o \
+                                   hygon/vpsp.o
+
+ccp-$(CONFIG_TDM_DEV_HYGON) += hygon/tdm-dev.o
 
 obj-$(CONFIG_CRYPTO_DEV_HCT) += hygon/hct.o
 
@@ -30,6 +33,7 @@ ccp-crypto-objs := ccp-crypto-main.o \
 		   ccp-crypto-des3.o \
 		   ccp-crypto-rsa.o \
 		   ccp-crypto-sha.o
+obj-$(CONFIG_TDM_KERNEL_GUARD) += hygon/tdm-kernel-guard.o
 
 $(obj)/ccp_sm2_sign.asn1.o: $(obj)/ccp_sm2_sign.asn1.c $(obj)/ccp_sm2_sign.asn1.h
 $(obj)/ccp-crypto-sm2-hygon.o: $(obj)/ccp_sm2_sign.asn1.h
