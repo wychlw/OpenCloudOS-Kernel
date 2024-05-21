@@ -1,3 +1,48 @@
+* Tue May 21 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.31-6
+- Hygon: CSV3 patch series part 4 (Enable the concurrent memory allocation of CMA for Hygon CSV3) Merge pull request !173
+- x86/mm: CSV allows CMA allocation concurrently
+- mm/cma: add API to enable concurrent allocation from the CMA
+- LoongArch: fix KASLR can not be disabled by nokaslr when boot from old BPI Merge pull request !153
+- LoongArch: fix KASLR can not be disabled by nokaslr when boot from old BPI
+- irqchip/loongson-pch-pic: Update interrupt registration policy
+- Hygon: CSV3 patch series part 3 (Support live migration for Hygon CSV3 guest, and manage shared page by rbtree) Merge pull request !171
+- x86/mm: Merge contiguous pages into a large range when notifying pages enc status changes
+- KVM: SVM: CSV: Manage CSV3 guest's shared pages by rbtree
+- KVM: SVM: CSV: Add ioctl API to unpin shared pages of CSV3 guest
+- KVM: SVM: CSV: Add KVM_CSV3_RECEIVE_ENCRYPT_CONTEXT command
+- KVM: SVM: CSV: Add KVM_CSV3_RECEIVE_ENCRYPT_DATA command
+- KVM: SVM: CSV: Add KVM_CSV3_SEND_ENCRYPT_CONTEXT command
+- KVM: SVM: CSV: Add KVM_CSV3_SEND_ENCRYPT_DATA command
+- crypto: ccp: Define CSV3 migration command id
+- Hygon:Support TKM function Merge pull request !164 from xisme/tkm
+- crypto: ccp: Eliminate dependence of the kvm module on the ccp module
+- Allow VM without a configured vid to use TKM
+- support tkm key isolation
+- Support tkm virtualization
+- Support psp virtualization
+- newfeature: crypto: ccp: Add psp mutex enable ioctl support
+- newfeature: crypto: ccp: concurrent psp access support between user and kernel space
+- Hygon: CSV3 patch series part 2 (launch and running support on both KVM and guest sides) Merge pull request !162
+- x86/mm: Print CSV3 info into kernel log
+- x86: Add support for changing the memory attribute for CSV3 guest
+- x86: Update memory shared/private attribute in early boot for CSV3 guest
+- x86/kernel: Set bss decrypted memory as shared in CSV3 guest
+- x86/kernel: Add CSV3 early update(enc/dec)/reset memory helpers
+- x86/boot/compressed/64: Add CSV3 update page attr(private/shared)
+- x86/boot/compressed/64: Init CSV3 secure call pages
+- x86/boot/compressed/64: Add CSV3 guest detection
+- KVM: SVM: CSV: Manage CSV3 guest's nested page table
+- KVM: SVM: CSV: Add KVM_CSV3_LAUNCH_ENCRYPT_VMCB command
+- KVM: SVM: CSV: Add KVM_CSV3_LAUNCH_ENCRYPT_DATA command
+- KVM: SVM: CSV: Add KVM_CSV3_INIT command
+- KVM: Define CSV3 key management command id
+- Hygon:Support TPM/TCM/TDM/TPCM function Merge pull request !160
+- newfeature: linux: tcm: add Hygon TCM2 driver
+- newfeature: linux: tpm: add Hygon TPM2 driver
+- newfeature:crypto: tdm: Support dynamic protection for SCT and IDT by HYGON TDM
+- newfeature: crypto: tdm: Add Hygon TDM driver
+- Merge linux 6.6.31
+
 * Fri May 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.30-5
 - emm: update emm to v0.1.4
 - config: enable CONFIG_SQUASHFS_ZSTD
