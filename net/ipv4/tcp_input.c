@@ -80,6 +80,7 @@
 #include <linux/jump_label_ratelimit.h>
 #include <net/busy_poll.h>
 #include <net/mptcp.h>
+#include "netlat.h"
 
 int sysctl_tcp_tw_ignore_syn_tsval_zero __read_mostly = 1;
 int sysctl_tcp_loss_init_cwnd = 1;
@@ -3272,6 +3273,7 @@ static int tcp_clean_rtx_queue(struct sock *sk, const struct sk_buff *ack_skb,
 	long ca_rtt_us = -1L;
 	u32 pkts_acked = 0;
 	bool rtt_update;
+	bool __maybe_unused netlat_oldest = true;
 	int flag = 0;
 
 	first_ackt = 0;
@@ -3352,6 +3354,16 @@ static int tcp_clean_rtx_queue(struct sock *sk, const struct sk_buff *ack_skb,
 		if (unlikely(skb == tp->lost_skb_hint))
 			tp->lost_skb_hint = NULL;
 		tcp_highest_sack_replace(sk, skb, next);
+
+		/* here in for! we have make the ts of skb in rtx queue
+		 * Monotonically incremental with the seq_num of skb,so
+		 * here we can only report the oldest skb's latency.
+		 *
+		 * btw: the oldest skb's latency is the max latency see
+		 * by this function
+		 */
+		netlat_check(netlat_oldest, sk, skb);
+
 		tcp_rtx_queue_unlink_and_free(skb, sk);
 	}
 
@@ -4977,6 +4989,7 @@ static int __must_check tcp_queue_rcv(struct sock *sk, struct sk_buff *skb,
 	int eaten;
 	struct sk_buff *tail = skb_peek_tail(&sk->sk_receive_queue);
 
+	netlat_queue_check(sk, skb);
 	eaten = (tail &&
 		 tcp_try_coalesce(sk, tail,
 				  skb, fragstolen)) ? 1 : 0;

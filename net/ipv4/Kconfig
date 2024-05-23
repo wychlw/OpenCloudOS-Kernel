@@ -445,6 +445,16 @@ config INET_UDP_DIAG
 	  Support for UDP socket monitoring interface used by the ss tool.
 	  If unsure, say Y.
 
+config NETLAT
+	bool "INET: allow collect netlat info"
+	depends on NETNS_MBUF
+	default y
+	help
+	  enable some hook in net stack to collector some latency info. if
+	  the lentency is bigger then configured by user interface, then
+	  print msg to mbuf.
+	  If unsure, say N.
+
 config INET_RAW_DIAG
 	tristate "RAW: socket monitoring interface"
 	depends on INET_DIAG && (IPV6 || IPV6=n)
