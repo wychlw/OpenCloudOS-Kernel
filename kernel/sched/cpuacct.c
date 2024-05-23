@@ -395,6 +395,18 @@ static struct cftype files[] = {
 		.release = cgroup_pressure_release,
 	},
 #endif /* CONFIG_PSI */
+#ifdef CONFIG_RQM
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_mbuf_open,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+		.release = cgroup_mbuf_release,
+	},
+#endif
 	{ }	/* terminate */
 };
 

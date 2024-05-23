@@ -61,6 +61,10 @@
 #include <linux/psi.h>
 #include <net/sock.h>
 
+#ifdef CONFIG_RQM
+#include <linux/mbuf.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/cgroup.h>
 
@@ -259,6 +263,10 @@ static int cgroup_addrm_files(struct cgroup_subsys_state *css,
 #define CGROUP_REF_FN_ATTRS	noinline
 #define CGROUP_REF_EXPORT(fn)	EXPORT_SYMBOL_GPL(fn);
 #include <linux/cgroup_refcnt.h>
+#endif
+
+#ifdef CONFIG_RQM
+int sysctl_qos_mbuf_enable;
 #endif
 
 /**
@@ -3913,6 +3921,198 @@ bool cgroup_psi_enabled(void)
 
 #endif /* CONFIG_PSI */
 
+/*
+ * Get cgroup struct from task_struct for mbuf and sli.
+ *
+ * In cgroup V1, return cpuacct cgroup, and if cpuacct cgroup is root, df1_cgrp
+ * is returned, but is harmless.
+ *
+ * In cgroup V2, just return task_struct.cgroups.dfl_cgrp.
+ */
+struct cgroup *get_cgroup_from_task(struct task_struct *task)
+{
+	struct cgroup *cgrp;
+
+	/* First, try to get cpuacct cgroup for V1*/
+	cgrp = task_cgroup(task, cpuacct_cgrp_id);
+	if (cgrp && cgrp->level)
+		return cgrp;
+
+	/*
+	 * If can not find cpuacct cgroup or cpuacct cgroup is root, just return
+	 * dfl_cgrp.
+	 */
+	cgrp = task_dfl_cgroup(task);
+
+	return cgrp;
+}
+
+#ifdef CONFIG_RQM
+/* Store info to mbuf according task_struct */
+ssize_t mbuf_print_task(struct task_struct *task, const char *fmt, ...)
+{
+	struct cgroup *cgrp;
+	struct mbuf_slot *mb;
+	va_list args;
+
+	cgrp = get_cgroup_from_task(task);
+	mb = cgrp->mbuf;
+	if (!sysctl_qos_mbuf_enable || !mb)
+		goto out;
+
+	if (!__ratelimit(&mb->ratelimit))
+		goto out;
+
+	if (mb->ops) {
+		va_start(args, fmt);
+		mb->ops->write(mb, fmt, args);
+		va_end(args);
+	}
+
+out:
+	return 0;
+}
+EXPORT_SYMBOL(mbuf_print_task);
+
+ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...)
+{
+	struct mbuf_slot *mb;
+	va_list args;
+
+	mb = cgrp->mbuf;
+	if (!sysctl_qos_mbuf_enable || !mb)
+		goto out;
+
+	if (!__ratelimit(&mb->ratelimit))
+		goto out;
+
+	if (mb->ops) {
+		va_start(args, fmt);
+		mb->ops->write(mb, fmt, args);
+		va_end(args);
+	}
+
+out:
+	return 0;
+}
+EXPORT_SYMBOL(mbuf_print);
+
+void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
+{
+	u32 index;
+	struct kernfs_open_file *of = s->private;
+	struct cgroup_file_ctx *ctx = of->priv;
+	struct mbuf_slot *mb = (struct mbuf_slot *)ctx->procs1.pidlist;
+	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)ctx->psi.trigger;
+
+	/* why: see cgroup_mbuf_open */
+	if (!mb->mring)
+		return NULL;
+
+	index = *pos;
+	/* If already reach end, just return */
+	if (index && index == mb->mring->next_idx)
+		return NULL;
+
+	udesc->user_idx = mb->mring->first_idx;
+	udesc->user_seq = mb->mring->first_seq;
+
+	/* Maybe reach end or empty */
+	if (udesc->user_idx == mb->mring->next_idx)
+		return NULL;
+
+	return udesc;
+}
+
+void *cgroup_mbuf_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
+	struct kernfs_open_file *of = s->private;
+	struct cgroup_file_ctx *ctx = of->priv;
+	struct mbuf_slot *mb = (struct mbuf_slot *)ctx->procs1.pidlist;
+
+	/* why: see cgroup_mbuf_open */
+	if (!mb->mring)
+		return NULL;
+
+	udesc->user_idx = mb->ops->next(mb->mring, udesc->user_idx);
+	*pos = udesc->user_idx;
+
+	if (udesc->user_idx == mb->mring->next_idx)
+		return NULL;
+
+	return udesc;
+}
+
+void cgroup_mbuf_stop(struct seq_file *s, void *v) { }
+
+int cgroup_mbuf_show(struct seq_file *s, void *v)
+{
+	ssize_t ret;
+	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
+	struct kernfs_open_file *of = s->private;
+	struct cgroup_file_ctx *ctx = of->priv;
+	struct mbuf_slot *mb = (struct mbuf_slot *)ctx->procs1.pidlist;
+
+	/* why: see cgroup_mbuf_open */
+	if (!mb->mring)
+		return 0;
+
+	memset(udesc->buf, 0, sizeof(udesc->buf));
+	ret = mb->ops->read(mb, udesc);
+
+	if (ret > 0)
+		seq_printf(s, "%s", udesc->buf);
+
+	return 0;
+}
+
+int cgroup_mbuf_open(struct kernfs_open_file *of)
+{
+	struct cgroup_file_ctx *ctx = of->priv;
+	struct mbuf_slot *mb = seq_css(of->seq_file)->cgroup->mbuf;
+	u32 mbuf_slot_len;
+
+	/* use ctx->psi.trigger for mbuf_user_desc */
+	ctx->psi.trigger = kzalloc(sizeof(struct mbuf_user_desc), GFP_KERNEL);
+	if (!ctx->psi.trigger)
+		return -ENOMEM;
+
+	mbuf_slot_len = get_mbuf_slot_len();
+	/* use ctx->procs1.pidlist for mbuf_slot snapshot */
+	ctx->procs1.pidlist = vmalloc(mbuf_slot_len);
+	if (!ctx->procs1.pidlist) {
+		kfree(ctx->psi.trigger);
+		ctx->psi.trigger = NULL;
+		return -ENOMEM;
+	}
+	memset(ctx->procs1.pidlist, 0, mbuf_slot_len);
+
+	/* cgroup may have no mbuf attached, because the mbuf pool
+	 * has a max num
+	 * here we let file open success, so, seq_ops must
+	 * check mring point
+	 */
+	if (!mb)
+		return 0;
+
+	snapshot_mbuf((struct mbuf_slot *)ctx->procs1.pidlist, mb, &mb->slot_lock);
+
+	return 0;
+}
+
+void cgroup_mbuf_release(struct kernfs_open_file *of)
+{
+	struct cgroup_file_ctx *ctx = of->priv;
+
+	kfree(ctx->psi.trigger);
+	ctx->psi.trigger = NULL;
+
+	vfree(ctx->procs1.pidlist);
+	ctx->procs1.pidlist = NULL;
+}
+#endif /* CONFIG_RQM */
+
 static int cgroup_freeze_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgrp = seq_css(seq)->cgroup;
@@ -5315,6 +5515,18 @@ static struct cftype cgroup_base_files[] = {
 		.name = "cpu.stat.local",
 		.seq_show = cpu_local_stat_show,
 	},
+#ifdef CONFIG_RQM
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_mbuf_open,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+		.release = cgroup_mbuf_release,
+	},
+#endif
 	{ }	/* terminate */
 };
 
@@ -5422,6 +5634,10 @@ static void css_free_rwork_fn(struct work_struct *work)
 			cgroup_put(cgroup_parent(cgrp));
 			kernfs_put(cgrp->kn);
 			psi_cgroup_free(cgrp);
+#ifdef CONFIG_RQM
+			if (cgrp->mbuf)
+				mbuf_free(cgrp);
+#endif
 			cgroup_rstat_exit(cgrp);
 			kfree(cgrp);
 		} else {
@@ -5718,6 +5934,9 @@ static struct cgroup *cgroup_create(struct cgroup *parent, const char *name,
 	cgrp->self.parent = &parent->self;
 	cgrp->root = root;
 	cgrp->level = level;
+#ifdef CONFIG_RQM
+	cgrp->mbuf = NULL;
+#endif
 
 	ret = psi_cgroup_alloc(cgrp);
 	if (ret)
@@ -5821,6 +6040,26 @@ fail:
 	return ret;
 }
 
+#if defined(CONFIG_RQM)
+static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
+{
+	if (cgroup_on_dfl(cgrp))
+		return true;
+
+#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
+	if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
+		return true;
+#endif
+
+#if IS_ENABLED(CONFIG_MEMCG)
+	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
+#endif
+
+	return false;
+}
+#endif
+
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 {
 	struct cgroup *parent, *cgrp;
@@ -5862,6 +6101,11 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	ret = cgroup_apply_control_enable(cgrp);
 	if (ret)
 		goto out_destroy;
+
+#ifdef CONFIG_RQM
+	if (sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
+		cgrp->mbuf = mbuf_slot_alloc(cgrp);
+#endif
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 

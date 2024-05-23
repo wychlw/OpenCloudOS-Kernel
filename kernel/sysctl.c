@@ -90,6 +90,10 @@ EXPORT_SYMBOL_GPL(sysctl_long_vals);
 
 #if defined(CONFIG_SYSCTL)
 
+#ifdef CONFIG_RQM
+extern int sysctl_qos_mbuf_enable;
+#endif
+
 /* Constants used for minimum and maximum */
 
 #ifdef CONFIG_PERF_EVENTS
@@ -2225,6 +2229,17 @@ static struct ctl_table kern_table[] = {
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_RQM
+	{
+		.procname	= "qos_mbuf_enable",
+		.data		= &sysctl_qos_mbuf_enable,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 #endif
 	{ }

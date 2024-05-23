@@ -838,6 +838,19 @@ static inline bool cgroup_task_frozen(struct task_struct *task)
 
 #endif /* !CONFIG_CGROUPS */
 
+struct cgroup *get_cgroup_from_task(struct task_struct *task);
+
+#ifdef CONFIG_RQM
+int cgroup_mbuf_open(struct kernfs_open_file *of);
+void cgroup_mbuf_release(struct kernfs_open_file *of);
+void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos);
+void *cgroup_mbuf_next(struct seq_file *s, void *v, loff_t *pos);
+void cgroup_mbuf_stop(struct seq_file *s, void *v);
+int cgroup_mbuf_show(struct seq_file *s, void *v);
+ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...);
+ssize_t mbuf_print_task(struct task_struct *task, const char *fmt, ...);
+#endif
+
 #ifdef CONFIG_CGROUP_BPF
 static inline void cgroup_bpf_get(struct cgroup *cgrp)
 {

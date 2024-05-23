@@ -65,6 +65,7 @@
 #include <linux/seq_buf.h>
 #include <linux/emm.h>
 #include <linux/sched/isolation.h>
+
 #include "internal.h"
 #include <net/sock.h>
 #include <net/ip.h>
@@ -5663,6 +5664,18 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = memory_events_show,
 	},
+#ifdef CONFIG_RQM
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_mbuf_open,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+		.release = cgroup_mbuf_release,
+	},
+#endif
 	{ },	/* terminate */
 };
 
