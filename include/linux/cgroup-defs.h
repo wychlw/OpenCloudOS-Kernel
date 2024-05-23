@@ -546,6 +546,20 @@ struct cgroup {
 	struct bpf_local_storage __rcu  *bpf_cgrp_storage;
 #endif
 
+#ifdef CONFIG_CGROUP_SLI
+	/* memory latency stat */
+	struct sli_memlat_stat __percpu *sli_memlat_stat_percpu;
+
+	/* sched latency stat */
+	struct sli_schedlat_stat __percpu *sli_schedlat_stat_percpu;
+	/* proactive event monitoring structure for cgroup */
+	struct sli_event_monitor *cgrp_event_monitor;
+
+	/* sli notify info */
+	struct sli_notify_ctx *sctx;
+	spinlock_t cgrp_mbuf_lock;
+#endif
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);

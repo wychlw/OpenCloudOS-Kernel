@@ -392,6 +392,17 @@ struct sched_info {
 	/* When were we last queued to run? */
 	unsigned long long		last_queued;
 
+#ifdef CONFIG_CGROUP_SLI
+	/* The count of task switch */
+	unsigned long			task_switch;
+
+	/* Timestamps of task that was running in the kernel space */
+	unsigned long			kernel_exec_start;
+
+	/* Userspace execution time of process */
+	unsigned long			utime;
+#endif
+
 #endif /* CONFIG_SCHED_INFO */
 };
 

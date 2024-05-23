@@ -86,6 +86,9 @@
 #include <linux/uaccess.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
 
 #include "pgalloc-track.h"
 #include "internal.h"
@@ -5000,8 +5003,19 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 	if (!vmf->pte)
 		return do_pte_missing(vmf);
 
-	if (!pte_present(vmf->orig_pte))
-		return do_swap_page(vmf);
+	if (!pte_present(vmf->orig_pte)) {
+		vm_fault_t retval;
+#ifdef CONFIG_CGROUP_SLI
+		u64 start;
+
+		sli_memlat_stat_start(&start);
+#endif
+		retval = do_swap_page(vmf);
+#ifdef CONFIG_CGROUP_SLI
+		sli_memlat_stat_end(MEM_LAT_DIRECT_SWAPIN, start);
+#endif
+		return retval;
+	}
 
 	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
 		return do_numa_page(vmf);

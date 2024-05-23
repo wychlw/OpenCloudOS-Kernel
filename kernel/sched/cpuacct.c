@@ -7,6 +7,10 @@
  * (balbir@in.ibm.com).
  */
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 /* Time spent by the tasks of the CPU accounting group executing in ... */
 enum cpuacct_stat_index {
 	CPUACCT_STAT_USER,	/* ... user mode */
@@ -348,6 +352,22 @@ static int cpuacct_uptime_show(struct seq_file *sf, void *v)
 	return cpuacct_uptime_show_comm(sf, v, ca);
 }
 
+#ifdef CONFIG_CGROUP_SLI
+static int cpuacct_sli_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_stat_show(sf, cgrp);
+}
+
+static int cpuacct_sli_max_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_max_show(sf, cgrp);
+}
+#endif
+
 static struct cftype files[] = {
 	{
 		.name = "usage",
@@ -395,6 +415,33 @@ static struct cftype files[] = {
 		.release = cgroup_pressure_release,
 	},
 #endif /* CONFIG_PSI */
+#ifdef CONFIG_CGROUP_SLI
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_max_show,
+	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cpuacct_cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 #ifdef CONFIG_RQM
 	{
 		.name = "mbuf",

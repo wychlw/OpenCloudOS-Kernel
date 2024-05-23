@@ -65,6 +65,9 @@
 #include <linux/seq_buf.h>
 #include <linux/emm.h>
 #include <linux/sched/isolation.h>
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
 
 #include "internal.h"
 #include <net/sock.h>
@@ -181,6 +184,10 @@ struct mem_cgroup_event {
 
 static void mem_cgroup_threshold(struct mem_cgroup *memcg);
 static void mem_cgroup_oom_notify(struct mem_cgroup *memcg);
+#ifdef CONFIG_CGROUP_SLI
+static int mem_cgroup_sli_show(struct seq_file *m, void *v);
+static int mem_cgroup_sli_max_show(struct seq_file *m, void *v);
+#endif
 
 /* Stuffs for move charges at task migration. */
 /*
@@ -2614,10 +2621,16 @@ void mem_cgroup_handle_over_high(gfp_t gfp_mask)
 	int nr_retries = MAX_RECLAIM_RETRIES;
 	struct mem_cgroup *memcg;
 	bool in_retry = false;
+#ifdef CONFIG_CGROUP_SLI
+	u64 start;
+#endif
 
 	if (likely(!nr_pages))
 		return;
 
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_start(&start);
+#endif
 	memcg = get_mem_cgroup_from_mm(current->mm);
 	current->memcg_nr_pages_over_high = 0;
 
@@ -2681,6 +2694,9 @@ retry_reclaim:
 	psi_memstall_leave(&pflags);
 
 out:
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
+#endif
 	css_put(&memcg->css);
 }
 
@@ -2697,6 +2713,9 @@ static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 	bool drained = false;
 	bool raised_max_event = false;
 	unsigned long pflags;
+#ifdef CONFIG_CGROUP_SLI
+	u64 start;
+#endif
 
 retry:
 	if (consume_stock(memcg, nr_pages))
@@ -2738,8 +2757,14 @@ retry:
 	raised_max_event = true;
 
 	psi_memstall_enter(&pflags);
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_start(&start);
+#endif
 	nr_reclaimed = try_to_free_mem_cgroup_pages(mem_over_limit, nr_pages,
 						    gfp_mask, reclaim_options);
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
+#endif
 	psi_memstall_leave(&pflags);
 
 	if (mem_cgroup_margin(mem_over_limit) >= nr_pages)
@@ -5664,6 +5689,34 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = memory_events_show,
 	},
+#ifdef CONFIG_CGROUP_SLI
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_max_show,
+	},
+	{
+		.name = "sli.control",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = cgroup_sli_control_write,
+		.seq_show = mem_cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 #ifdef CONFIG_RQM
 	{
 		.name = "mbuf",
@@ -7228,6 +7281,26 @@ static int memory_numa_stat_show(struct seq_file *m, void *v)
 	}
 
 	return 0;
+}
+#endif
+
+#ifdef CONFIG_CGROUP_SLI
+static int mem_cgroup_sli_max_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+
+	cgrp = memcg->css.cgroup;
+	return sli_memlat_max_show(m, cgrp);
+}
+
+static int mem_cgroup_sli_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+
+	cgrp = memcg->css.cgroup;
+	return sli_memlat_stat_show(m, cgrp);
 }
 #endif
 

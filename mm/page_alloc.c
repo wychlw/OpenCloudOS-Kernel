@@ -53,6 +53,10 @@
 #include <linux/khugepaged.h>
 #include <linux/delayacct.h>
 #include <asm/div64.h>
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 #include "internal.h"
 #include "shuffle.h"
 #include "page_reporting.h"
@@ -3381,11 +3385,17 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct page *page = NULL;
 	unsigned long pflags;
 	unsigned int noreclaim_flag;
+#ifdef CONFIG_CGROUP_SLI
+	u64 start;
+#endif
 
 	if (!order)
 		return NULL;
 
 	psi_memstall_enter(&pflags);
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_start(&start);
+#endif
 	delayacct_compact_start();
 	noreclaim_flag = memalloc_noreclaim_save();
 
@@ -3393,6 +3403,9 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 								prio, &page);
 
 	memalloc_noreclaim_restore(noreclaim_flag);
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_end(MEM_LAT_DIRECT_COMPACT, start);
+#endif
 	psi_memstall_leave(&pflags);
 	delayacct_compact_end();
 
@@ -3625,11 +3638,17 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 {
 	unsigned int noreclaim_flag;
 	unsigned long progress;
+#ifdef CONFIG_CGROUP_SLI
+	u64 start;
+#endif
 
 	cond_resched();
 
 	/* We now go into synchronous reclaim */
 	cpuset_memory_pressure_bump();
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_start(&start);
+#endif
 	fs_reclaim_acquire(gfp_mask);
 	noreclaim_flag = memalloc_noreclaim_save();
 
@@ -3638,6 +3657,9 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 
 	memalloc_noreclaim_restore(noreclaim_flag);
 	fs_reclaim_release(gfp_mask);
+#ifdef CONFIG_CGROUP_SLI
+	sli_memlat_stat_end(MEM_LAT_GLOBAL_DIRECT_RECLAIM, start);
+#endif
 
 	cond_resched();
 

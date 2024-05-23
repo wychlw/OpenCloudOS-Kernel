@@ -58,6 +58,9 @@
 #include <linux/rculist_nulls.h>
 #include <linux/random.h>
 #include <linux/emm.h>
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -1337,8 +1340,11 @@ typedef enum {
  * Calls ->writepage().
  */
 static pageout_t pageout(struct folio *folio, struct address_space *mapping,
-			 struct swap_iocb **plug)
+			 struct scan_control *sc, struct swap_iocb **plug)
 {
+#ifdef CONFIG_CGROUP_SLI
+	u64 start;
+#endif
 	/*
 	 * If the folio is dirty, only perform writeback if that write
 	 * will be non-blocking.  To prevent this allocation from being
@@ -1386,7 +1392,18 @@ static pageout_t pageout(struct folio *folio, struct address_space *mapping,
 		};
 
 		folio_set_reclaim(folio);
+#ifdef CONFIG_CGROUP_SLI
+		if (!current_is_kswapd())
+			sli_memlat_stat_start(&start);
+#endif
 		res = mapping->a_ops->writepage(&folio->page, &wbc);
+#ifdef CONFIG_CGROUP_SLI
+		if (!current_is_kswapd())
+			sli_memlat_stat_end(!cgroup_reclaim(sc) ?
+					      MEM_LAT_GLOBAL_DIRECT_SWAPOUT :
+					      MEM_LAT_MEMCG_DIRECT_SWAPOUT,
+					      start);
+#endif
 		if (res < 0) {
 #ifdef CONFIG_EMM_RAMDISK_SWAP
 			if (mapping_ram_swap(mapping) &&
@@ -2073,7 +2090,7 @@ retry:
 			 * starts and then write it out here.
 			 */
 			try_to_unmap_flush_dirty();
-			switch (pageout(folio, mapping, &plug)) {
+			switch (pageout(folio, mapping, sc, &plug)) {
 			case PAGE_KEEP:
 				goto keep_locked;
 			case PAGE_ACTIVATE:

@@ -71,6 +71,7 @@
 
 #include <trace/events/power.h>
 #include <trace/events/sched.h>
+#include <linux/sched/cputime.h>
 
 #include "../workqueue_internal.h"
 

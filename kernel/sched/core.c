@@ -65,6 +65,10 @@
 #include <linux/wait_api.h>
 #include <linux/workqueue_api.h>
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 #ifdef CONFIG_PREEMPT_DYNAMIC
 # ifdef CONFIG_GENERIC_ENTRY
 #  include <linux/entry-common.h>
@@ -5748,6 +5752,9 @@ void scheduler_tick(void)
 	sched_core_tick(rq);
 	task_tick_mm_cid(rq, curr);
 
+#ifdef CONFIG_CGROUP_SLI
+	sli_check_longsys(curr);
+#endif
 	rq_unlock(rq, &rf);
 
 	if (sched_feat(LATENCY_WARN) && resched_latency)
@@ -5764,6 +5771,9 @@ void scheduler_tick(void)
 		rq->idle_balance = idle_cpu(cpu);
 		trigger_load_balance(rq);
 	}
+#endif
+#ifdef CONFIG_CGROUP_SLI
+	sli_update_tick(curr);
 #endif
 }
 
@@ -5837,6 +5847,9 @@ static void sched_tick_remote(struct work_struct *work)
 			curr->sched_class->task_tick(rq, curr, 0);
 
 			calc_load_nohz_remote(rq);
+#ifdef CONFIG_CGROUP_SLI
+			sli_check_longsys(curr);
+#endif
 		}
 	}
 
@@ -5850,6 +5863,10 @@ static void sched_tick_remote(struct work_struct *work)
 	WARN_ON_ONCE(os == TICK_SCHED_REMOTE_OFFLINE);
 	if (os == TICK_SCHED_REMOTE_RUNNING)
 		queue_delayed_work(system_unbound_wq, dwork, HZ);
+
+#ifdef CONFIG_CGROUP_SLI
+	sli_update_tick(rq->curr);
+#endif
 }
 
 static void sched_tick_start(int cpu)

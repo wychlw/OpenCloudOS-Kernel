@@ -61,6 +61,10 @@
 #include <linux/psi.h>
 #include <net/sock.h>
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 #ifdef CONFIG_RQM
 #include <linux/mbuf.h>
 #endif
@@ -4113,6 +4117,31 @@ void cgroup_mbuf_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_RQM */
 
+#ifdef CONFIG_CGROUP_SLI
+static int cgroup_sli_memory_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	return sli_memlat_stat_show(seq, cgroup);
+}
+
+static int cgroup_sli_cpu_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	return sli_schedlat_stat_show(seq, cgroup);
+}
+
+static int cgroup_sli_max_show(struct seq_file *seq, void *v)
+{
+
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	sli_schedlat_max_show(seq, cgroup);
+	return sli_memlat_max_show(seq, cgroup);
+}
+#endif
+
 static int cgroup_freeze_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgrp = seq_css(seq)->cgroup;
@@ -5435,6 +5464,38 @@ static ssize_t cgroup_threads_write(struct kernfs_open_file *of,
 	return __cgroup_procs_write(of, buf, false) ?: nbytes;
 }
 
+#ifdef CONFIG_CGROUP_SLI
+int cgroup_sli_monitor_open(struct kernfs_open_file *of)
+{
+	return sli_monitor_open(of);
+}
+
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
+{
+	return sli_monitor_start(s, pos);
+}
+
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
+{
+	return sli_monitor_show(seq, v);
+}
+
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	return sli_monitor_next(s, v, pos);
+}
+
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
+{
+	sli_monitor_stop(seq, v);
+}
+
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
+{
+	return sli_monitor_poll(of, pt);
+}
+#endif
+
 /* cgroup core interface files for the default hierarchy */
 static struct cftype cgroup_base_files[] = {
 	{
@@ -5515,6 +5576,38 @@ static struct cftype cgroup_base_files[] = {
 		.name = "cpu.stat.local",
 		.seq_show = cpu_local_stat_show,
 	},
+#ifdef CONFIG_CGROUP_SLI
+	{
+		.name = "sli.memory",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_memory_show,
+	},
+	{
+		.name = "sli.cpu",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_cpu_show,
+	},
+	{
+		.name = "sli.max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_max_show,
+	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 #ifdef CONFIG_RQM
 	{
 		.name = "mbuf",
@@ -5637,6 +5730,10 @@ static void css_free_rwork_fn(struct work_struct *work)
 #ifdef CONFIG_RQM
 			if (cgrp->mbuf)
 				mbuf_free(cgrp);
+#endif
+
+#ifdef CONFIG_CGROUP_SLI
+			sli_cgroup_free(cgrp);
 #endif
 			cgroup_rstat_exit(cgrp);
 			kfree(cgrp);
@@ -6040,7 +6137,7 @@ fail:
 	return ret;
 }
 
-#if defined(CONFIG_RQM)
+#if defined(CONFIG_CGROUP_SLI) || defined(CONFIG_RQM)
 static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 {
 	if (cgroup_on_dfl(cgrp))
@@ -6058,6 +6155,15 @@ static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 
 	return false;
 }
+#endif
+
+#ifdef CONFIG_CGROUP_SLI
+/* Wrap the mbuf and export to the include file */
+bool cgroup_need_sli(struct cgroup *cgrp)
+{
+	return cgroup_need_mbuf(cgrp);
+}
+EXPORT_SYMBOL(cgroup_need_sli);
 #endif
 
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
@@ -6101,6 +6207,15 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	ret = cgroup_apply_control_enable(cgrp);
 	if (ret)
 		goto out_destroy;
+
+#ifdef CONFIG_CGROUP_SLI
+	ret = sli_cgroup_alloc(cgrp);
+	if (ret)
+		goto out_destroy;
+
+	if (cgroup_need_sli(cgrp))
+		cgrp->sctx = sctx_alloc();
+#endif
 
 #ifdef CONFIG_RQM
 	if (sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))

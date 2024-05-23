@@ -2,6 +2,10 @@
 #ifndef _KERNEL_STATS_H
 #define _KERNEL_STATS_H
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 #ifdef CONFIG_SCHEDSTATS
 
 extern struct static_key_false sched_schedstats;
@@ -221,7 +225,11 @@ static inline void sched_info_dequeue(struct rq *rq, struct task_struct *t)
  * long it was waiting to run.  We also note when it began so that we
  * can keep stats on how long its timeslice is.
  */
+#ifdef CONFIG_CGROUP_SLI
+static void sched_info_arrive(struct rq *rq, struct task_struct *t, struct task_struct *prev)
+#else
 static void sched_info_arrive(struct rq *rq, struct task_struct *t)
+#endif
 {
 	unsigned long long now, delta = 0;
 
@@ -234,8 +242,10 @@ static void sched_info_arrive(struct rq *rq, struct task_struct *t)
 	t->sched_info.run_delay += delta;
 	t->sched_info.last_arrival = now;
 	t->sched_info.pcount++;
-
 	rq_sched_info_arrive(rq, delta);
+#ifdef CONFIG_CGROUP_SLI
+	sli_schedlat_rundelay(t, prev, delta);
+#endif
 }
 
 /*
@@ -284,7 +294,11 @@ sched_info_switch(struct rq *rq, struct task_struct *prev, struct task_struct *n
 		sched_info_depart(rq, prev);
 
 	if (next != rq->idle)
+#ifdef CONFIG_CGROUP_SLI
+		sched_info_arrive(rq, next, prev);
+#else
 		sched_info_arrive(rq, next);
+#endif
 }
 
 #else /* !CONFIG_SCHED_INFO: */

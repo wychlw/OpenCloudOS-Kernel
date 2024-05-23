@@ -27,6 +27,11 @@
 
 #include <linux/cgroup-defs.h>
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#include <linux/poll.h>
+#endif
+
 struct kernel_clone_args;
 
 /*
@@ -633,6 +638,10 @@ static inline void cgroup_kthread_ready(void)
 	current->no_cgroup_migration = 0;
 }
 
+#ifdef CONFIG_CGROUP_SLI
+bool cgroup_need_sli(struct cgroup *cgrp);
+#endif
+
 void cgroup_path_from_kernfs_id(u64 id, char *buf, size_t buflen);
 struct cgroup *cgroup_get_from_id(u64 id);
 #else /* !CONFIG_CGROUPS */
@@ -849,6 +858,15 @@ void cgroup_mbuf_stop(struct seq_file *s, void *v);
 int cgroup_mbuf_show(struct seq_file *s, void *v);
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...);
 ssize_t mbuf_print_task(struct task_struct *task, const char *fmt, ...);
+#endif
+
+#ifdef CONFIG_CGROUP_SLI
+int cgroup_sli_monitor_open(struct kernfs_open_file *of);
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos);
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v);
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos);
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v);
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt);
 #endif
 
 #ifdef CONFIG_CGROUP_BPF

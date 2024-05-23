@@ -53,6 +53,10 @@
 
 #include <linux/sched/cond_resched.h>
 
+#ifdef CONFIG_CGROUP_SLI
+#include <linux/sli.h>
+#endif
+
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
