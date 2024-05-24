@@ -86,7 +86,7 @@ $(shell mkdir -p $(WORKDIRS); \
 )
 
 ### Build files
-KFULLVER := $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF) vr)
+KFULLVER = $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF) vr)
 CONFIGFILE := $(shell $(DISTDIR)/scripts/ls-config-files.sh $(CONFIG))
 SPECFILE = $(RPM_SOURCEDIR)/kernel.spec
 TARNAME = kernel-$(KFULLVER)
@@ -146,12 +146,10 @@ endif
 
 default: dist-help
 
-$(TARFILE):
+dist-tarball:
 	@echo "Generating kernel source tar: $(TARFILE)"
-	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar.gz --prefix=$(TARNAME)/ --output $(TARFILE)
-
-dist-tarball: $(TARFILE)
 	@echo "$(TARFILE)"
+	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar.gz --prefix=$(TARNAME)/ --output $(TARFILE)
 
 $(CONFIGFILE): $(DISTFILES)
 	@echo "Generating kernel config style '$(CONFIG)'"
@@ -186,7 +184,7 @@ $(SPECFILE): always-rebuild dist-configs
 dist-specfile: $(SPECFILE)
 	@echo "$(SPECFILE)"
 
-dist-sources: dist-configs $(TARFILE) $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
+dist-sources: dist-configs dist-tarball $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
 	@cp $(DISTSOURCES) $(DISTKABIS) $(RPM_SOURCEDIR)
 
 define DO_RPMBUILD
