@@ -1576,6 +1576,26 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 	return 0;
 }
 
+#ifdef CONFIG_CGROUP_SLI
+static int io_cgroup_sli_max_show(struct seq_file *m, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(m));
+	struct cgroup *cgrp;
+	cgrp = blkcg->css.cgroup;
+
+	return sli_iolat_max_show(m, cgrp);
+}
+
+static int io_cgroup_sli_show(struct seq_file *m, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(m));
+	struct cgroup *cgrp;
+	cgrp = blkcg->css.cgroup;
+
+	return sli_iolat_stat_show(m, cgrp);
+}
+#endif
+
 static struct cftype blkcg_files[] = {
 	{
 		.name = "stat",
@@ -1596,6 +1616,46 @@ static struct cftype blkcg_legacy_files[] = {
 		.seq_show = blkcg_dkstats_show,
 	},
 #endif /* CONFIG_BLK_CGROUP_DISKSTATS */
+#ifdef CONFIG_RQM
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_mbuf_open,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+		.release = cgroup_mbuf_release,
+	},
+#endif
+#ifdef CONFIG_CGROUP_SLI
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = io_cgroup_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = io_cgroup_sli_max_show,
+	},
+	{
+		.name = "sli.control",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = cgroup_sli_control_write,
+		.seq_show = io_cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 	{ }	/* terminate */
 };
 

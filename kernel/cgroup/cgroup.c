@@ -4141,6 +4141,13 @@ void cgroup_mbuf_release(struct kernfs_open_file *of)
 #endif /* CONFIG_RQM */
 
 #ifdef CONFIG_CGROUP_SLI
+static int cgroup_sli_io_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	return sli_iolat_stat_show(seq, cgroup);
+}
+
 static int cgroup_sli_memory_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgroup = seq_css(seq)->cgroup;
@@ -4161,7 +4168,8 @@ static int cgroup_sli_max_show(struct seq_file *seq, void *v)
 	struct cgroup *cgroup = seq_css(seq)->cgroup;
 
 	sli_schedlat_max_show(seq, cgroup);
-	return sli_memlat_max_show(seq, cgroup);
+	sli_memlat_max_show(seq, cgroup);
+	return sli_iolat_max_show(seq, cgroup);
 }
 #endif
 
@@ -5601,6 +5609,11 @@ static struct cftype cgroup_base_files[] = {
 	},
 #ifdef CONFIG_CGROUP_SLI
 	{
+		.name = "sli.io",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_io_show,
+	},
+	{
 		.name = "sli.memory",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_sli_memory_show,
@@ -6173,6 +6186,11 @@ static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 
 #if IS_ENABLED(CONFIG_MEMCG)
 	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
+#endif
+
+#if IS_ENABLED(CONFIG_BLK_CGROUP)
+	if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
 		return true;
 #endif
 

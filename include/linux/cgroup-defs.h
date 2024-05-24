@@ -552,6 +552,10 @@ struct cgroup {
 
 	/* sched latency stat */
 	struct sli_schedlat_stat __percpu *sli_schedlat_stat_percpu;
+
+	/* io latency stat */
+	struct sli_iolat_stat __percpu *sli_iolat_stat_percpu;
+
 	/* proactive event monitoring structure for cgroup */
 	struct sli_event_monitor *cgrp_event_monitor;
 

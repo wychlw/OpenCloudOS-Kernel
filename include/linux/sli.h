@@ -39,6 +39,11 @@ enum sli_schedlat_stat_item {
 	SCHEDLAT_STAT_NR
 };
 
+enum sli_iolat_stat_item {
+	IO_LAT_DELAY,
+	IO_LAT_STAT_NR
+};
+
 struct sli_memlat_stat {
 	unsigned long latency_max[MEM_LAT_STAT_NR];
 	unsigned long item[MEM_LAT_STAT_NR][LAT_COUNT_NR];
@@ -49,10 +54,16 @@ struct sli_schedlat_stat {
 	unsigned long item[SCHEDLAT_STAT_NR][LAT_COUNT_NR];
 };
 
+struct sli_iolat_stat {
+	unsigned long latency_max[IO_LAT_STAT_NR];
+	unsigned long item[IO_LAT_STAT_NR][LAT_COUNT_NR];
+};
+
 enum sli_event_type {
 	SLI_SCHED_EVENT,
 	SLI_MEM_EVENT,
 	SLI_LONGTERM_EVENT,
+	SLI_IO_EVENT,
 	SLI_EVENT_NR
 };
 
@@ -102,6 +113,10 @@ struct sli_event_monitor {
 	unsigned long long longterm_threshold[SLI_LONGTERM_NR];
 	atomic_long_t longterm_statistics[SLI_LONGTERM_NR];
 
+	unsigned long long iolat_threshold[IO_LAT_STAT_NR];
+	unsigned long long iolat_count[IO_LAT_STAT_NR];
+	atomic_long_t iolat_statistics[IO_LAT_STAT_NR];
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 };
@@ -133,11 +148,17 @@ void sli_schedlat_rundelay(struct task_struct *task,
 				struct task_struct *prev, u64 delta);
 int  sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp);
 int  sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp);
+void sli_iolat_stat_end(enum sli_iolat_stat_item sidx, u64 bio_start, u64 rq_alloc_time_ns,
+		u64 rq_io_start_time_ns, u64 sli_iolat_end_time, u64 duration, struct bio *bio,
+		struct cgroup *cgrp);
+int sli_iolat_max_show(struct seq_file *m, struct cgroup *cgrp);
+int sli_iolat_stat_show(struct seq_file *m, struct cgroup *cgrp);
 ssize_t cgroup_sli_control_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off);
 int cgroup_sli_control_show(struct seq_file *sf, void *v);
 int cpuacct_cgroup_sli_control_show(struct seq_file *sf, void *v);
 int mem_cgroup_sli_control_show(struct seq_file *sf, void *v);
+int io_cgroup_sli_control_show(struct seq_file *sf, void *v);
 void sli_check_longsys(struct task_struct *tsk);
 void sli_update_tick(struct task_struct *tsk);
 void sli_check_longsys(struct task_struct *tsk);
@@ -152,5 +173,6 @@ void sli_monitor_stop(struct seq_file *seq, void *v);
 __poll_t sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt);
 int sli_event_add(struct sli_notify_event *notify_event, u32 event_type, u32 levent, u32 count);
 u32 sli_monitor_signal(struct cgroup *cgrp, struct sli_notify_event *notify_event);
+DECLARE_STATIC_KEY_FALSE(sli_io_enabled);
 
 #endif /*_LINUX_SLI_H*/

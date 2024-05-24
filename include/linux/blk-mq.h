@@ -103,7 +103,7 @@ struct request {
 	};
 
 	struct block_device *part;
-#ifdef CONFIG_BLK_RQ_ALLOC_TIME
+#if defined(CONFIG_BLK_RQ_ALLOC_TIME) || defined(CONFIG_CGROUP_SLI)
 	/* Time that the first bio started allocating this request. */
 	u64 alloc_time_ns;
 #endif

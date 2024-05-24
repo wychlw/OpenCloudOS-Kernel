@@ -15,10 +15,12 @@
 #include <linux/cgroup.h>
 #include <linux/sli.h>
 #include <linux/rculist.h>
+#include <linux/blkdev.h>
 
 #define MAX_STACK_TRACE_DEPTH	64
 
 static DEFINE_STATIC_KEY_FALSE(sli_enabled);
+DEFINE_STATIC_KEY_FALSE(sli_io_enabled);
 static DEFINE_STATIC_KEY_FALSE(sli_monitor_enabled);
 
 static struct sli_event_monitor default_sli_event_monitor;
@@ -60,12 +62,17 @@ static const char * const longterm_threshold_name[] = {
 	"longterm_irqtime_threshold="
 };
 
+static const char *iolat_threshold_name[] = {
+	"iolat_delay_threshold="
+};
+
 static const char * const sanity_check_abbr[] = {
 	"schedlat_",
 	"memlat_",
 	"longterm_",
 	"period=",
-	"mbuf_enable="
+	"mbuf_enable=",
+	"iolat_"
 };
 
 static void sli_proactive_monitor_work(struct work_struct *work);
@@ -97,6 +104,8 @@ static void sli_event_monitor_init(struct sli_event_monitor *event_monitor, stru
 	memset(&event_monitor->memlat_threshold, 0xff, sizeof(event_monitor->memlat_threshold));
 	memset(&event_monitor->memlat_count, 0xff, sizeof(event_monitor->memlat_count));
 	memset(&event_monitor->longterm_threshold, 0xff, sizeof(event_monitor->longterm_threshold));
+	memset(&event_monitor->iolat_threshold, 0xff, sizeof(event_monitor->iolat_threshold));
+	memset(&event_monitor->iolat_count, 0xff, sizeof(event_monitor->iolat_count));
 
 	event_monitor->last_update = jiffies;
 	event_monitor->cgrp = cgrp;
@@ -153,6 +162,12 @@ static int sli_event_inherit(struct cgroup *cgrp)
 			atomic_long_set(
 				&cgrp_event_monitor->longterm_statistics[new_event->event_id],
 				sli_get_longterm_statistics(cgrp, new_event->event_id));
+			break;
+		case SLI_IO_EVENT:
+			cgrp_event_monitor->iolat_threshold[new_event->event_id] =
+				READ_ONCE(event_monitor->iolat_threshold[new_event->event_id]);
+			cgrp_event_monitor->iolat_count[new_event->event_id] =
+				READ_ONCE(event_monitor->iolat_count[new_event->event_id]);
 			break;
 		default:
 			pr_err("%s: invalid sli_event type!\n", __func__);
@@ -234,6 +249,21 @@ static char *get_memlat_name(enum sli_memlat_stat_item sidx)
 		break;
 	case MEM_LAT_DIRECT_SWAPIN:
 		name = "memlat_direct_swapin";
+		break;
+	default:
+		break;
+	}
+
+	return name;
+}
+
+static char *get_iolat_name(enum sli_iolat_stat_item sidx)
+{
+	char *name = NULL;
+
+	switch (sidx) {
+	case IO_LAT_DELAY:
+		name = "iolat_delay";
 		break;
 	default:
 		break;
@@ -438,6 +468,127 @@ out:
 	rcu_read_unlock();
 }
 
+static u64 sli_iolat_stat_gather(struct cgroup *cgrp,
+				 enum sli_iolat_stat_item sidx,
+				 enum sli_lat_count cidx)
+{
+	u64 sum = 0;
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		sum += per_cpu_ptr(cgrp->sli_iolat_stat_percpu, cpu)->item[sidx][cidx];
+
+	return sum;
+}
+
+int sli_iolat_stat_show(struct seq_file *m, struct cgroup *cgrp)
+{
+	enum sli_iolat_stat_item sidx;
+
+	if (!static_branch_likely(&sli_io_enabled)) {
+		seq_printf(m, "sli_io is not enabled, please echo 1 > /proc/sli/sli_io_enabled\n");
+		return 0;
+	}
+
+	if (!cgrp->sli_iolat_stat_percpu)
+		return 0;
+
+	for (sidx = IO_LAT_DELAY; sidx < IO_LAT_STAT_NR; sidx++) {
+		seq_printf(m, "%s:\n", get_iolat_name(sidx));
+		seq_printf(m, "0-1ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_0_1));
+		seq_printf(m, "1-4ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_1_4));
+		seq_printf(m, "4-8ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_4_8));
+		seq_printf(m, "8-16ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_8_16));
+		seq_printf(m, "16-32ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_16_32));
+		seq_printf(m, "32-64ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_32_64));
+		seq_printf(m, "64-128ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_64_128));
+		seq_printf(m, ">=128ms: %llu\n", sli_iolat_stat_gather(cgrp, sidx, LAT_128_INF));
+	}
+
+	return 0;
+}
+
+int sli_iolat_max_show(struct seq_file *m, struct cgroup *cgrp)
+{
+	enum sli_iolat_stat_item sidx;
+
+	if (!static_branch_likely(&sli_io_enabled)) {
+		seq_printf(m, "sli_io is not enabled, please echo 1 > /proc/sli/sli_io_enabled\n");
+		return 0;
+	}
+
+	if (!cgrp->sli_iolat_stat_percpu)
+		return 0;
+
+	for (sidx = IO_LAT_DELAY; sidx < IO_LAT_STAT_NR; sidx++) {
+		int cpu;
+		unsigned long latency_sum = 0;
+
+		for_each_possible_cpu(cpu)
+			latency_sum += per_cpu_ptr(cgrp->sli_iolat_stat_percpu, cpu)->latency_max[sidx];
+
+		seq_printf(m, "%s: %lu\n", get_iolat_name(sidx), latency_sum);
+	}
+
+	return 0;
+}
+
+/* copy from v5.4, adapt gendisk */
+char *disk_name(struct gendisk *hd, int partno, char *buf)
+{
+	if (!partno)
+		snprintf(buf, BDEVNAME_SIZE, "%s", hd->disk_name);
+	else if (isdigit(hd->disk_name[strlen(hd->disk_name)-1]))
+		snprintf(buf, BDEVNAME_SIZE, "%sp%d", hd->disk_name, partno);
+	else
+		snprintf(buf, BDEVNAME_SIZE, "%s%d", hd->disk_name, partno);
+
+	return buf;
+}
+
+const char *bio_devname(struct bio *bio, char *buf)
+{
+	return disk_name(bio->bi_bdev->bd_disk, bio->bi_bdev->bd_partno, buf);
+}
+
+void sli_iolat_stat_end(enum sli_iolat_stat_item sidx, u64 bio_start, u64 rq_alloc_time_ns,
+		u64 rq_io_start_time_ns, u64 sli_iolat_end_time, u64 duration, struct bio *bio,
+		struct cgroup *cgrp)
+{
+	enum sli_lat_count cidx;
+
+	cidx = get_lat_count_idx(duration);
+	duration = duration >> 10;
+	this_cpu_inc(cgrp->sli_iolat_stat_percpu->item[sidx][cidx]);
+	this_cpu_add(cgrp->sli_iolat_stat_percpu->latency_max[sidx], duration);
+
+	if (static_branch_unlikely(&sli_monitor_enabled)) {
+		struct sli_event_monitor *event_monitor = cgrp->cgrp_event_monitor;
+
+		if (duration < READ_ONCE(event_monitor->iolat_threshold[sidx]))
+			return;
+
+		atomic_long_inc(&event_monitor->iolat_statistics[sidx]);
+
+#ifdef CONFIG_RQM
+		if (event_monitor->mbuf_enable) {
+			char *lat_name;
+			unsigned long flags;
+			char b[BDEVNAME_SIZE];
+
+			lat_name = get_iolat_name(sidx);
+			spin_lock_irqsave(&cgrp->cgrp_mbuf_lock, flags);
+			mbuf_print(cgrp, "record reason:%s devname:%s duration_us=%lld "
+				   "bio_start=%llu req_start=%llu req_issue=%llu "
+				   "bio_complete=%llu\n", lat_name, bio_devname(bio, b),
+				   duration, bio_start, rq_alloc_time_ns,
+				   rq_io_start_time_ns, sli_iolat_end_time);
+			spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
+		}
+#endif
+	}
+}
+
 void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
 {
 	struct cgroup *cgrp = NULL;
@@ -626,6 +777,20 @@ static void sli_proactive_monitor_work(struct work_struct *work)
 				sli_event_add(notify_event, event->event_type,
 					      event->event_id, (int)(statistics - last_statistics));
 			break;
+		case SLI_IO_EVENT:
+			statistics = (u64)atomic_long_read(
+					&event_monitor->iolat_statistics[event->event_id]);
+			atomic_long_set(&event_monitor->iolat_statistics[event->event_id], 0);
+
+			if (event_monitor->overrun) {
+				event_monitor->overrun = 0;
+				break;
+			}
+
+			if (statistics >= READ_ONCE(event_monitor->iolat_count[event->event_id]))
+				sli_event_add(notify_event, event->event_type,
+					      event->event_id, statistics);
+			break;
 		default:
 			break;
 		}
@@ -649,6 +814,11 @@ struct cgroup *get_cgroup_from_task_id(struct task_struct *task, int event_nr)
 #if IS_ENABLED(CONFIG_MEMCG)
 	case SLI_MEM_EVENT:
 		id = memory_cgrp_id;
+		break;
+#endif
+#if IS_ENABLED(CONFIG_BLK_CGROUP)
+	case SLI_IO_EVENT:
+		id = io_cgrp_id;
 		break;
 #endif
 	default:
@@ -706,7 +876,7 @@ retry:
 			 * otherwise we consider the it is overrun and should be abandoned.
 			 */
 			if (time_before((unsigned long)((period << 3) + last_update), jiffies))
-				 cgrp->cgrp_event_monitor->overrun = 1;
+				cgrp->cgrp_event_monitor->overrun = 1;
 
 			ret = css_tryget(&cgrp->self);
 			if (!ret)
@@ -935,7 +1105,24 @@ static int sli_parse_parameter(char *buf, int len, struct sli_event_control *sec
 
 		sec->mbuf_enable = !!value;
 		break;
+	case 5:
+		for (i = 0; i < ARRAY_SIZE(iolat_threshold_name); i++) {
+			min_len = min(len, (int)strlen((const char *)iolat_threshold_name[i]));
+			if (!strncmp(iolat_threshold_name[i], buf, min_len))
+				break;
+		}
 
+		if (i == ARRAY_SIZE(iolat_threshold_name))
+			return -EINVAL;
+
+		buf += min_len;
+		ret = sli_parse_threshold(buf, sec);
+		if (ret)
+			return ret;
+
+		sec->event_type = SLI_IO_EVENT;
+		sec->event_id = i;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1083,6 +1270,14 @@ ssize_t cgroup_sli_control_write(struct kernfs_open_file *of, char *buf,
 						sli_get_longterm_statistics(cgrp, sec.event_id));
 			ret = sli_event_update(event_monitor, &sec, last_threshold);
 			break;
+		case SLI_IO_EVENT:
+			last_threshold = event_monitor->iolat_threshold[sec.event_id];
+			WRITE_ONCE(event_monitor->iolat_threshold[sec.event_id], sec.threshold);
+			WRITE_ONCE(event_monitor->iolat_count[sec.event_id], sec.count);
+			smp_wmb();
+			atomic_long_set(&event_monitor->iolat_statistics[sec.event_id], 0);
+			ret = sli_event_update(event_monitor, &sec, last_threshold);
+			break;
 		default:
 			break;
 		}
@@ -1094,6 +1289,35 @@ out:
 		ret = nbytes;
 	inode_unlock(file_inode(of->file));
 	return ret;
+}
+
+int io_cgroup_sli_control_show(struct seq_file *sf, void *v)
+{
+	int i;
+	unsigned long long threshold, count;
+	struct cgroup *cgrp;
+	struct sli_event_monitor *event_monitor;
+
+	cgrp = seq_css(sf)->cgroup;
+	if (cgroup_parent(cgrp))
+		event_monitor = cgrp->cgrp_event_monitor;
+	else
+		event_monitor = &default_sli_event_monitor;
+
+	inode_lock_shared(file_inode(sf->file));
+	seq_printf(sf, "period: %d\n", event_monitor->period);
+	seq_printf(sf, "mbuf_enable: %d\n", event_monitor->mbuf_enable);
+
+	for (i = 0; i < IO_LAT_STAT_NR; i++) {
+		threshold = sli_convert_value(event_monitor->iolat_threshold[i], true);
+		count = sli_convert_value(event_monitor->iolat_count[i], true);
+
+		seq_printf(sf, "%s: threshold: %llu, count: %llu\n", get_iolat_name(i),
+			   threshold, count);
+	}
+
+	inode_unlock_shared(file_inode(sf->file));
+	return 0;
 }
 
 int mem_cgroup_sli_control_show(struct seq_file *sf, void *v)
@@ -1109,6 +1333,7 @@ int mem_cgroup_sli_control_show(struct seq_file *sf, void *v)
 	else
 		event_monitor = &default_sli_event_monitor;
 
+	inode_lock_shared(file_inode(sf->file));
 	seq_printf(sf, "period: %d\n", event_monitor->period);
 	seq_printf(sf, "mbuf_enable: %d\n", event_monitor->mbuf_enable);
 
@@ -1120,6 +1345,7 @@ int mem_cgroup_sli_control_show(struct seq_file *sf, void *v)
 			   threshold, count);
 	}
 
+	inode_unlock_shared(file_inode(sf->file));
 	return 0;
 }
 
@@ -1136,6 +1362,7 @@ int cpuacct_cgroup_sli_control_show(struct seq_file *sf, void *v)
 	else
 		event_monitor = &default_sli_event_monitor;
 
+	inode_lock_shared(file_inode(sf->file));
 	seq_printf(sf, "period: %d\n", event_monitor->period);
 	seq_printf(sf, "mbuf_enable: %d\n", event_monitor->mbuf_enable);
 
@@ -1161,8 +1388,16 @@ int cpuacct_cgroup_sli_control_show(struct seq_file *sf, void *v)
 			seq_printf(sf, "%s: threshold: %llu, count: %llu\n", get_memlat_name(i),
 				   threshold, count);
 		}
+		for (i = 0; i < IO_LAT_STAT_NR; i++) {
+			threshold = sli_convert_value(event_monitor->iolat_threshold[i], true);
+			count = sli_convert_value(event_monitor->iolat_count[i], true);
+
+			seq_printf(sf, "%s: threshold: %llu, count: %llu\n", get_iolat_name(i),
+				   threshold, count);
+		}
 	}
 
+	inode_unlock_shared(file_inode(sf->file));
 	return 0;
 }
 int cgroup_sli_control_show(struct seq_file *sf, void *v)
@@ -1178,6 +1413,7 @@ int cgroup_sli_control_show(struct seq_file *sf, void *v)
 	else
 		event_monitor = &default_sli_event_monitor;
 
+	inode_lock_shared(file_inode(sf->file));
 	seq_printf(sf, "period: %d\n", event_monitor->period);
 	seq_printf(sf, "mbuf_enable: %d\n", event_monitor->mbuf_enable);
 
@@ -1203,6 +1439,14 @@ int cgroup_sli_control_show(struct seq_file *sf, void *v)
 		seq_printf(sf, "%s: threshold: %llu\n", get_longterm_name(i), threshold);
 	}
 
+	for (i = 0; i < IO_LAT_STAT_NR; i++) {
+		threshold = sli_convert_value(event_monitor->iolat_threshold[i], true);
+		count = sli_convert_value(event_monitor->iolat_count[i], true);
+
+		seq_printf(sf, "%s: threshold: %llu, count: %llu\n", get_iolat_name(i),
+			   threshold, count);
+	}
+	inode_unlock_shared(file_inode(sf->file));
 	return 0;
 }
 
@@ -1296,6 +1540,9 @@ void *sli_monitor_start(struct seq_file *s, loff_t *pos)
 /* seq_next function is necessary for seq_read */
 void *sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
 {
+	/* fix seq_read_iter buggy print*/
+	if (pos)
+		(*pos)++;
 	return NULL;
 }
 
@@ -1452,15 +1699,73 @@ static const struct proc_ops sli_enabled_fops = {
 	.proc_release    = single_release,
 };
 
+static int sli_io_enabled_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", static_key_enabled(&sli_io_enabled));
+	return 0;
+}
+
+static int sli_io_enabled_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, sli_io_enabled_show, NULL);
+}
+
+static ssize_t sli_io_enabled_write(struct file *file, const char __user *ubuf,
+				    size_t count, loff_t *ppos)
+{
+	char val = -1;
+	int ret = count;
+
+	if (count < 1 || *ppos) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (copy_from_user(&val, ubuf, 1)) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	inode_lock(file_inode(file));
+	switch (val) {
+	case '0':
+		if (static_key_enabled(&sli_io_enabled))
+			static_branch_disable(&sli_io_enabled);
+		break;
+	case '1':
+		if (!static_key_enabled(&sli_io_enabled))
+			static_branch_enable(&sli_io_enabled);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+	inode_unlock(file_inode(file));
+
+out:
+	return ret;
+}
+
+static const struct proc_ops sli_io_enabled_fops = {
+	.proc_open       = sli_io_enabled_open,
+	.proc_read       = seq_read,
+	.proc_write      = sli_io_enabled_write,
+	.proc_lseek     = seq_lseek,
+	.proc_release    = single_release,
+};
+
 int sli_cgroup_alloc(struct cgroup *cgroup)
 {
 	if (!cgroup_need_sli(cgroup))
 		return 0;
 
 	spin_lock_init(&cgroup->cgrp_mbuf_lock);
+	cgroup->sli_iolat_stat_percpu = alloc_percpu(struct sli_iolat_stat);
+	if (!cgroup->sli_iolat_stat_percpu)
+		goto out;
+
 	cgroup->sli_memlat_stat_percpu = alloc_percpu(struct sli_memlat_stat);
 	if (!cgroup->sli_memlat_stat_percpu)
-		goto out;
+		goto free_iolat_percpu;
 
 	cgroup->sli_schedlat_stat_percpu = alloc_percpu(struct sli_schedlat_stat);
 	if (!cgroup->sli_schedlat_stat_percpu)
@@ -1482,6 +1787,8 @@ free_schelat_percpu:
 	free_percpu(cgroup->sli_schedlat_stat_percpu);
 free_memlat_percpu:
 	free_percpu(cgroup->sli_memlat_stat_percpu);
+free_iolat_percpu:
+	free_percpu(cgroup->sli_iolat_stat_percpu);
 out:
 	return -ENOMEM;
 }
@@ -1500,6 +1807,7 @@ void sli_cgroup_free(struct cgroup *cgroup)
 	if (!cgroup->cgrp_event_monitor)
 		return;
 
+	free_percpu(cgroup->sli_iolat_stat_percpu);
 	free_percpu(cgroup->sli_memlat_stat_percpu);
 	free_percpu(cgroup->sli_schedlat_stat_percpu);
 	/* Free memory from the event list */
@@ -1521,6 +1829,7 @@ static int __init sli_proc_init(void)
 	}
 	proc_mkdir("sli", NULL);
 	proc_create("sli/sli_enabled", 0, NULL, &sli_enabled_fops);
+	proc_create("sli/sli_io_enabled", 0, NULL, &sli_io_enabled_fops);
 	return 0;
 }
 

@@ -29,6 +29,7 @@
 #include <linux/prefetch.h>
 #include <linux/blk-crypto.h>
 #include <linux/part_stat.h>
+#include <linux/sli.h>
 
 #include <trace/events/block.h>
 
@@ -338,6 +339,18 @@ static inline void blk_mq_rq_time_init(struct request *rq, u64 alloc_time_ns)
 	else
 		rq->start_time_ns = 0;
 
+#ifdef CONFIG_CGROUP_SLI
+	if (static_branch_unlikely(&sli_io_enabled)) {
+		if (alloc_time_ns)
+			rq->alloc_time_ns = alloc_time_ns;
+		else if (rq->start_time_ns)
+			rq->alloc_time_ns = rq->start_time_ns;
+		else
+			rq->alloc_time_ns = ktime_get_ns();
+		return;
+	}
+#endif
+
 #ifdef CONFIG_BLK_RQ_ALLOC_TIME
 	if (blk_queue_rq_alloc_time(rq->q))
 		rq->alloc_time_ns = alloc_time_ns ?: rq->start_time_ns;
@@ -444,6 +457,10 @@ static struct request *__blk_mq_alloc_requests(struct blk_mq_alloc_data *data)
 	/* alloc_time includes depth and tag waits */
 	if (blk_queue_rq_alloc_time(q))
 		alloc_time_ns = ktime_get_ns();
+#ifdef CONFIG_CGROUP_SLI
+	else if (static_branch_unlikely(&sli_io_enabled))
+		alloc_time_ns = ktime_get_ns();
+#endif
 
 	if (data->cmd_flags & REQ_NOWAIT)
 		data->flags |= BLK_MQ_REQ_NOWAIT;
@@ -627,6 +644,10 @@ struct request *blk_mq_alloc_request_hctx(struct request_queue *q,
 	/* alloc_time includes depth and tag waits */
 	if (blk_queue_rq_alloc_time(q))
 		alloc_time_ns = ktime_get_ns();
+#ifdef CONFIG_CGROUP_SLI
+	else if (static_branch_unlikely(&sli_io_enabled))
+		alloc_time_ns = ktime_get_ns();
+#endif
 
 	/*
 	 * If the tag allocator sleeps we could get an allocation for a
@@ -862,6 +883,31 @@ static void blk_complete_request(struct request *req)
 	}
 }
 
+#ifdef CONFIG_CGROUP_SLI
+static void sli_iolat_stat_end_check(u64 rq_alloc_time_ns, u64 rq_io_start_time_ns,
+		struct bio *bio, struct blkcg *blkcg)
+{
+	struct cgroup *cgrp;
+	u64 sli_iolat_end_time = 0;
+	u64 bio_start = bio_issue_time(&bio->bi_issue);
+
+	if (!bio_start || !rq_alloc_time_ns || !rq_io_start_time_ns || !blkcg ||
+		blkcg == &blkcg_root)
+		return;
+
+	cgrp = blkcg->css.cgroup;
+	if (!cgrp || !cgroup_parent(cgrp))
+		return;
+
+	sli_iolat_end_time = __bio_issue_time(ktime_get_ns());
+	if (sli_iolat_end_time <= bio_start)
+		return;
+
+	sli_iolat_stat_end(IO_LAT_DELAY, bio_start, rq_alloc_time_ns, rq_io_start_time_ns,
+			sli_iolat_end_time, sli_iolat_end_time - bio_start, bio, cgrp);
+}
+#endif
+
 #ifdef CONFIG_BLK_CGROUP_DISKSTATS
 static void blkcg_account_io_completion(struct request *req, struct bio *bio,
 					unsigned int bytes)
@@ -870,6 +916,12 @@ static void blkcg_account_io_completion(struct request *req, struct bio *bio,
 		const int rw = bio_data_dir(bio);
 		struct blkcg *blkcg = css_to_blkcg(bio_blkcg_css(bio));
 		struct block_device *part;
+
+#ifdef CONFIG_CGROUP_SLI
+		if (static_branch_unlikely(&sli_io_enabled))
+			sli_iolat_stat_end_check(req->alloc_time_ns, req->io_start_time_ns,
+					bio, blkcg);
+#endif
 
 		part_stat_lock_rcu();
 		part = req->part;
