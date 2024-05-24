@@ -248,8 +248,8 @@ free_mbuf:
 
 static void __net_exit net_mbuf_exit(struct net *net)
 {
-	remove_proc_entry("log", net->mbuf.log);
-	remove_proc_entry("twatcher", net->mbuf.twatcher);
+	remove_proc_entry("log", net->mbuf.twatcher);
+	remove_proc_entry("twatcher", net->proc_net);
 
 	/* if mbuf allocate failed, no need to free */
 	if (!net->mbuf.slot)
