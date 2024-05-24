@@ -3,12 +3,9 @@
 # A simple and clean build system initially inspired by Fedora ARK Kernel and Tencent Linux Kernel public.
 #
 
-TOPDIR := $(shell git rev-parse --show-toplevel)
-ifeq ("$(TOPDIR)", "")
-	TOPDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
-endif
-
+# Dist Makefile must be in /dist and kernel source code requires no space in path
 DISTPATH = dist
+TOPDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 DISTDIR := $(TOPDIR)/$(DISTPATH)
 ifeq ("$(abspath $(DISTDIR)/Makefile)", "$(lastword $(MAKEFILE_LIST))")
 $(error Can't detect Makefile, aborting)
