@@ -114,7 +114,7 @@ get_dist_makefile_var() {
 	cat_repo_file "dist/Makefile" "$_gitref" | get_makefile_var "$1"
 }
 
-[ "$TOPDIR" ] || TOPDIR=$(git rev-parse --show-toplevel 2>/dev/null)
+# This lib must stay in dist/scripts/
 [ "$TOPDIR" ] || TOPDIR="$(realpath "$(dirname "$(realpath "$0")")/../..")"
 [ "$DISTPATH" ] || DISTPATH=$(get_dist_makefile_var DISTPATH)
 

@@ -3,12 +3,9 @@
 # A simple and clean build system initially inspired by Fedora ARK Kernel and Tencent Linux Kernel public.
 #
 
-TOPDIR := $(shell git rev-parse --show-toplevel)
-ifeq ("$(TOPDIR)", "")
-	TOPDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
-endif
-
+# Dist Makefile must be in /dist and kernel source code requires no space in path
 DISTPATH = dist
+TOPDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 DISTDIR := $(TOPDIR)/$(DISTPATH)
 ifeq ("$(abspath $(DISTDIR)/Makefile)", "$(lastword $(MAKEFILE_LIST))")
 $(error Can't detect Makefile, aborting)
@@ -89,7 +86,7 @@ $(shell mkdir -p $(WORKDIRS); \
 )
 
 ### Build files
-KFULLVER := $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF) vr)
+KFULLVER = $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF) vr)
 CONFIGFILE := $(shell $(DISTDIR)/scripts/ls-config-files.sh $(CONFIG))
 SPECFILE = $(RPM_SOURCEDIR)/kernel.spec
 TARNAME = kernel-$(KFULLVER)
@@ -149,12 +146,10 @@ endif
 
 default: dist-help
 
-$(TARFILE):
+dist-tarball:
 	@echo "Generating kernel source tar: $(TARFILE)"
-	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar.gz --prefix=$(TARNAME)/ --output $(TARFILE)
-
-dist-tarball: $(TARFILE)
 	@echo "$(TARFILE)"
+	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar.gz --prefix=$(TARNAME)/ --output $(TARFILE)
 
 $(CONFIGFILE): $(DISTFILES)
 	@echo "Generating kernel config style '$(CONFIG)'"
@@ -189,7 +184,7 @@ $(SPECFILE): always-rebuild dist-configs
 dist-specfile: $(SPECFILE)
 	@echo "$(SPECFILE)"
 
-dist-sources: dist-configs $(TARFILE) $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
+dist-sources: dist-configs dist-tarball $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
 	@cp $(DISTSOURCES) $(DISTKABIS) $(RPM_SOURCEDIR)
 
 define DO_RPMBUILD

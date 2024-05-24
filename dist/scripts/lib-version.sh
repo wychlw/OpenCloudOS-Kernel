@@ -221,7 +221,6 @@ get_kernel_code_version() {
 
 	if [ ! "$makefile" ]; then
 		die "Error: Failed to read Makefile"
-		return 1
 	fi
 
 	KVERSION=$(get_makefile_var VERSION <<< "$makefile")
@@ -304,6 +303,10 @@ _check_strip_kernel_majver() {
 	local tag=$1 rel
 	local makefile
 	local _kversion _kpatchlevel _ksublevel
+
+	if [[ $tag != *.* ]]; then
+		return 1
+	fi
 
 	if rel=$(_do_strip_kernel_majver "$tag"); then
 		echo "$rel"
