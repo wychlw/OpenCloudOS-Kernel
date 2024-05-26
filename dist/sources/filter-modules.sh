@@ -31,7 +31,7 @@ hiddrvs="surface-hid"
 
 scsidrvs="aacraid aic7xxx aic94xx be2iscsi bfa bnx2i bnx2fc csiostor cxgbi esas2r fcoe fnic hisi_sas isci libsas lpfc megaraid mpt2sas mpt3sas mvsas pm8001 qla2xxx qla4xxx sym53c8xx_2 ufs qedf"
 
-usbdrvs="atm image misc serial wusbcore"
+usbdrvs="atm image misc serial storage wusbcore"
 
 drmdrvs="amd ast bridge gma500 i2c i915 mgag200 nouveau panel radeon via"
 
