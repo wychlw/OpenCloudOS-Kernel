@@ -259,19 +259,6 @@ Requires(postun): kmod
 %description modules
 This package provides commonly used kernel modules for the %{?2:%{2}-}core kernel package.
 
-### Kernel module private package
-%package modules-private
-Summary: %{rpm_vendor} Kernel modules private to match the %{rpm_name}-core kernel
-Provides: installonlypkg(kernel-module-private)
-Requires: %{rpm_name} = %{version}-%{release}
-AutoReq: no
-AutoProv: yes
-Requires(pre): kmod
-Requires(postun): kmod
-%description modules-private
-This package provides modules for private release, e.g. rue.ko,
-for %{name} of version %{version}-%{release}.
-
 ### Kernel devel package
 %package devel
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
@@ -1080,13 +1067,7 @@ CollectKernelFile() {
 	# Rest of the modules stay in core package
 	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" non-core-modules >> modules.list || exit $?
 
-	# Do module splitting for public release modules
-	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" modules-private >> modules-private.list || exit $?
-
 	comm -23 core.list modules.list > core.list.tmp
-	mv core.list.tmp core.list
-
-	comm -23 core.list modules-private.list > core.list.tmp
 	mv core.list.tmp core.list
 
 	popd
@@ -1256,13 +1237,6 @@ fi
 %postun modules
 depmod -a %{kernel_unamer}
 
-### Module package
-%post modules-private
-depmod -a %{kernel_unamer}
-
-%postun modules-private
-depmod -a %{kernel_unamer}
-
 ### Devel package
 %post devel
 if [ -f /etc/sysconfig/kernel ]; then
@@ -1319,8 +1293,6 @@ fi
 
 %files modules -f modules.list
 %defattr(-,root,root)
-
-%files modules-private -f modules-private.list
 
 %if %{with_keypkg}
 %files signing-keys -f signing-keys.list
