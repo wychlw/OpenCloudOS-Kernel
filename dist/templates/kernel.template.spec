@@ -1223,11 +1223,9 @@ fi
 
 ### Module package
 %pre modules
-# In TS private release, kernel command line will add "module.sig_enforce=1" and
-# "module_blacklist=usb-storage".
+# In TS private release, kernel command line in /etc/default/grub will add "tk_private=1".
 # When install TS private release, do not need install "usb-storage nouveau cfg80211" into initramfs.
-{ grep -q "module.sig_enforce=1" /etc/default/grub 2>/dev/null && \
-grep -q "usb-storage" /etc/default/grub 2>/dev/null ; } && \
+grep -q "tk_private=1" /etc/default/grub 2>/dev/null && \
 echo "omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"" >> /etc/dracut.conf
 
 %post modules
