@@ -2641,6 +2641,50 @@ static void scx_cgroup_unlock(void)
 	percpu_up_write(&scx_cgroup_rwsem);
 }
 
+int scx_cpu_cgroup_switch(struct task_group *tg, int val)
+{
+	struct task_struct *p;
+	struct css_task_iter it;
+	int ret = 0;
+
+	percpu_down_write(&scx_fork_rwsem);
+	scx_cgroup_lock();
+
+	if (!scx_enabled() || READ_ONCE(scx_switching_all)) {
+		ret = -EPERM;
+		goto out;
+	}
+
+	tg->scx = val;
+
+	css_task_iter_start(&tg->css, 0, &it);
+	while ((p = css_task_iter_next(&it))) {
+		const struct sched_class *old_class = p->sched_class;
+		struct sched_enq_and_set_ctx ctx;
+		struct rq_flags rf;
+		struct rq *rq;
+
+		rq = task_rq_lock(p, &rf);
+		update_rq_clock(rq);
+
+		sched_deq_and_put_task(p, DEQUEUE_SAVE | DEQUEUE_MOVE,
+				&ctx);
+		if (old_class != &ext_sched_class && tg->scx)
+			p->sched_class = &ext_sched_class;
+		else if (old_class == &ext_sched_class && !tg->scx)
+			p->sched_class = &fair_sched_class;
+		check_class_changing(rq, p, old_class);
+		sched_enq_and_set_task(&ctx);
+		check_class_changed(rq, p, old_class, p->prio);
+
+		task_rq_unlock(rq, p, &rf);
+	}
+	css_task_iter_end(&it);
+out:
+	percpu_up_write(&scx_fork_rwsem);
+	scx_cgroup_unlock();
+	return ret;
+}
 #else	/* CONFIG_EXT_GROUP_SCHED */
 
 static inline void scx_cgroup_lock(void) {}
@@ -2801,6 +2845,7 @@ static void scx_cgroup_exit(void)
 		if (!(tg->scx_flags & SCX_TG_INITED))
 			continue;
 		tg->scx_flags &= ~SCX_TG_INITED;
+		tg->scx = 0;
 
 		if (!scx_ops.cgroup_exit)
 			continue;
@@ -2853,6 +2898,7 @@ static int scx_cgroup_init(void)
 			return ret;
 		}
 		tg->scx_flags |= SCX_TG_INITED;
+		tg->scx = 0;
 
 		rcu_read_lock();
 		css_put(css);
