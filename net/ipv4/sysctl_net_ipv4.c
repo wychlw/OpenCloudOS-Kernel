@@ -19,6 +19,7 @@
 #include <net/ping.h>
 #include <net/protocol.h>
 #include <net/netevent.h>
+#include "netlat.h"
 
 static int tcp_retr1_max = 255;
 static int ip_local_port_range_min[] = { 1, 1 };
@@ -1644,6 +1645,19 @@ static __init int sysctl_ipv4_init(void)
 		unregister_net_sysctl_table(hdr);
 		return -ENOMEM;
 	}
+
+	/* this must after the register of ipv4_sysctl_ops because we are on the
+	 * sub-tree of "net/ipv4" setup_net call init one by one, while cleanup_net
+	 * call exit one by one in reversed order
+	 */
+	if (netlat_net_init()) {
+		unregister_pernet_subsys(&ipv4_sysctl_ops);
+		unregister_net_sysctl_table(hdr);
+		return -ENOMEM;
+	}
+	/* if some one add code here, use netlat_net_exit to roll back things down
+	 * by `netlat_net_init`
+	 */
 
 	return 0;
 }

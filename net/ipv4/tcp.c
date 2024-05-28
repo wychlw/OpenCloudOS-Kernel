@@ -279,6 +279,7 @@
 #include <linux/uaccess.h>
 #include <asm/ioctls.h>
 #include <net/busy_poll.h>
+#include "netlat.h"
 
 /* Track pending CMSGs. */
 enum {
@@ -2529,15 +2530,19 @@ skip_copy:
 
 		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 			goto found_fin_ok;
-		if (!(flags & MSG_PEEK))
+		if (!(flags & MSG_PEEK)) {
+			netlat_pick_check(sk, skb);
 			tcp_eat_recv_skb(sk, skb);
+		}
 		continue;
 
 found_fin_ok:
 		/* Process the FIN. */
 		WRITE_ONCE(*seq, *seq + 1);
-		if (!(flags & MSG_PEEK))
+		if (!(flags & MSG_PEEK)) {
+			netlat_pick_check(sk, skb);
 			tcp_eat_recv_skb(sk, skb);
+		}
 		break;
 	} while (len > 0);
 

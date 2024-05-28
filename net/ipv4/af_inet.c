@@ -114,6 +114,7 @@
 #include <net/xfrm.h>
 #include <net/net_namespace.h>
 #include <net/secure_seq.h>
+#include <net/netns_mbuf.h>
 #ifdef CONFIG_IP_MROUTE
 #include <linux/mroute.h>
 #endif
@@ -2103,11 +2104,15 @@ static int __init ipv4_proc_init(void)
 		goto out_udp;
 	if (ping_proc_init())
 		goto out_ping;
+	if (inet_mbuf_init())
+		goto out_mbuf;
 	if (ip_misc_proc_init())
 		goto out_misc;
 out:
 	return rc;
 out_misc:
+	inet_mbuf_exit();
+out_mbuf:
 	ping_proc_exit();
 out_ping:
 	udp4_proc_exit();

@@ -24,6 +24,10 @@
 
 #ifdef CONFIG_CGROUPS
 
+#ifdef CONFIG_RQM
+#include <linux/mbuf.h>
+#endif
+
 struct cgroup;
 struct cgroup_root;
 struct cgroup_subsys;
@@ -523,6 +527,9 @@ struct cgroup {
 	/* used to schedule release agent */
 	struct work_struct release_agent_work;
 
+#ifdef CONFIG_RQM
+	struct mbuf_slot *mbuf;
+#endif
 	/* used to track pressure stalls */
 	struct psi_group *psi;
 

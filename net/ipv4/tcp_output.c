@@ -46,6 +46,7 @@
 #include <linux/static_key.h>
 
 #include <trace/events/tcp.h>
+#include "netlat.h"
 
 /* Refresh clocks of a TCP socket,
  * ensuring monotically increasing values.
@@ -71,6 +72,10 @@ static void tcp_event_new_data_sent(struct sock *sk, struct sk_buff *skb)
 	WRITE_ONCE(tp->snd_nxt, TCP_SKB_CB(skb)->end_seq);
 
 	__skb_unlink(skb, &sk->sk_write_queue);
+
+	/* for the tcp in established status, and normal data skb */
+	netlat_tcp_enrtxqueue(sk, skb);
+
 	tcp_rbtree_insert(&sk->tcp_rtx_queue, skb);
 
 	if (tp->highest_sack == NULL)
@@ -1673,8 +1678,23 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	/* Link BUFF into the send queue. */
 	__skb_header_release(buff);
 	tcp_insert_write_queue_after(skb, buff, sk, tcp_queue);
-	if (tcp_queue == TCP_FRAG_IN_RTX_QUEUE)
+	if (tcp_queue == TCP_FRAG_IN_RTX_QUEUE) {
+		/* for skb in rtx queue and be splited:
+		 * eg: we receive an ack, the ack only partially
+		 * acked an skb in rtx queue, we need split the
+		 * partially acked skb, release the acked bytes
+		 * and collect the remained bytes to `buff`, insert
+		 * buff to rtx queue again
+		 * some other condition like:
+		 * partially sacked a skb in rtx queue
+		 * partially dsacked a skb in rtx queue
+		 * ....
+		 * here we should copy the origin skb's ts to the
+		 * new one(buff)
+		 */
+		netlat_copy_rtxq_skb(sk, buff, skb);
 		list_add(&buff->tcp_tsorted_anchor, &skb->tcp_tsorted_anchor);
+	}
 
 	return 0;
 }
@@ -3658,6 +3678,11 @@ int tcp_send_synack(struct sock *sk)
 			tcp_highest_sack_replace(sk, skb, nskb);
 			tcp_rtx_queue_unlink_and_free(skb, sk);
 			__skb_header_release(nskb);
+			/* for crossed SYN-ACK, eg: we are in
+			 * syn-send status, and received a pure
+			 * syn skb from the peer
+			 */
+			netlat_tcp_enrtxqueue(sk, nskb);
 			tcp_rbtree_insert(&sk->tcp_rtx_queue, nskb);
 			sk_wmem_queued_add(sk, nskb->truesize);
 			sk_mem_charge(sk, nskb->truesize);
@@ -3976,6 +4001,10 @@ static int tcp_send_syn_data(struct sock *sk, struct sk_buff *syn)
 	TCP_SKB_CB(syn_data)->tcp_flags = TCPHDR_ACK | TCPHDR_PSH;
 	if (!err) {
 		tp->syn_data = (fo->copied > 0);
+
+		/* for fastopen sock which send data in the syn skb */
+		netlat_tcp_enrtxqueue(sk, syn_data);
+
 		tcp_rbtree_insert(&sk->tcp_rtx_queue, syn_data);
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPORIGDATASENT);
 		goto done;
@@ -4025,6 +4054,10 @@ int tcp_connect(struct sock *sk)
 	tp->retrans_stamp = tcp_time_stamp(tp);
 	tcp_connect_queue_skb(sk, buff);
 	tcp_ecn_send_syn(sk, buff);
+
+	/* for the syn package */
+	netlat_tcp_enrtxqueue(sk, buff);
+
 	tcp_rbtree_insert(&sk->tcp_rtx_queue, buff);
 
 	/* Send off SYN; include data in Fast Open. */
