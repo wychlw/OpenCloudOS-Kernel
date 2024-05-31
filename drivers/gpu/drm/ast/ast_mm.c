@@ -71,6 +71,25 @@ static u32 ast_get_vram_size(struct ast_device *ast)
 	return vram_size;
 }
 
+static bool ast_pci_host_is_5c01(struct pci_bus *bus)
+{
+	struct pci_bus *child = bus;
+	struct pci_dev *root = NULL;
+
+	while (child) {
+		if (child->parent->parent)
+			child = child->parent;
+		else
+			break;
+	}
+
+	root = child->self;
+
+	if ((root->vendor == 0x1db7) && (root->device == 0x5c01))
+		return true;
+	return false;
+}
+
 int ast_mm_init(struct ast_device *ast)
 {
 	struct drm_device *dev = &ast->base;
@@ -81,13 +100,21 @@ int ast_mm_init(struct ast_device *ast)
 	base = pci_resource_start(pdev, 0);
 	size = pci_resource_len(pdev, 0);
 
-	/* Don't fail on errors, but performance might be reduced. */
-	devm_arch_io_reserve_memtype_wc(dev->dev, base, size);
-	devm_arch_phys_wc_add(dev->dev, base, size);
-
 	vram_size = ast_get_vram_size(ast);
 
-	ast->vram = devm_ioremap_wc(dev->dev, base, vram_size);
+	if (ast_pci_host_is_5c01(pdev->bus)) {
+		ast->is_5c01_device = true;
+		ast->vram = devm_ioremap(dev->dev, base, vram_size);
+	} else {
+		ast->is_5c01_device = false;
+
+		/* Don't fail on errors, but performance might be reduced. */
+		devm_arch_io_reserve_memtype_wc(dev->dev, base, size);
+		devm_arch_phys_wc_add(dev->dev, base, size);
+
+		ast->vram = devm_ioremap_wc(dev->dev, base, vram_size);
+	}
+
 	if (!ast->vram)
 		return -ENOMEM;
 
