@@ -115,7 +115,7 @@ static int kvm_handle_csr(struct kvm_vcpu *vcpu, larch_inst inst)
 int kvm_emu_iocsr(larch_inst inst, struct kvm_run *run, struct kvm_vcpu *vcpu)
 {
 	int ret;
-	unsigned long val;
+	unsigned long *val;
 	u32 addr, rd, rj, opcode;
 
 	/*
@@ -128,6 +128,7 @@ int kvm_emu_iocsr(larch_inst inst, struct kvm_run *run, struct kvm_vcpu *vcpu)
 	ret = EMULATE_DO_IOCSR;
 	run->iocsr_io.phys_addr = addr;
 	run->iocsr_io.is_write = 0;
+	val = &vcpu->arch.gprs[rd];
 
 	/* LoongArch is Little endian */
 	switch (opcode) {
@@ -161,15 +162,21 @@ int kvm_emu_iocsr(larch_inst inst, struct kvm_run *run, struct kvm_vcpu *vcpu)
 		break;
 	default:
 		ret = EMULATE_FAIL;
-		break;
+		return ret;
 	}
 
-	if (ret == EMULATE_DO_IOCSR) {
-		if (run->iocsr_io.is_write) {
-			val = vcpu->arch.gprs[rd];
-			memcpy(run->iocsr_io.data, &val, run->iocsr_io.len);
-		}
-		vcpu->arch.io_gpr = rd;
+	if (run->iocsr_io.is_write) {
+		if (!kvm_io_bus_write(vcpu, KVM_IOCSR_BUS, addr, run->iocsr_io.len, val))
+			ret = EMULATE_DONE;
+		else
+			/* Save data and let user space to write it */
+			memcpy(run->iocsr_io.data, val, run->iocsr_io.len);
+	} else {
+		if (!kvm_io_bus_read(vcpu, KVM_IOCSR_BUS, addr, run->iocsr_io.len, val))
+			ret = EMULATE_DONE;
+		else
+			/* Save register id for iocsr read completion */
+			vcpu->arch.io_gpr = rd;
 	}
 
 	return ret;
@@ -457,16 +464,30 @@ int kvm_emu_mmio_read(struct kvm_vcpu *vcpu, larch_inst inst)
 	}
 
 	if (ret == EMULATE_DO_MMIO) {
+		/*
+		 * if mmio device such as pch pic is emulated in KVM,
+		 * it need not return to user space to handle the mmio
+		 * exception.
+		 */
+		ret = kvm_io_bus_read(vcpu, KVM_MMIO_BUS, vcpu->arch.badv,
+				run->mmio.len, &vcpu->arch.gprs[rd]);
+		if (!ret) {
+			update_pc(&vcpu->arch);
+			vcpu->mmio_needed = 0;
+			return EMULATE_DONE;
+		}
+
 		/* Set for kvm_complete_mmio_read() use */
 		vcpu->arch.io_gpr = rd;
 		run->mmio.is_write = 0;
 		vcpu->mmio_is_write = 0;
-	} else {
-		kvm_err("Read not supported Inst=0x%08x @%lx BadVaddr:%#lx\n",
-			inst.word, vcpu->arch.pc, vcpu->arch.badv);
-		kvm_arch_vcpu_dump_regs(vcpu);
-		vcpu->mmio_needed = 0;
+		return EMULATE_DO_MMIO;
 	}
+
+	kvm_err("Read not supported Inst=0x%08x @%lx BadVaddr:%#lx\n",
+			inst.word, vcpu->arch.pc, vcpu->arch.badv);
+	kvm_arch_vcpu_dump_regs(vcpu);
+	vcpu->mmio_needed = 0;
 
 	return ret;
 }
@@ -605,16 +626,27 @@ int kvm_emu_mmio_write(struct kvm_vcpu *vcpu, larch_inst inst)
 	}
 
 	if (ret == EMULATE_DO_MMIO) {
+		/*
+		 * if mmio device such as pch pic is emulated in KVM,
+		 * it need not return to user space to handle the mmio
+		 * exception.
+		 */
+		ret = kvm_io_bus_write(vcpu, KVM_MMIO_BUS, vcpu->arch.badv,
+				run->mmio.len, data);
+		if (!ret)
+			return EMULATE_DONE;
+
 		run->mmio.is_write = 1;
 		vcpu->mmio_needed = 1;
 		vcpu->mmio_is_write = 1;
-	} else {
-		vcpu->arch.pc = curr_pc;
-		kvm_err("Write not supported Inst=0x%08x @%lx BadVaddr:%#lx\n",
-			inst.word, vcpu->arch.pc, vcpu->arch.badv);
-		kvm_arch_vcpu_dump_regs(vcpu);
-		/* Rollback PC if emulation was unsuccessful */
+		return EMULATE_DO_MMIO;
 	}
+
+	vcpu->arch.pc = curr_pc;
+	kvm_err("Write not supported Inst=0x%08x @%lx BadVaddr:%#lx\n",
+			inst.word, vcpu->arch.pc, vcpu->arch.badv);
+	kvm_arch_vcpu_dump_regs(vcpu);
+	/* Rollback PC if emulation was unsuccessful */
 
 	return ret;
 }
