@@ -303,7 +303,7 @@ exit_win:
 
 static const struct kernel_param_ops window_size_ops = {
 	.set = window_size_set,
-	.get = param_get_int,
+	.get = param_get_byte,
 };
 
 module_param_cb(window_size, &window_size_ops, &window_size, 0644);
