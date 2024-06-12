@@ -11,7 +11,6 @@
 #include <linux/io.h>
 #include <linux/export.h>
 #include <linux/ioremap.h>
-#include <linux/pgtable.h>
 
 #ifdef CONFIG_ALTRA_ERRATUM_82288
 bool have_altra_erratum_82288 __read_mostly;
@@ -20,7 +19,6 @@ EXPORT_SYMBOL(have_altra_erratum_82288);
 static bool is_altra_pci(phys_addr_t phys_addr, size_t size)
 {
 	phys_addr_t end = phys_addr + size;
-
 	return (phys_addr < 0x80000000 ||
 		(end > 0x200000000000 && phys_addr < 0x400000000000) ||
 		(end > 0x600000000000 && phys_addr < 0x800000000000));
@@ -54,7 +52,6 @@ void __iomem *generic_ioremap_prot(phys_addr_t phys_addr, size_t size,
 		return NULL;
 	vaddr = (unsigned long)area->addr;
 	area->phys_addr = phys_addr;
-
 #ifdef CONFIG_ALTRA_ERRATUM_82288
 	if (unlikely(have_altra_erratum_82288 && is_altra_pci(phys_addr, size)))
 		prot = pgprot_device(prot);

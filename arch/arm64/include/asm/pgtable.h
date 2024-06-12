@@ -587,14 +587,14 @@ static inline pte_t pte_mkspecial(pte_t pte)
 	pgprot_t prot = __pgprot(pte_val(pte) & ~PTE_ADDR_MASK);
 
 	if (unlikely(have_altra_erratum_82288) &&
-			(phys < 0x80000000 ||
-			(phys >= 0x200000000000 && phys < 0x400000000000) ||
-			(phys >= 0x600000000000 && phys < 0x800000000000))) {
+		(phys < 0x80000000 ||
+		(phys >= 0x200000000000 && phys < 0x400000000000) ||
+		(phys >= 0x600000000000 && phys < 0x800000000000))) {
 		pte = __pte(__phys_to_pte_val(phys) | pgprot_val(pgprot_device(prot)));
-	}
+       }
 #endif
 
-	return set_pte_bit(pte, __pgprot(PTE_SPECIAL));
+       return set_pte_bit(pte, __pgprot(PTE_SPECIAL));
 }
 
 #define __HAVE_PHYS_MEM_ACCESS_PROT
