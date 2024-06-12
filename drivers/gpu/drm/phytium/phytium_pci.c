@@ -6,6 +6,7 @@
 
 #include <linux/pci.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_aperture.h>
 #include <linux/dmaengine.h>
 #include "phytium_display_drv.h"
 #include "phytium_pci.h"
@@ -27,6 +28,24 @@ void phytium_pci_vram_hw_init(struct phytium_display_private *priv)
 	pci_priv->dc_hw_vram_init(priv, priv->pool_phys_addr, priv->pool_size);
 }
 
+static bool phytium_pci_host_is_5c01(struct pci_bus *bus)
+{
+	struct pci_bus *child = bus;
+	struct pci_dev *root = NULL;
+
+	while (child) {
+		if (child->parent->parent)
+			child = child->parent;
+		else
+			break;
+	}
+
+	root = child->self;
+	if ((root->vendor == 0x1db7) && (root->device == 0x5c01))
+		return true;
+	return false;
+}
+
 int phytium_pci_vram_init(struct pci_dev *pdev, struct phytium_display_private *priv)
 {
 	int ret = 0;
@@ -34,8 +53,15 @@ int phytium_pci_vram_init(struct pci_dev *pdev, struct phytium_display_private *
 	priv->pool_phys_addr = pci_resource_start(pdev, 2);
 	priv->pool_size = pci_resource_len(pdev, 2);
 	if ((priv->pool_phys_addr != 0) && (priv->pool_size != 0)) {
-		priv->pool_virt_addr = devm_ioremap_wc(&pdev->dev, priv->pool_phys_addr,
-						       priv->pool_size);
+		if ((pdev->device == 0xdc3e) && phytium_pci_host_is_5c01(pdev->bus)) {
+			priv->pool_virt_addr = devm_ioremap(&pdev->dev, priv->pool_phys_addr,
+					       priv->pool_size);
+			priv->support_memory_type = MEMORY_TYPE_VRAM_DEVICE;
+		} else {
+			priv->pool_virt_addr = devm_ioremap_wc(&pdev->dev, priv->pool_phys_addr,
+					       priv->pool_size);
+			priv->support_memory_type = MEMORY_TYPE_VRAM_WC;
+		}
 		if (priv->pool_virt_addr == NULL) {
 			DRM_ERROR("pci vram ioremap fail, addr:0x%llx, size:0x%llx\n",
 				   priv->pool_phys_addr, priv->pool_size);
@@ -47,7 +73,6 @@ int phytium_pci_vram_init(struct pci_dev *pdev, struct phytium_display_private *
 			goto failed_init_memory_pool;
 
 		priv->mem_state[PHYTIUM_MEM_VRAM_TOTAL] = priv->pool_size;
-		priv->support_memory_type = MEMORY_TYPE_VRAM;
 		priv->vram_hw_init = phytium_pci_vram_hw_init;
 	} else {
 		DRM_DEBUG_KMS("not support vram\n");
@@ -67,7 +92,8 @@ failed_ioremap:
 
 void phytium_pci_vram_fini(struct pci_dev *pdev, struct phytium_display_private *priv)
 {
-	if (priv->support_memory_type == MEMORY_TYPE_VRAM) {
+	if ((priv->support_memory_type == MEMORY_TYPE_VRAM_WC) ||
+		(priv->support_memory_type == MEMORY_TYPE_VRAM_DEVICE)) {
 		phytium_memory_pool_fini(&pdev->dev, priv);
 		devm_iounmap(&pdev->dev, priv->pool_virt_addr);
 	}
@@ -213,11 +239,29 @@ phytium_pci_private_fini(struct pci_dev *pdev, struct phytium_display_private *p
 	devm_kfree(&pdev->dev, pci_priv);
 }
 
+static int phytium_remove_conflicting_framebuffers(struct pci_dev *pdev)
+{
+	resource_size_t base, size;
+
+	base = pci_resource_start(pdev, 2);
+	size = pci_resource_len(pdev, 2);
+
+	return drm_aperture_remove_conflicting_framebuffers(base, size,
+			&phytium_display_drm_driver);
+
+}
+
 static int phytium_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct phytium_display_private *priv = NULL;
 	struct drm_device *dev = NULL;
 	int ret = 0;
+
+	ret = phytium_remove_conflicting_framebuffers(pdev);
+	if (ret) {
+		DRM_ERROR("failed to remove conflicting phytium framebuffers\n");
+		return ret;
+	}
 
 	dev = drm_dev_alloc(&phytium_display_drm_driver, &pdev->dev);
 	if (IS_ERR(dev)) {

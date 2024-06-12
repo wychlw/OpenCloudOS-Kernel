@@ -231,6 +231,7 @@ struct ast_device {
 		} bmc;
 	} output;
 
+	bool is_5c01_device;
 	bool support_wide_screen;
 	enum {
 		ast_use_p2a,
