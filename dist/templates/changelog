@@ -1,3 +1,294 @@
+* Thu Jun 13 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.33-7
+- emm: update to v0.1.5
+- arm64: add unprivileged instruction support
+- arm64: fix the error for instruction :b9400000
+- arm64: Add new code for unaligned pcie access
+- arm64: remove the hardcode about PCI address checking
+- arm64: Add alignment faults handler for Advanced SIMD load/store single
+- arm64: Add a fixup handler for alignment faults in aarch64 code
+- arm64: update Work around Ampere Altra erratum #82288 PCIE_65
+- Merge Linux 6.6.33
+- [next-6.6] Intel: Backport Granite Rapids RAPL PMU support to kernel 6.6 Merge pull request !186
+- powercap: intel_rapl_tpmi: Enable PMU support
+- powercap: intel_rapl: Introduce APIs for PMU support
+- powercap: intel_rapl: Sort header files
+- [next-6.6] LoongArch:  Fix some irqchip/loongson-eiointc issues and kdump function for loongarch. Merge pull request !182
+- anolis: LoongArch: fix efi map page table error
+- Revert "LoongArch: kdump: Add memory reservation for old kernel"
+- Revert "LoongArch: Fix kdump failure on v40 interface specification"
+- Revert "LoongArch: kdump: Add high memory reservation"
+- irqchip/loongson-eiointc: fix gsi register error
+- irqchip: LoongArch: Fix secondary bridge routing errors
+- PCI/MSI: LoongArch: Limit min pci msi-x/msi vector number
+- [next-6.6]Intel: Backport QuickAssist Technology(QAT) live migration for in-tree driver Merge pull request !184
+- x86: configs: Enable QAT_VFIO_PCI as kernel module
+- crypto: qat - Fix ADF_DEV_RESET_SYNC memory leak
+- crypto: qat - specify firmware files for 402xx
+- crypto: qat - validate slices count returned by FW
+- crypto: qat - improve error logging to be consistent across features
+- crypto: qat - improve error message in adf_get_arbiter_mapping()
+- crypto: qat - implement dh fallback for primes > 4K
+- crypto: qat - Fix spelling mistake "Invalide" -> "Invalid"
+- crypto: qat - Avoid -Wflex-array-member-not-at-end warnings
+- vfio/qat: Add vfio_pci driver for Intel QAT SR-IOV VF devices
+- crypto: qat - implement interface for live migration
+- crypto: qat - add interface for live migration
+- crypto: qat - add bank save and restore flows
+- crypto: qat - expand CSR operations for QAT GEN4 devices
+- crypto: qat - rename get_sla_arr_of_type()
+- crypto: qat - relocate CSR access code
+- crypto: qat - move PFVF compat checker to a function
+- crypto: qat - relocate and rename 4xxx PF2VM definitions
+- crypto: qat - adf_get_etr_base() helper
+- iommu/vt-d: Set variable intel_dirty_ops to static
+- iommufd/selftest: Fix _test_mock_dirty_bitmaps()
+- iommufd/selftest: Fix page-size check in iommufd_test_dirty()
+- iommu/vt-d: Enhance capability check for nested parent domain allocation
+- iommufd/selftest: Test IOMMU_HWPT_GET_DIRTY_BITMAP_NO_CLEAR flag
+- iommufd/selftest: Test out_capabilities in IOMMU_GET_HW_INFO
+- iommufd/selftest: Test IOMMU_HWPT_GET_DIRTY_BITMAP
+- iommufd/selftest: Test IOMMU_HWPT_SET_DIRTY_TRACKING
+- iommufd/selftest: Test IOMMU_HWPT_ALLOC_DIRTY_TRACKING
+- iommufd/selftest: Expand mock_domain with dev_flags
+- iommu/vt-d: Access/Dirty bit support for SS domains
+- iommu/amd: Access/Dirty bit support in IOPTEs
+- iommu/amd: Add domain_alloc_user based domain allocation
+- iommufd: Add a flag to skip clearing of IOPTE dirty
+- iommufd: Add capabilities to IOMMU_GET_HW_INFO
+- iommufd: Add IOMMU_HWPT_GET_DIRTY_BITMAP
+- iommufd: Add IOMMU_HWPT_SET_DIRTY_TRACKING
+- iommufd: Add a flag to enforce dirty tracking on attach
+- iommufd: Correct IOMMU_HWPT_ALLOC_NEST_PARENT description
+- iommu: Add iommu_domain ops for dirty tracking
+- iommufd/iova_bitmap: Move symbols to IOMMUFD namespace
+- vfio: Move iova_bitmap into iommufd
+- vfio/iova_bitmap: Export more API symbols
+- iommufd/selftest: Rework TEST_LENGTH to test min_size explicitly
+- iommu/vt-d: Add domain_alloc_user op
+- iommufd/selftest: Add domain_alloc_user() support in iommu mock
+- iommufd/selftest: Iterate idev_ids in mock_domain's alloc_hwpt test
+- iommufd: Support allocating nested parent domain
+- iommufd: Flow user flags for domain allocation to domain_alloc_user()
+- iommufd: Use the domain_alloc_user() op for domain allocation
+- iommu: Add new iommu op to create domains owned by userspace
+- !183 [next-6.6] Intel IAA Compression Accelerator Crypto Driver (iaa_crypto) Merge pull request !183 from Xiaochen Shen/intel-iaa-crypto-driver-next-6.6
+- x86/config: Add kernel config for Intel IAA crypto driver
+- dmaengine: idxd: Avoid unnecessary destruction of file_ida
+- dmaengine: idxd: Check for driver name match before sva user feature
+- crypto: iaa - Use cpumask_weight() when rebalancing
+- crypto: iaa - Fix some errors in IAA documentation
+- crypto: iaa - Change iaa statistics to atomic64_t
+- crypto: iaa - Add global_stats file and remove individual stat files
+- crypto: iaa - Remove comp/decomp delay statistics
+- crypto: iaa - fix decomp_bytes_in stats
+- crypto: iaa - Fix nr_cpus < nr_iaa case
+- crypto: iaa - fix the missing CRYPTO_ALG_ASYNC in cra_flags
+- crypto: iaa - Fix comp/decomp delay statistics
+- crypto: iaa - Fix async_disable descriptor leak
+- crypto: iaa - Remove unnecessary debugfs_create_dir() error check in iaa_crypto_debugfs_init()
+- crypto: iaa - Remove header table code
+- dmaengine: idxd: constify the struct device_type usage
+- dmaengine: idxd: make dsa_bus_type const
+- dmaengine: idxd: Remove usage of the deprecated ida_simple_xx() API
+- crypto: iaa - Account for cpu-less numa nodes
+- crypto: iaa - remove unneeded semicolon
+- crypto: iaa - Remove unneeded newline in update_max_adecomp_delay_ns()
+- crypto: iaa - Change desc->priv to 0
+- dmaengine: idxd: Add support for device/wq defaults
+- crypto: iaa - Add IAA Compression Accelerator stats
+- crypto: iaa - Add irq support for the crypto async interface
+- crypto: iaa - Add support for deflate-iaa compression algorithm
+- crypto: iaa - Add compression mode management along with fixed mode
+- crypto: iaa - Add per-cpu workqueue table with rebalancing
+- crypto: iaa - Add Intel IAA Compression Accelerator crypto driver core
+- crypto: iaa - Add IAA Compression Accelerator Documentation
+- dmaengine: idxd: add callback support for iaa crypto
+- dmaengine: idxd: Add wq private data accessors
+- dmaengine: idxd: Export wq resource management functions
+- dmaengine: idxd: Export descriptor management functions
+- dmaengine: idxd: Rename drv_enable/disable_wq to idxd_drv_enable/disable_wq, and export
+- dmaengine: idxd: add external module driver support for dsa_bus_type
+- dmaengine: idxd: Fix incorrect descriptions for GRPCFG register
+- dmaengine: idxd: add wq driver name support for accel-config user tool
+- dmaengine: idxd: rate limit printk in misc interrupt thread
+- drm/phytium: Replace default efi fb0 with dc fb
+- [next-6.6] phytium-Bugfix-Xorg-startup-for-ps23xx Merge pull request !188
+- drm/ast: Fixed display error for ps23xx
+- drm/phytium: Bugfix Xorg startup for ps23xx
+- anolis: LoongArch: fix efi map page table error
+- Revert "LoongArch: kdump: Add memory reservation for old kernel"
+- Revert "LoongArch: Fix kdump failure on v40 interface specification"
+- Revert "LoongArch: kdump: Add high memory reservation"
+- LoongArch: fix HT RX INT TRANS register not initialized
+- irqchip/loongson-eiointc: fix gsi register error
+- irqchip: LoongArch: Fix secondary bridge routing errors
+- PCI/MSI: LoongArch: Limit min pci msi-x/msi vector number
+- cgroup: allow cgroup to split direct io and buffered io into different blkio cgroup
+- io/tqos: add sysctl_buffer_io_limit switch for buffer io limit.
+- io/tqos: merge buffer io limit series patch from brookxu, and rework some function.
+- Merge branch 'caelli/cgroupfs' into 'master' (merge request !102)
+- cgroupfs: optimize cpu usage
+- sli: open CONFIG_CGROUP_SLI
+- sli: backport sli function from tk3
+- mbuf: backport mbuf functions for memcontrol/cpuacct from tk3
+- btrfs: make sure that WRITTEN is set on all metadata blocks
+- nvme:driver core probes in serial
+- config: enable ce instruction set optimization for shangmi support
+- config: enable some configs for shangmi support
+- kconfig: add more module for arm64
+- Merge ock repo's next branch into tk5 repo's master branch
+- [next-6.6]Hisi:backport some bugfix from upstream about PCIe_PMU and hisi_hns3 perf Merge pull request !179
+- drivers/perf: hisi: hns3: Actually use devm_add_action_or_reset()
+- drivers/perf: hisi: hns3: Fix out-of-bound access when valid event group
+- docs: perf: Update usage for target filter of hisi-pcie-pmu
+- drivers/perf: hisi_pcie: Merge find_related_event() and get_event_idx()
+- drivers/perf: hisi_pcie: Relax the check on related events
+- drivers/perf: hisi_pcie: Check the target filter properly
+- drivers/perf: hisi_pcie: Add more events for counting TLP bandwidth
+- drivers/perf: hisi_pcie: Fix incorrect counting under metric mode
+- drivers/perf: hisi_pcie: Introduce hisi_pcie_pmu_get_event_ctrl_val()
+- drivers/perf: hisi_pcie: Rename hisi_pcie_pmu_{config,clear}_filter()
+- !176 [next-6.6] net: stmmac: add 7A2000 chipset gnet support Merge pull request !176 from Ming Wang/master
+- net: stmmac: dwmac-loongson: Add loongson module author
+- net: stmmac: dwmac-loongson: Move disable_force flag to _gnet_date
+- net: stmmac: dwmac-loongson: Add Loongson GNET support
+- net: stmmac: dwmac-loongson: Fixed failure to set network speed to 1000.
+- net: stmmac: dwmac-loongson: Add loongson_dwmac_config_legacy
+- net: stmmac: dwmac-loongson: Add full PCI support
+- net: stmmac: dwmac-loongson: Add phy_interface for Loongson GMAC
+- net: stmmac: dwmac-loongson: Add phy mask for Loongson GMAC
+- net: stmmac: dwmac-loongson: Add ref and ptp clocks for Loongson
+- net: stmmac: dwmac-loongson: Split up the platform data initialization
+- net: stmmac: dwmac-loongson: Use PCI_DEVICE_DATA() macro for device identification
+- net: stmmac: dwmac-loongson: Drop useless platform data
+- net: stmmac: Export dwmac1000_dma_ops
+- net: stmmac: Add multi-channel support
+- net: stmmac: Move the atds flag to the stmmac_dma_cfg structure
+- net: stmmac: Move MAC caps init to phylink MAC caps getter
+- net: stmmac: Rename phylink_get_caps() callback to update_caps()
+- net: phylink: provide mac_get_caps() method
+- Merge branch 'dev/mengensun/netlat_v2' into 'master' (merge request !100)
+- netlat: fix warnning when del netns
+- netlat: not use ack_seq to keeping timestamp
+- netlat: add more queue latency check point
+- net/netlat: add a tcp latency watcher
+- netns/mbuf: add a per net namespace ring buffer
+- tqos: open CONFIG_RQM
+- tqos/mbuf: backport mbuf infrastructure from tk3
+- dist: using "tk_private=1" to judge private release
+- Merge branch 'frankjpliu/master' into 'master' (merge request !107)
+- Merge linux 6.6.32
+- Linux 6.6.32
+- block: add a partscan sysfs attribute for disks
+- block: add a disk_has_partscan helper
+- Docs/admin-guide/mm/damon/usage: fix wrong example of DAMOS filter matching sysfs file
+- docs: kernel_include.py: Cope with docutils 0.21
+- admin-guide/hw-vuln/core-scheduling: fix return type of PR_SCHED_CORE_GET
+- KEYS: trusted: Do not use WARN when encode fails
+- remoteproc: mediatek: Make sure IPI buffer fits in L2TCM
+- serial: kgdboc: Fix NMI-safety problems from keyboard reset code
+- usb: typec: tipd: fix event checking for tps6598x
+- usb: typec: ucsi: displayport: Fix potential deadlock
+- net: usb: ax88179_178a: fix link status when link is set to down/up
+- usb: dwc3: Wait unconditionally after issuing EndXfer command
+- binder: fix max_thread type inconsistency
+- drm/amdgpu: Fix possible NULL dereference in amdgpu_ras_query_error_status_helper()
+- erofs: reliably distinguish block based and fscache mode
+- erofs: get rid of erofs_fs_context
+- bpf: Add missing BPF_LINK_TYPE invocations
+- kselftest: Add a ksft_perror() helper
+- mmc: core: Add HS400 tuning in HS400es initialization
+- KEYS: trusted: Fix memory leak in tpm2_key_encode()
+- Bluetooth: L2CAP: Fix div-by-zero in l2cap_le_flowctl_init()
+- Bluetooth: L2CAP: Fix slab-use-after-free in l2cap_connect()
+- ice: remove unnecessary duplicate checks for VF VSI ID
+- ice: pass VSI pointer into ice_vc_isvalid_q_id
+- net: ks8851: Fix another TX stall caused by wrong ISR flag handling
+- drm/amd/display: Fix division by zero in setup_dsc_config
+- smb: smb2pdu.h: Avoid -Wflex-array-member-not-at-end warnings
+- ksmbd: add continuous availability share parameter
+- cifs: Add tracing for the cifs_tcon struct refcounting
+- smb: client: instantiate when creating SFU files
+- smb: client: fix NULL ptr deref in cifs_mark_open_handles_for_deleted_file()
+- smb3: add trace event for mknod
+- smb311: additional compression flag defined in updated protocol spec
+- smb311: correct incorrect offset field in compression header
+- cifs: Move some extern decls from .c files to .h
+- ksmbd: fix potencial out-of-bounds when buffer offset is invalid
+- ksmbd: fix slab-out-of-bounds in smb_strndup_from_utf16()
+- ksmbd: Fix spelling mistake "connction" -> "connection"
+- ksmbd: fix possible null-deref in smb_lazy_parent_lease_break_close
+- cifs: remove redundant variable assignment
+- cifs: fixes for get_inode_info
+- cifs: defer close file handles having RH lease
+- ksmbd: add support for durable handles v1/v2
+- ksmbd: mark SMB2_SESSION_EXPIRED to session when destroying previous session
+- smb: common: simplify compression headers
+- smb: common: fix fields sizes in compression_pattern_payload_v1
+- smb: client: negotiate compression algorithms
+- smb3: add dynamic trace point for ioctls
+- smb: client: return reparse type in /proc/mounts
+- smb: client: set correct d_type for reparse DFS/DFSR and mount point
+- smb: client: parse uid, gid, mode and dev from WSL reparse points
+- smb: client: introduce SMB2_OP_QUERY_WSL_EA
+- smb: client: Fix a NULL vs IS_ERR() check in wsl_set_xattrs()
+- smb: client: add support for WSL reparse points
+- smb: client: reduce number of parameters in smb2_compound_op()
+- smb: client: fix potential broken compound request
+- smb: client: move most of reparse point handling code to common file
+- smb: client: introduce reparse mount option
+- smb: client: retry compound request without reusing lease
+- smb: client: do not defer close open handles to deleted files
+- smb: client: reuse file lease key in compound operations
+- smb: client: get rid of smb311_posix_query_path_info()
+- smb: client: parse owner/group when creating reparse points
+- smb3: update allocation size more accurately on write completion
+- smb: client: handle path separator of created SMB symlinks
+- cifs: update the same create_guid on replay
+- ksmbd: Add kernel-doc for ksmbd_extract_sharename() function
+- cifs: set replay flag for retries of write command
+- cifs: commands that are retried should have replay flag set
+- smb: client: delete "true", "false" defines
+- smb: Fix some kernel-doc comments
+- cifs: new mount option called retrans
+- smb: client: don't clobber ->i_rdev from cached reparse points
+- cifs: new nt status codes from MS-SMB2
+- cifs: pick channel for tcon and tdis
+- cifs: minor comment cleanup
+- cifs: remove redundant variable tcon_exist
+- ksmbd: vfs: fix all kernel-doc warnings
+- ksmbd: auth: fix most kernel-doc warnings
+- cifs: remove unneeded return statement
+- cifs: get rid of dup length check in parse_reparse_point()
+- cifs: Pass unbyteswapped eof value into SMB2_set_eof()
+- smb3: Improve exception handling in allocate_mr_list()
+- cifs: fix in logging in cifs_chan_update_iface
+- smb: client: handle special files and symlinks in SMB3 POSIX
+- smb: client: cleanup smb2_query_reparse_point()
+- smb: client: allow creating symlinks via reparse points
+- smb: client: optimise reparse point querying
+- smb: client: allow creating special files via reparse points
+- smb: client: extend smb2_compound_op() to accept more commands
+- smb: client: Fix minor whitespace errors and warnings
+- smb: client: introduce cifs_sfu_make_node()
+- cifs: fix use after free for iface while disabling secondary channels
+- Missing field not being returned in ioctl CIFS_IOC_GET_MNT_INFO
+- smb3: minor cleanup of session handling code
+- smb3: more minor cleanups for session handling routines
+- smb3: minor RDMA cleanup
+- cifs: print server capabilities in DebugData
+- smb: use crypto_shash_digest() in symlink_hash()
+- Add definition for new smb3.1.1 command type
+- SMB3: clarify some of the unused CreateOption flags
+- cifs: Add client version details to NTLM authenticate message
+- dist: remove usb-storage.ko and nouveau.ko when install private release
+- dist: revert "add a modules-private rpm subpackage"
+- Kconfig: add more modules
+- Merge branch 'kasong/tk5/dist-optimization' into 'master' (merge request !106)
+- dist: don't parse kernel version unless needed
+- dist: optimize version parsing
+- dist: stop using --show-toplevel for speed up
+
 * Tue May 21 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.31-6
 - Hygon: CSV3 patch series part 4 (Enable the concurrent memory allocation of CMA for Hygon CSV3) Merge pull request !173
 - x86/mm: CSV allows CMA allocation concurrently
