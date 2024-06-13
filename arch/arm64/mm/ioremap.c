@@ -2,6 +2,7 @@
 
 #include <linux/mm.h>
 #include <linux/io.h>
+#include <linux/pci.h>
 
 void __iomem *ioremap_prot(phys_addr_t phys_addr, size_t size,
 			   unsigned long prot)

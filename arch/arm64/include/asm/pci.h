@@ -18,9 +18,10 @@
 
 #ifdef CONFIG_ALTRA_ERRATUM_82288
 extern bool __read_mostly have_altra_erratum_82288;
-#endif
-
+#define arch_can_pci_mmap_wc() (!have_altra_erratum_82288)
+#else
 #define arch_can_pci_mmap_wc() 1
+#endif
 
 /* Generic PCI */
 #include <asm-generic/pci.h>

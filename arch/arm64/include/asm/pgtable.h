@@ -578,6 +578,7 @@ static inline void set_pud_at(struct mm_struct *mm, unsigned long addr,
 
 #ifdef CONFIG_ALTRA_ERRATUM_82288
 extern bool have_altra_erratum_82288;
+extern bool range_is_pci(phys_addr_t, size_t);
 #endif
 
 static inline pte_t pte_mkspecial(pte_t pte)
@@ -586,15 +587,12 @@ static inline pte_t pte_mkspecial(pte_t pte)
 	phys_addr_t phys = __pte_to_phys(pte);
 	pgprot_t prot = __pgprot(pte_val(pte) & ~PTE_ADDR_MASK);
 
-	if (unlikely(have_altra_erratum_82288) &&
-			(phys < 0x80000000 ||
-			(phys >= 0x200000000000 && phys < 0x400000000000) ||
-			(phys >= 0x600000000000 && phys < 0x800000000000))) {
+	if (range_is_pci(phys, PAGE_SIZE)) {
 		pte = __pte(__phys_to_pte_val(phys) | pgprot_val(pgprot_device(prot)));
 	}
 #endif
 
-	return set_pte_bit(pte, __pgprot(PTE_SPECIAL));
+       return set_pte_bit(pte, __pgprot(PTE_SPECIAL));
 }
 
 #define __HAVE_PHYS_MEM_ACCESS_PROT
