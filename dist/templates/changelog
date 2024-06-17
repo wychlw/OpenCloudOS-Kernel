@@ -1,3 +1,6 @@
+* Mon Jun 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.34-8
+- Merge linux 6.6.34
+
 * Thu Jun 13 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.33-7
 - emm: update to v0.1.5
 - arm64: add unprivileged instruction support
