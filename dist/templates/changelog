@@ -1,3 +1,7 @@
+* Wed Jun 19 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.34-9
+- dist: do not run scripts fail in kernel.template.spec
+- drm/amdgpu: Fix possible NULL dereference in amdgpu_ras_query_error_status_helper()
+
 * Mon Jun 17 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.34-8
 - Merge linux 6.6.34
 
