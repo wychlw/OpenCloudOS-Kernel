@@ -1225,8 +1225,9 @@ fi
 %pre modules
 # In TS private release, kernel command line in /etc/default/grub will add "tk_private=1".
 # When install TS private release, do not need install "usb-storage nouveau cfg80211" into initramfs.
-grep -q "tk_private=1" /etc/default/grub 2>/dev/null && \
-echo "omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"" >> /etc/dracut.conf
+tk_private_val=1
+grep -q "tk_private=1" /etc/default/grub 2>/dev/null || tk_private_val=0
+if (( $tk_private_val == 1 )); then echo "omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"" >> /etc/dracut.conf ; fi
 
 %post modules
 depmod -a %{kernel_unamer}
@@ -1235,11 +1236,14 @@ if [ ! -f %{_localstatedir}/lib/rpm-state/%{name}-%{version}-%{version}%{?dist}.
 fi
 # Because /lib link to /usr/lib, /lib/modules is the same to /usr/lib/modules.
 # So, in TS private release, we only delete usb-storage and nouveau module in /usr/lib/modules dir.
-grep -q "omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"" /etc/dracut.conf 2>/dev/null && \
-{ sed -i '/omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"/d' /etc/dracut.conf ; \
-rm -f /usr/lib/modules/%{kernel_unamer}/kernel/drivers/usb/storage/* ; \
-rm -f /usr/lib/modules/%{kernel_unamer}/kernel/drivers/gpu/drm/nouveau/* ; \
-rm -f /usr/lib/modules/%{kernel_unamer}/kernel/net/wireless/* ; }
+rm_public_ko=1
+grep -q "omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"" /etc/dracut.conf 2>/dev/null || rm_public_ko=0
+if (( $rm_public_ko == 1 )); then
+	sed -i '/omit_dracutmodules+=\" usb-storage nouveau cfg80211 \"/d' /etc/dracut.conf
+	rm -f /usr/lib/modules/%{kernel_unamer}/kernel/drivers/usb/storage/*
+	rm -f /usr/lib/modules/%{kernel_unamer}/kernel/drivers/gpu/drm/nouveau/*
+	rm -f /usr/lib/modules/%{kernel_unamer}/kernel/net/wireless/*
+fi
 
 %posttrans modules
 if [ -f %{_localstatedir}/lib/rpm-state/%{name}-%{version}-%{version}%{?dist}.need_to_run_dracut ]; then\
