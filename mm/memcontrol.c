@@ -84,7 +84,8 @@
 #include <trace/events/vmscan.h>
 
 #ifdef CONFIG_MEMCG_ZRAM
-bool zram_memcg_nocharge = true;
+bool zram_memcg_nocharge;
+EXPORT_SYMBOL(zram_memcg_nocharge);
 #endif
 
 struct cgroup_subsys memory_cgrp_subsys __read_mostly;
