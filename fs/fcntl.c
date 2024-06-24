@@ -283,6 +283,31 @@ static bool rw_hint_valid(u64 hint)
 	}
 }
 
+static long fcntl_rw_hook(struct file *file, unsigned int cmd,
+			  unsigned long arg)
+{
+	u64 *argp = (u64 __user *)arg;
+	u64 flags;
+
+	switch (cmd) {
+	case F_GET_FILE_HOOK_FLAG:
+		flags = file->hook_flags;
+		if (copy_to_user(argp, &flags, sizeof(*argp)))
+			return -EFAULT;
+		return 0;
+	case F_SET_FILE_HOOK_FLAG:
+		if (copy_from_user(&flags, argp, sizeof(flags)))
+			return -EFAULT;
+
+		spin_lock(&file->f_lock);
+		file->hook_flags = flags;
+		spin_unlock(&file->f_lock);
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static long fcntl_rw_hint(struct file *file, unsigned int cmd,
 			  unsigned long arg)
 {
@@ -416,6 +441,10 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	case F_GET_RW_HINT:
 	case F_SET_RW_HINT:
 		err = fcntl_rw_hint(filp, cmd, arg);
+		break;
+	case F_SET_FILE_HOOK_FLAG:
+	case F_GET_FILE_HOOK_FLAG:
+		err = fcntl_rw_hook(filp, cmd, arg);
 		break;
 	default:
 		break;

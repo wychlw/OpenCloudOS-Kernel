@@ -546,6 +546,7 @@ struct sock {
 	struct rcu_head		sk_rcu;
 	netns_tracker		ns_tracker;
 	struct hlist_node	sk_bind2_node;
+	pid_t pid;
 
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);

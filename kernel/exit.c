@@ -76,6 +76,9 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/mmu_context.h>
+#include <linux/hook_frame.h>
+
+extern void data_release(struct kref *ref);
 
 /*
  * The default value should be high enough to not crash a system that randomly
@@ -867,6 +870,14 @@ void __noreturn do_exit(long code)
 	if (group_dead)
 		acct_process();
 	trace_sched_process_exit(tsk);
+
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	if (tsk->par_moni_info)
+		kref_put(&tsk->par_moni_info->refcount, data_release);
+	if (tsk->my_moni_info)
+		kref_put(&tsk->my_moni_info->refcount, data_release);
+	exit_hook_check(tsk, code);
+#endif
 
 	exit_sem(tsk);
 	exit_shm(tsk);

@@ -4,7 +4,7 @@
 #
 menuconfig TKERNEL
 	bool "Tencent Kernel Features"
-	default n
+	default y
 
 if TKERNEL
 
@@ -26,5 +26,17 @@ config TKERNEL_NETATOP
 config TKERNEL_SHIELD_MOUNTS
 	bool 'Shield mount'
 	default n
+
+config TKERNEL_SECURITY_MONITOR
+	bool "security monitor"
+	default y
+	help
+		Allow user to add security monitor
+
+config TKERNEL_AEGIS_MODULE
+	tristate "ONION aegis module"
+	default m
+	help
+		ONION aegis module
 
 endif

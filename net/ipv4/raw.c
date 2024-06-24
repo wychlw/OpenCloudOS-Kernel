@@ -75,6 +75,7 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/compat.h>
 #include <linux/uio.h>
+#include <linux/hook_frame.h>
 
 struct raw_frag_vec {
 	struct msghdr *msg;
@@ -100,6 +101,10 @@ int raw_hash_sk(struct sock *sk)
 	sock_set_flag(sk, SOCK_RCU_FREE);
 	spin_unlock(&h->lock);
 	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
+
+#ifdef CONFIG_SECURITY_MONITOR
+	sock_hook_check(sk);
+#endif
 
 	return 0;
 }
