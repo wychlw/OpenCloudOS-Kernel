@@ -220,6 +220,7 @@ enum hns3_nic_state {
 #define HNS3_CQ_MODE_CQE			0U
 
 #define HNS3_FD_QB_FORCE_CNT_MAX		20
+#define HNS3_RESCHED_BD_NUM			1024
 
 enum hns3_pkt_l2t_type {
 	HNS3_L2_TYPE_UNICAST,
