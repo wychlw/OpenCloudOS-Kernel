@@ -3762,8 +3762,10 @@ static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 		if (!swap) {
 			val = page_counter_read(&memcg->memory);
 #ifdef CONFIG_MEMCG_ZRAM
-			if (zram_memcg_nocharge)
+			if (zram_memcg_nocharge) {
 				val += memcg_page_state(memcg, MEMCG_ZRAM_B) / PAGE_SIZE;
+				val = min(val, min(totalram_pages() - 1, memcg->memory.max - 1));
+			}			
 #endif
 		} else
 			val = page_counter_read(&memcg->memsw);
