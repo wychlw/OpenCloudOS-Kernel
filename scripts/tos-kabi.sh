@@ -108,7 +108,7 @@ function check_kabi()
 {
 	local kabi_file=$1
 
-	./script/check-kabi -k ${kabi_file} -s Module.symvers
+	./scripts/check-kabi -k ${kabi_file} -s Module.symvers
 	if [ $? -ne 0 ]; then
 		printf "${RED}check KABI failed${END}\n"
 		return 1
