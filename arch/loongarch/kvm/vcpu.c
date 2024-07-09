@@ -1403,7 +1403,6 @@ static int _kvm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 
 	/* Control guest page CCA attribute */
 	change_csr_gcfg(CSR_GCFG_MATC_MASK, CSR_GCFG_MATC_ROOT);
-	kvm_make_request(KVM_REQ_RECORD_STEAL, vcpu);
 
 	/* Restore hardware PMU CSRs */
 	kvm_restore_pmu(vcpu);
