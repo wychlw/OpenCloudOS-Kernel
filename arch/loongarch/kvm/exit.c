@@ -259,12 +259,9 @@ static int kvm_emu_cpucfg(struct kvm_vcpu *vcpu, larch_inst inst)
 			vcpu->arch.gprs[rd] = 0;
 		break;
 	case CPUCFG_KVM_FEATURE:
-		ret = 0;
-		if ((plv & CSR_CRMD_PLV) == PLV_KERN) {
-			ret = KVM_FEATURE_PV_IPI;
-			if (sched_info_on())
-				ret |= KVM_FEATURE_STEAL_TIME;
-		}
+		ret = KVM_FEATURE_IPI;
+		if (kvm_pvtime_supported())
+			ret |= KVM_FEATURE_STEAL_TIME;
 		vcpu->arch.gprs[rd] = ret;
 		break;
 	default:
@@ -742,6 +739,31 @@ static int kvm_handle_fpu_disabled(struct kvm_vcpu *vcpu)
 	return RESUME_GUEST;
 }
 
+static long kvm_save_notify(struct kvm_vcpu *vcpu)
+{
+	unsigned long id, data;
+
+	id   = kvm_read_reg(vcpu, LOONGARCH_GPR_A1);
+	data = kvm_read_reg(vcpu, LOONGARCH_GPR_A2);
+	switch (id) {
+	case BIT(KVM_FEATURE_STEAL_TIME):
+		if (data & ~(KVM_STEAL_PHYS_MASK | KVM_STEAL_PHYS_VALID))
+			return KVM_HCALL_INVALID_PARAMETER;
+
+		vcpu->arch.st.guest_addr = data;
+		if (!(data & KVM_STEAL_PHYS_VALID))
+			return 0;
+
+		vcpu->arch.st.last_steal = current->sched_info.run_delay;
+		kvm_make_request(KVM_REQ_STEAL_UPDATE, vcpu);
+		return 0;
+	default:
+		return KVM_HCALL_INVALID_CODE;
+	};
+
+	return KVM_HCALL_INVALID_CODE;
+};
+
 /*
  * kvm_handle_lsx_disabled() - Guest used LSX while disabled in root.
  * @vcpu:      Virtual CPU context.
@@ -821,25 +843,6 @@ static void kvm_handle_service(struct kvm_vcpu *vcpu)
 	kvm_write_reg(vcpu, LOONGARCH_GPR_A0, ret);
 }
 
-static int kvm_save_notify(struct kvm_vcpu *vcpu)
-{
-	unsigned long id, data;
-
-	id = vcpu->arch.gprs[LOONGARCH_GPR_A1];
-	data = vcpu->arch.gprs[LOONGARCH_GPR_A2];
-	switch (id) {
-	case KVM_FEATURE_STEAL_TIME:
-		vcpu->arch.st.guest_addr = data;
-		vcpu->arch.st.last_steal = current->sched_info.run_delay;
-		kvm_make_request(KVM_REQ_RECORD_STEAL, vcpu);
-		break;
-	default:
-		break;
-	};
-
-	return 0;
-};
-
 static int kvm_handle_hypercall(struct kvm_vcpu *vcpu)
 {
 	int ret;
@@ -865,7 +868,7 @@ static int kvm_handle_hypercall(struct kvm_vcpu *vcpu)
 		fallthrough;
 	default:
 		/* Treat it as noop intruction, only set return value */
-		vcpu->arch.gprs[LOONGARCH_GPR_A0] = KVM_HCALL_INVALID_CODE;
+		kvm_write_reg(vcpu, LOONGARCH_GPR_A0, KVM_HCALL_INVALID_CODE);
 		break;
 	}
 

@@ -35,6 +35,7 @@ struct kvm_steal_time {
 	__u32 pad[12];
 };
 
+
 /*
  * Hypercall interface for KVM hypervisor
  *
