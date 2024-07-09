@@ -8,10 +8,10 @@
 #include <linux/reboot.h>
 #include <linux/static_call.h>
 
+static int has_steal_clock;
 struct static_key paravirt_steal_enabled;
 struct static_key paravirt_steal_rq_enabled;
 static DEFINE_PER_CPU(struct kvm_steal_time, steal_time) __aligned(64);
-static int has_steal_clock;
 
 static u64 native_steal_clock(int cpu)
 {
@@ -69,6 +69,62 @@ static int pv_register_steal_time(void)
 	addr |= KVM_STEAL_PHYS_VALID;
 	kvm_hypercall2(KVM_HCALL_FUNC_NOTIFY, KVM_FEATURE_STEAL_TIME, addr);
 	return 0;
+}
+
+static bool steal_acc = true;
+
+static int __init parse_no_stealacc(char *arg)
+{
+	steal_acc = false;
+	return 0;
+}
+early_param("no-steal-acc", parse_no_stealacc);
+
+static u64 paravt_steal_clock(int cpu)
+{
+	int version;
+	u64 steal;
+	struct kvm_steal_time *src;
+
+	src = &per_cpu(steal_time, cpu);
+	do {
+
+		version = src->version;
+		virt_rmb(); /* Make sure that the version is read before the steal */
+		steal = src->steal;
+		virt_rmb(); /* Make sure that the steal is read before the next version */
+
+	} while ((version & 1) || (version != src->version));
+
+	return steal;
+}
+
+static bool steal_acc = true;
+
+static int __init parse_no_stealacc(char *arg)
+{
+	steal_acc = false;
+	return 0;
+}
+early_param("no-steal-acc", parse_no_stealacc);
+
+static u64 paravt_steal_clock(int cpu)
+{
+	int version;
+	u64 steal;
+	struct kvm_steal_time *src;
+
+	src = &per_cpu(steal_time, cpu);
+	do {
+
+		version = src->version;
+		virt_rmb(); /* Make sure that the version is read before the steal */
+		steal = src->steal;
+		virt_rmb(); /* Make sure that the steal is read before the next version */
+
+	} while ((version & 1) || (version != src->version));
+
+	return steal;
 }
 
 #ifdef CONFIG_SMP
@@ -277,5 +333,233 @@ int __init pv_time_init(void)
 		pr_err("Failed to install cpu hotplug callbacks\n");
 #endif
 	pr_info("Using stolen time PV\n");
+	return 0;
+}
+
+static int pv_enable_steal_time(void)
+{
+	int cpu = smp_processor_id();
+	unsigned long addr;
+	struct kvm_steal_time *st;
+
+	if (!has_steal_clock)
+		return -EPERM;
+
+	st = &per_cpu(steal_time, cpu);
+	addr = per_cpu_ptr_to_phys(st);
+
+	/* The whole structure kvm_steal_time should be in one page */
+	if (PFN_DOWN(addr) != PFN_DOWN(addr + sizeof(*st))) {
+		pr_warn("Illegal PV steal time addr %lx\n", addr);
+		return -EFAULT;
+	}
+
+	addr |= KVM_STEAL_PHYS_VALID;
+	kvm_hypercall2(KVM_HCALL_FUNC_NOTIFY, KVM_FEATURE_STEAL_TIME, addr);
+
+	return 0;
+}
+
+static void pv_disable_steal_time(void)
+{
+	if (has_steal_clock)
+		kvm_hypercall2(KVM_HCALL_FUNC_NOTIFY, KVM_FEATURE_STEAL_TIME, 0);
+}
+
+#ifdef CONFIG_SMP
+static int pv_time_cpu_online(unsigned int cpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pv_enable_steal_time();
+	local_irq_restore(flags);
+
+	return 0;
+}
+
+static int pv_time_cpu_down_prepare(unsigned int cpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pv_disable_steal_time();
+	local_irq_restore(flags);
+
+	return 0;
+}
+#endif
+
+static void pv_cpu_reboot(void *unused)
+{
+	pv_disable_steal_time();
+}
+
+static int pv_reboot_notify(struct notifier_block *nb, unsigned long code, void *unused)
+{
+	on_each_cpu(pv_cpu_reboot, NULL, 1);
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block pv_reboot_nb = {
+	.notifier_call  = pv_reboot_notify,
+};
+
+int __init pv_time_init(void)
+{
+	int r, feature;
+
+	if (!cpu_has_hypervisor)
+		return 0;
+	if (!kvm_para_available())
+		return 0;
+
+	feature = read_cpucfg(CPUCFG_KVM_FEATURE);
+	if (!(feature & KVM_FEATURE_STEAL_TIME))
+		return 0;
+
+	has_steal_clock = 1;
+	r = pv_enable_steal_time();
+	if (r < 0) {
+		has_steal_clock = 0;
+		return 0;
+	}
+	register_reboot_notifier(&pv_reboot_nb);
+
+#ifdef CONFIG_SMP
+	r = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
+				      "loongarch/pv_time:online",
+				      pv_time_cpu_online, pv_time_cpu_down_prepare);
+	if (r < 0) {
+		has_steal_clock = 0;
+		pr_err("Failed to install cpu hotplug callbacks\n");
+		return r;
+	}
+#endif
+
+	static_call_update(pv_steal_clock, paravt_steal_clock);
+
+	static_key_slow_inc(&paravirt_steal_enabled);
+#ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
+	if (steal_acc)
+		static_key_slow_inc(&paravirt_steal_rq_enabled);
+#endif
+
+	pr_info("Using paravirt steal-time\n");
+
+	return 0;
+}
+
+static int pv_enable_steal_time(void)
+{
+	int cpu = smp_processor_id();
+	unsigned long addr;
+	struct kvm_steal_time *st;
+
+	if (!has_steal_clock)
+		return -EPERM;
+
+	st = &per_cpu(steal_time, cpu);
+	addr = per_cpu_ptr_to_phys(st);
+
+	/* The whole structure kvm_steal_time should be in one page */
+	if (PFN_DOWN(addr) != PFN_DOWN(addr + sizeof(*st))) {
+		pr_warn("Illegal PV steal time addr %lx\n", addr);
+		return -EFAULT;
+	}
+
+	addr |= KVM_STEAL_PHYS_VALID;
+	kvm_hypercall2(KVM_HCALL_FUNC_NOTIFY, KVM_FEATURE_STEAL_TIME, addr);
+
+	return 0;
+}
+
+static void pv_disable_steal_time(void)
+{
+	if (has_steal_clock)
+		kvm_hypercall2(KVM_HCALL_FUNC_NOTIFY, KVM_FEATURE_STEAL_TIME, 0);
+}
+
+#ifdef CONFIG_SMP
+static int pv_time_cpu_online(unsigned int cpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pv_enable_steal_time();
+	local_irq_restore(flags);
+
+	return 0;
+}
+
+static int pv_time_cpu_down_prepare(unsigned int cpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pv_disable_steal_time();
+	local_irq_restore(flags);
+
+	return 0;
+}
+#endif
+
+static void pv_cpu_reboot(void *unused)
+{
+	pv_disable_steal_time();
+}
+
+static int pv_reboot_notify(struct notifier_block *nb, unsigned long code, void *unused)
+{
+	on_each_cpu(pv_cpu_reboot, NULL, 1);
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block pv_reboot_nb = {
+	.notifier_call  = pv_reboot_notify,
+};
+
+int __init pv_time_init(void)
+{
+	int r, feature;
+
+	if (!cpu_has_hypervisor)
+		return 0;
+	if (!kvm_para_available())
+		return 0;
+
+	feature = read_cpucfg(CPUCFG_KVM_FEATURE);
+	if (!(feature & KVM_FEATURE_STEAL_TIME))
+		return 0;
+
+	has_steal_clock = 1;
+	r = pv_enable_steal_time();
+	if (r < 0) {
+		has_steal_clock = 0;
+		return 0;
+	}
+	register_reboot_notifier(&pv_reboot_nb);
+
+#ifdef CONFIG_SMP
+	r = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
+				      "loongarch/pv_time:online",
+				      pv_time_cpu_online, pv_time_cpu_down_prepare);
+	if (r < 0) {
+		has_steal_clock = 0;
+		pr_err("Failed to install cpu hotplug callbacks\n");
+		return r;
+	}
+#endif
+
+	static_call_update(pv_steal_clock, paravt_steal_clock);
+
+	static_key_slow_inc(&paravirt_steal_enabled);
+#ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
+	if (steal_acc)
+		static_key_slow_inc(&paravirt_steal_rq_enabled);
+#endif
+
+	pr_info("Using paravirt steal-time\n");
+
 	return 0;
 }
