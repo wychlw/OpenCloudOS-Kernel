@@ -1,3 +1,6 @@
 [submodule "kernel/tkernel/outtree/emm"]
 	path = kernel/tkernel/outtree/emm
 	url = git@git.woa.com:tlinux/EMM/kmod-emm.git
+[submodule "drivers/thirdparty/release-drivers"]
+	path = drivers/thirdparty/release-drivers
+	url = https://gitee.com/OpenCloudOS/release-drivers.git
