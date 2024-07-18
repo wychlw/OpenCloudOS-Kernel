@@ -1134,6 +1134,7 @@ ln -sf %{debuginfo_dir}/lib/modules/$KernUnameR/vmlinux %{buildroot}/boot/vmlinu
 rm -rf %{buildroot}%{debuginfo_dir}/usr/src
 
 %undefine __debug_install_post
+%global __debug_install_post %{nil}
 
 ###### Finally, module sign and compress ######
 %if %{with_modsign} && %{with_core}
