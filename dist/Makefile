@@ -118,8 +118,8 @@ ifeq ($(MODSIGN), 0)
 override DISABLED := modsign $(DISABLED)
 endif
 
-# Disable private key pkg by default
-KEYPKG=0
+# Enable private key pkg by default
+KEYPKG=1
 ifeq ($(KEYPKG), 0)
 override DISABLED := keypkg $(DISABLED)
 endif
