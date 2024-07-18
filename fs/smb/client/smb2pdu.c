@@ -4840,7 +4840,7 @@ smb2_async_writev(struct cifs_writedata *wdata,
 	struct cifs_io_parms *io_parms = NULL;
 	int credit_request;
 
-	if (!wdata->server || wdata->replay)
+	if (!wdata->server)
 		server = wdata->server = cifs_pick_channel(tcon->ses);
 
 	/*
