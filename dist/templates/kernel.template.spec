@@ -597,6 +597,11 @@ case $KernUnameR in
 
 # Prepare Kernel config
 BuildConfig() {
+	# Prepare git sub-module, copy thirdparty drivers to override kernel native drivers
+	pushd $_KernSrc/drivers/thirdparty
+	./copy-drivers.sh
+	popd
+
 	mkdir -p $_KernBuild
 	pushd $_KernBuild
 	cp $1 .config

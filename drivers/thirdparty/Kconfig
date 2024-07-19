@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+menu "Thirdparty Drivers"
+
+config THIRDPARTY_BNXT
+	bool
+	default y
+
+endmenu
