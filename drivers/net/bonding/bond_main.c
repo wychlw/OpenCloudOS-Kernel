@@ -1595,8 +1595,10 @@ static rx_handler_result_t bond_handle_frame(struct sk_buff **pskb)
 	}
 
 	skb->dev = bond->dev;
-	if (skb->in_dev == orig_dev)
-		skb->in_dev = skb->dev;
+	if (skb->in_dev == (u64)orig_dev) {
+		skb->in_dev = (u64)skb->dev;
+		skb->indev_ifindex = skb->dev->ifindex;
+	}
 
 	if (BOND_MODE(bond) == BOND_MODE_ALB &&
 	    netif_is_bridge_port(bond->dev) &&

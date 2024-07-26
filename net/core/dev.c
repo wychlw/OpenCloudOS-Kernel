@@ -5357,8 +5357,9 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	trace_netif_receive_skb(skb);
 
 	orig_dev = skb->dev;
-	if (orig_dev->dev.parent && !skb->in_dev) {
-		skb->in_dev = orig_dev;
+	if (orig_dev->dev.parent && skb->in_dev != (u64)orig_dev) {
+		skb->in_dev = (u64)orig_dev;
+		skb->indev_ifindex = orig_dev->ifindex;
 		skb->physical_flag = NETDEV_PHYSICAL_MAGIC;
 	}
 

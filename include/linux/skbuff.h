@@ -854,7 +854,8 @@ struct sk_buff {
 				 */
 				unsigned long		dev_scratch;
 			};
-			struct net_device	*in_dev;
+			u64		in_dev;
+			int		indev_ifindex;
 		};
 		struct rb_node		rbnode; /* used in netem, ip4 defrag, and tcp stack */
 		struct list_head	list;
