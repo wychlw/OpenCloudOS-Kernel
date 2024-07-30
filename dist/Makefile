@@ -14,10 +14,16 @@ endif
 ### Downstream marker, update this when forking to another downstream
 KDIST =
 
+ifeq ($(KDIST),oc9)
 ### Vendor mark
 VENDOR = opencloudos
 VENDOR_CAPITALIZED = OpenCloudOS
 URL = https://github.com/OpenCloudOS/OpenCloudOS-Kernel-Stream
+else
+VENDOR = tencentos
+VENDOR_CAPITALIZED = TencentOS
+URL = https://git.woa.com/tlinux/tkernel5
+endif
 
 ### Get native arch for binary build by default
 NATIVE_ARCH := $(shell uname -m | sed -e 's/amd64/x86_64/;s/arm64/aarch64/;s/*86$$/x86/')
