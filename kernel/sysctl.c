@@ -98,6 +98,7 @@ extern int sysctl_qos_mbuf_enable;
 
 #ifdef CONFIG_MEMCG
 extern int sysctl_vm_memory_qos;
+extern int sysctl_vm_use_priority_oom;
 extern int sysctl_vm_qos_highest_reclaim_prio;
 extern unsigned int sysctl_vm_qos_prio_reclaim_ratio;
 extern unsigned int sysctl_clean_dying_memcg_async;
@@ -2997,6 +2998,15 @@ static struct ctl_table vm_table[] = {
 		.maxlen			= sizeof(int),
 		.mode			= 0644,
 		.proc_handler	= memory_qos_sysctl_handler,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "use_priority_oom",
+		.data			= &sysctl_vm_use_priority_oom,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= proc_dointvec_minmax,
 		.extra1			= SYSCTL_ZERO,
 		.extra2			= SYSCTL_ONE,
 	},

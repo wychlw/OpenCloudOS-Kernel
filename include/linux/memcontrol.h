@@ -31,6 +31,7 @@ struct mm_struct;
 struct kmem_cache;
 struct oom_control;
 
+extern int sysctl_vm_use_priority_oom;
 extern int kclean_dying_memcg_run(void);
 extern unsigned int sysctl_clean_dying_memcg_threshold;
 extern void kclean_dying_memcg_stop(void);
@@ -1018,7 +1019,7 @@ static inline bool root_memcg_use_priority_oom(void)
 	if (mem_cgroup_disabled())
 		return false;
 
-	if (root_mem_cgroup->use_priority_oom)
+	if (root_mem_cgroup->use_priority_oom || sysctl_vm_use_priority_oom)
 		return true;
 
 	return false;

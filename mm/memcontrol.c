@@ -118,6 +118,7 @@ static DECLARE_WAIT_QUEUE_HEAD(memcg_cgwb_frn_waitq);
 #define PAGECACHE_MAX_RATIO_MAX		100
 
 int sysctl_vm_memory_qos;
+int sysctl_vm_use_priority_oom;
 /* default has none reclaim priority */
 int sysctl_vm_qos_highest_reclaim_prio = CGROUP_PRIORITY_MAX;
 
@@ -1552,6 +1553,8 @@ void mem_cgroup_oom_select_bad_process(struct oom_control *oc)
 
 	if (!sysctl_vm_memory_qos)
 		oc->priority_select = false;
+	else if (sysctl_vm_use_priority_oom)
+		oc->priority_select = true;
 	else
 		oc->priority_select = memcg->use_priority_oom;
 
