@@ -2159,6 +2159,8 @@ static bool check_rq_for_timeouts(struct rq *rq)
 	struct task_struct *p;
 	struct rq_flags rf;
 	bool timed_out = false;
+	bool log_wo_exit = false;
+	u32 dur_ms;
 
 	rq_lock_irqsave(rq, &rf);
 	list_for_each_entry(p, &rq->scx.watchdog_list, scx.watchdog_node) {
@@ -2166,7 +2168,7 @@ static bool check_rq_for_timeouts(struct rq *rq)
 
 		if (unlikely(time_after(jiffies,
 					last_runnable + scx_watchdog_timeout))) {
-			u32 dur_ms = jiffies_to_msecs(jiffies - last_runnable);
+			dur_ms = jiffies_to_msecs(jiffies - last_runnable);
 
 			if (sysctl_scx_hung_exit)
 				scx_ops_error_kind(SCX_EXIT_ERROR_STALL,
@@ -2175,17 +2177,20 @@ static bool check_rq_for_timeouts(struct rq *rq)
 						   dur_ms / 1000,
 						   dur_ms % 1000);
 			else
-				pr_warn_ratelimited(
-					"%s[%d] failed to run for %u.%03us\n",
-					p->comm, p->pid,
-					dur_ms / 1000,
-					dur_ms % 1000);
+				log_wo_exit = true;
 
 			timed_out = true;
 			break;
 		}
 	}
 	rq_unlock_irqrestore(rq, &rf);
+
+	if (log_wo_exit)
+		pr_warn_ratelimited(
+				"%s[%d] failed to run for %u.%03us\n",
+				p->comm, p->pid,
+				dur_ms / 1000,
+				dur_ms % 1000);
 
 	return timed_out;
 }
