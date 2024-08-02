@@ -280,7 +280,7 @@ static int vpsp_del_vid(void)
 			--g_vpsp_vid_num;
 			pr_info("PSP: delete vid %d, by pid %d, total vid num is %d\n",
 				g_vpsp_context_array[i].vid, cur_pid, g_vpsp_vid_num);
-			memcpy(&g_vpsp_context_array[i], &g_vpsp_context_array[i + 1],
+			memmove(&g_vpsp_context_array[i], &g_vpsp_context_array[i + 1],
 				sizeof(struct vpsp_context) * (g_vpsp_vid_num - i));
 			ret = 0;
 			goto end;
