@@ -9693,51 +9693,6 @@ void kvm_x86_vendor_exit(void)
 }
 EXPORT_SYMBOL_GPL(kvm_x86_vendor_exit);
 
-static int __kvm_emulate_halt(struct kvm_vcpu *vcpu, int state, int reason)
-{
-	/*
-	 * The vCPU has halted, e.g. executed HLT.  Update the run state if the
-	 * local APIC is in-kernel, the run loop will detect the non-runnable
-	 * state and halt the vCPU.  Exit to userspace if the local APIC is
-	 * managed by userspace, in which case userspace is responsible for
-	 * handling wake events.
-	 */
-	++vcpu->stat.halt_exits;
-	if (lapic_in_kernel(vcpu)) {
-		vcpu->arch.mp_state = state;
-		return 1;
-	} else {
-		vcpu->run->exit_reason = reason;
-		return 0;
-	}
-}
-
-int kvm_emulate_halt_noskip(struct kvm_vcpu *vcpu)
-{
-	return __kvm_emulate_halt(vcpu, KVM_MP_STATE_HALTED, KVM_EXIT_HLT);
-}
-EXPORT_SYMBOL_GPL(kvm_emulate_halt_noskip);
-
-int kvm_emulate_halt(struct kvm_vcpu *vcpu)
-{
-	int ret = kvm_skip_emulated_instruction(vcpu);
-	/*
-	 * TODO: we might be squashing a GUESTDBG_SINGLESTEP-triggered
-	 * KVM_EXIT_DEBUG here.
-	 */
-	return kvm_emulate_halt_noskip(vcpu) && ret;
-}
-EXPORT_SYMBOL_GPL(kvm_emulate_halt);
-
-int kvm_emulate_ap_reset_hold(struct kvm_vcpu *vcpu)
-{
-	int ret = kvm_skip_emulated_instruction(vcpu);
-
-	return __kvm_emulate_halt(vcpu, KVM_MP_STATE_AP_RESET_HOLD,
-					KVM_EXIT_AP_RESET_HOLD) && ret;
-}
-EXPORT_SYMBOL_GPL(kvm_emulate_ap_reset_hold);
-
 #ifdef CONFIG_X86_64
 static int kvm_pv_clock_pairing(struct kvm_vcpu *vcpu, gpa_t paddr,
 			        unsigned long clock_type)
@@ -10959,6 +10914,72 @@ out:
 	return r;
 }
 
+static bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
+{
+	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
+		!vcpu->arch.apf.halted);
+}
+
+static inline bool kvm_guest_apic_has_interrupt(struct kvm_vcpu *vcpu)
+{
+	return (is_guest_mode(vcpu) &&
+		static_call(kvm_x86_guest_apic_has_interrupt)(vcpu));
+}
+
+static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
+{
+	if (!list_empty_careful(&vcpu->async_pf.done))
+		return true;
+
+	if (kvm_apic_has_pending_init_or_sipi(vcpu) &&
+	    kvm_apic_init_sipi_allowed(vcpu))
+		return true;
+
+	if (vcpu->arch.pv.pv_unhalted)
+		return true;
+
+	if (kvm_is_exception_pending(vcpu))
+		return true;
+
+	if (kvm_test_request(KVM_REQ_NMI, vcpu) ||
+	    (vcpu->arch.nmi_pending &&
+	     static_call(kvm_x86_nmi_allowed)(vcpu, false)))
+		return true;
+
+#ifdef CONFIG_KVM_SMM
+	if (kvm_test_request(KVM_REQ_SMI, vcpu) ||
+	    (vcpu->arch.smi_pending &&
+	     static_call(kvm_x86_smi_allowed)(vcpu, false)))
+		return true;
+#endif
+
+	if (kvm_test_request(KVM_REQ_PMI, vcpu))
+		return true;
+
+	if (kvm_arch_interrupt_allowed(vcpu) &&
+	    (kvm_cpu_has_interrupt(vcpu) ||
+	    kvm_guest_apic_has_interrupt(vcpu)))
+		return true;
+
+	if (kvm_hv_has_stimer_pending(vcpu))
+		return true;
+
+	if (is_guest_mode(vcpu) &&
+	    kvm_x86_ops.nested_ops->has_events &&
+	    kvm_x86_ops.nested_ops->has_events(vcpu, false))
+		return true;
+
+	if (kvm_xen_has_pending_events(vcpu))
+		return true;
+
+	return false;
+}
+
+int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
+{
+	return kvm_vcpu_running(vcpu) || kvm_vcpu_has_events(vcpu);
+}
+
 /* Called within kvm->srcu read side.  */
 static inline int vcpu_block(struct kvm_vcpu *vcpu)
 {
@@ -11027,12 +11048,6 @@ static inline int vcpu_block(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
-static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
-{
-	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
-		!vcpu->arch.apf.halted);
-}
-
 /* Called within kvm->srcu read side.  */
 static int vcpu_run(struct kvm_vcpu *vcpu)
 {
@@ -11082,6 +11097,80 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 	}
 
 	return r;
+}
+
+static int __kvm_emulate_halt(struct kvm_vcpu *vcpu, int state, int reason)
+{
+	/*
+	 * The vCPU has halted, e.g. executed HLT.  Update the run state if the
+	 * local APIC is in-kernel, the run loop will detect the non-runnable
+	 * state and halt the vCPU.  Exit to userspace if the local APIC is
+	 * managed by userspace, in which case userspace is responsible for
+	 * handling wake events.
+	 */
+	++vcpu->stat.halt_exits;
+	if (lapic_in_kernel(vcpu)) {
+		vcpu->arch.mp_state = state;
+		return 1;
+	} else {
+		vcpu->run->exit_reason = reason;
+		return 0;
+	}
+}
+
+int kvm_emulate_halt_noskip(struct kvm_vcpu *vcpu)
+{
+	return __kvm_emulate_halt(vcpu, KVM_MP_STATE_HALTED, KVM_EXIT_HLT);
+}
+EXPORT_SYMBOL_GPL(kvm_emulate_halt_noskip);
+
+int kvm_emulate_halt(struct kvm_vcpu *vcpu)
+{
+	int ret = kvm_skip_emulated_instruction(vcpu);
+	/*
+	 * TODO: we might be squashing a GUESTDBG_SINGLESTEP-triggered
+	 * KVM_EXIT_DEBUG here.
+	 */
+	return kvm_emulate_halt_noskip(vcpu) && ret;
+}
+EXPORT_SYMBOL_GPL(kvm_emulate_halt);
+
+int kvm_emulate_ap_reset_hold(struct kvm_vcpu *vcpu)
+{
+	int ret = kvm_skip_emulated_instruction(vcpu);
+
+	return __kvm_emulate_halt(vcpu, KVM_MP_STATE_AP_RESET_HOLD,
+					KVM_EXIT_AP_RESET_HOLD) && ret;
+}
+EXPORT_SYMBOL_GPL(kvm_emulate_ap_reset_hold);
+
+bool kvm_arch_dy_has_pending_interrupt(struct kvm_vcpu *vcpu)
+{
+	if (kvm_vcpu_apicv_active(vcpu) &&
+	    static_call(kvm_x86_dy_apicv_has_pending_interrupt)(vcpu))
+		return true;
+
+	return false;
+}
+
+bool kvm_arch_vcpu_preempted_in_kernel(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.preempted_in_kernel;
+}
+
+bool kvm_arch_dy_runnable(struct kvm_vcpu *vcpu)
+{
+	if (READ_ONCE(vcpu->arch.pv.pv_unhalted))
+		return true;
+
+	if (kvm_test_request(KVM_REQ_NMI, vcpu) ||
+#ifdef CONFIG_KVM_SMM
+		kvm_test_request(KVM_REQ_SMI, vcpu) ||
+#endif
+		 kvm_test_request(KVM_REQ_EVENT, vcpu))
+		return true;
+
+	return kvm_arch_dy_has_pending_interrupt(vcpu);
 }
 
 static inline int complete_emulated_io(struct kvm_vcpu *vcpu)
@@ -12906,90 +12995,6 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 	/* Free the arrays associated with the old memslot. */
 	if (change == KVM_MR_MOVE)
 		kvm_arch_free_memslot(kvm, old);
-}
-
-static inline bool kvm_guest_apic_has_interrupt(struct kvm_vcpu *vcpu)
-{
-	return (is_guest_mode(vcpu) &&
-		static_call(kvm_x86_guest_apic_has_interrupt)(vcpu));
-}
-
-static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
-{
-	if (!list_empty_careful(&vcpu->async_pf.done))
-		return true;
-
-	if (kvm_apic_has_pending_init_or_sipi(vcpu) &&
-	    kvm_apic_init_sipi_allowed(vcpu))
-		return true;
-
-	if (vcpu->arch.pv.pv_unhalted)
-		return true;
-
-	if (kvm_is_exception_pending(vcpu))
-		return true;
-
-	if (kvm_test_request(KVM_REQ_NMI, vcpu) ||
-	    (vcpu->arch.nmi_pending &&
-	     static_call(kvm_x86_nmi_allowed)(vcpu, false)))
-		return true;
-
-#ifdef CONFIG_KVM_SMM
-	if (kvm_test_request(KVM_REQ_SMI, vcpu) ||
-	    (vcpu->arch.smi_pending &&
-	     static_call(kvm_x86_smi_allowed)(vcpu, false)))
-		return true;
-#endif
-
-	if (kvm_test_request(KVM_REQ_PMI, vcpu))
-		return true;
-
-	if (kvm_arch_interrupt_allowed(vcpu) &&
-	    (kvm_cpu_has_interrupt(vcpu) ||
-	    kvm_guest_apic_has_interrupt(vcpu)))
-		return true;
-
-	if (kvm_hv_has_stimer_pending(vcpu))
-		return true;
-
-	if (is_guest_mode(vcpu) &&
-	    kvm_x86_ops.nested_ops->has_events &&
-	    kvm_x86_ops.nested_ops->has_events(vcpu, false))
-		return true;
-
-	if (kvm_xen_has_pending_events(vcpu))
-		return true;
-
-	return false;
-}
-
-int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
-{
-	return kvm_vcpu_running(vcpu) || kvm_vcpu_has_events(vcpu);
-}
-
-bool kvm_arch_dy_has_pending_interrupt(struct kvm_vcpu *vcpu)
-{
-	if (kvm_vcpu_apicv_active(vcpu) &&
-	    static_call(kvm_x86_dy_apicv_has_pending_interrupt)(vcpu))
-		return true;
-
-	return false;
-}
-
-bool kvm_arch_dy_runnable(struct kvm_vcpu *vcpu)
-{
-	if (READ_ONCE(vcpu->arch.pv.pv_unhalted))
-		return true;
-
-	if (kvm_test_request(KVM_REQ_NMI, vcpu) ||
-#ifdef CONFIG_KVM_SMM
-		kvm_test_request(KVM_REQ_SMI, vcpu) ||
-#endif
-		 kvm_test_request(KVM_REQ_EVENT, vcpu))
-		return true;
-
-	return kvm_arch_dy_has_pending_interrupt(vcpu);
 }
 
 bool kvm_arch_vcpu_in_kernel(struct kvm_vcpu *vcpu)
