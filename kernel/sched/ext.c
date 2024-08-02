@@ -200,6 +200,7 @@ struct scx_task_iter {
 
 #define SCX_HAS_OP(op)	static_branch_likely(&scx_has_op[SCX_OP_IDX(op)])
 
+static u32 sysctl_cpu_qos_enabled;
 static u32 sysctl_scx_hung_exit = 1;
 
 /* if the highest set bit is N, return a mask with bits [N+1, 31] set */
@@ -2977,9 +2978,27 @@ static void scx_ops_fallback_enqueue(struct task_struct *p, u64 enq_flags)
 
 static void scx_ops_fallback_dispatch(s32 cpu, struct task_struct *prev) {}
 
+static int sysctl_cpu_qos_handler(struct ctl_table *table, int write,
+                                  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	if (write)
+		return -EPERM;
+	else
+		return proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+}
+
 static struct ctl_table_header *scx_sysctl_table_hdr;
 
 static struct ctl_table scx_sysctl_table[] = {
+	{
+		.procname	= "cpu_qos",
+		.data		= &sysctl_cpu_qos_enabled,
+		.maxlen		= sizeof(u32),
+		.mode		= 0644,
+		.proc_handler	= &sysctl_cpu_qos_handler,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
 	{
 		.procname	= "scx_hung_exit",
 		.data		= &sysctl_scx_hung_exit,
@@ -3165,6 +3184,8 @@ forward_progress_guaranteed:
 	static_branch_disable_cpuslocked(&scx_ops_cpu_preempt);
 	static_branch_disable_cpuslocked(&scx_builtin_idle_enabled);
 	synchronize_rcu();
+
+	sysctl_cpu_qos_enabled = 0;
 
 	scx_cgroup_exit();
 
@@ -3388,6 +3409,8 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 		goto err_disable_unlock;
 
 	static_branch_enable_cpuslocked(&__scx_ops_enabled);
+
+	sysctl_cpu_qos_enabled = 1;
 
 	/*
 	 * Enable ops for every task. Fork is excluded by scx_fork_rwsem
