@@ -310,6 +310,7 @@ static int __init proc_stat_init(void)
 	proc_create("stat", 0, NULL, &stat_proc_ops);
 #ifdef CONFIG_SCHED_CLASS_EXT
 	proc_create("scx_stat", 0, NULL, &scx_stat_proc_ops);
+	proc_create("bt_stat", 0, NULL, &scx_stat_proc_ops);
 #endif
 	return 0;
 }
