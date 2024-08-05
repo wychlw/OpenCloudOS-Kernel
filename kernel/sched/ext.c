@@ -479,6 +479,17 @@ scx_task_iter_next_filtered_locked(struct scx_task_iter *iter)
 	return p;
 }
 
+static bool scx_task_iter_rq_unlock(struct scx_task_iter *iter)
+{
+	if (iter->locked) {
+		task_rq_unlock(iter->rq, iter->locked, &iter->rf);
+		iter->locked = NULL;
+		return true;
+	} else {
+		return false;
+	}
+}
+
 static enum scx_ops_enable_state scx_ops_enable_state(void)
 {
 	return atomic_read(&scx_ops_enable_state_var);
@@ -3031,6 +3042,7 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 	struct scx_dispatch_q *dsq;
 	const char *reason;
 	int i, cpu, kind;
+	bool last_scx_switch_all;
 
 	kind = atomic_read(&scx_exit_kind);
 	while (true) {
@@ -3143,6 +3155,7 @@ forward_progress_guaranteed:
 	mutex_lock(&scx_ops_enable_mutex);
 
 	static_branch_disable(&__scx_switched_all);
+	last_scx_switch_all = READ_ONCE(scx_switching_all);
 	WRITE_ONCE(scx_switching_all, false);
 
 	/* avoid racing against fork and cgroup changes */
@@ -3171,6 +3184,19 @@ forward_progress_guaranteed:
 			check_class_changed(task_rq(p), p, old_class, p->prio);
 
 		scx_ops_disable_task(p);
+
+		if (alive && !last_scx_switch_all &&
+				!(p->flags & (PF_KTHREAD | PF_USER_WORKER)) &&
+				old_class == &ext_sched_class &&
+				p->sched_class != old_class) {
+
+			scx_task_iter_rq_unlock(&sti);
+			spin_unlock_irq(&scx_tasks_lock);
+			do_send_sig_info(SIGKILL, SEND_SIG_PRIV, p, PIDTYPE_TGID);
+			pr_err("scx: Unexpected scheduler unplug found, killed scx task %d (%s)\n",
+					task_pid_nr(p), p->comm);
+			spin_lock_irq(&scx_tasks_lock);
+		}
 	}
 	scx_task_iter_exit(&sti);
 	spin_unlock_irq(&scx_tasks_lock);
