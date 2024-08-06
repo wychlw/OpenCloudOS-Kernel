@@ -3076,8 +3076,8 @@ forward_progress_guaranteed:
 	WRITE_ONCE(scx_switching_all, false);
 
 	/* avoid racing against fork and cgroup changes */
-	cpus_read_lock();
 	percpu_down_write(&scx_fork_rwsem);
+	cpus_read_lock();
 	scx_cgroup_lock();
 
 	spin_lock_irq(&scx_tasks_lock);
@@ -3118,8 +3118,8 @@ forward_progress_guaranteed:
 	scx_cgroup_exit();
 
 	scx_cgroup_unlock();
-	percpu_up_write(&scx_fork_rwsem);
 	cpus_read_unlock();
+	percpu_up_write(&scx_fork_rwsem);
 
 	if (ei->kind >= SCX_EXIT_ERROR) {
 		printk(KERN_ERR "sched_ext: BPF scheduler \"%s\" errored, disabling\n", scx_ops.name);
