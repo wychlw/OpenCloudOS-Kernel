@@ -1124,6 +1124,7 @@ static struct slave *bond_find_best_slave(struct bonding *bond)
 	return bestslave;
 }
 
+/* must be called in RCU critical section or with RTNL held */
 static bool bond_should_notify_peers(struct bonding *bond)
 {
 	struct slave *slave;
@@ -1133,7 +1134,7 @@ static bool bond_should_notify_peers(struct bonding *bond)
 	    bond->params.mode == BOND_MODE_8023AD)
 		slave = bond_first_slave_rcu(bond);
 	else
-		slave = rcu_dereference(bond->curr_active_slave);
+		slave = rcu_dereference_rtnl(bond->curr_active_slave);
 
 	rcu_read_unlock();
 
