@@ -253,6 +253,7 @@ static int __init __parse_crashkernel(char *cmdline,
 {
 	char	*first_colon, *first_space;
 	char	*ck_cmdline;
+	int ret;
 
 	BUG_ON(!crash_size || !crash_base);
 	*crash_size = 0;
@@ -264,20 +265,39 @@ static int __init __parse_crashkernel(char *cmdline,
 
 	ck_cmdline += strlen(name);
 
-	if (suffix)
-		return parse_crashkernel_suffix(ck_cmdline, crash_size,
+	if (suffix) {
+		ret = parse_crashkernel_suffix(ck_cmdline, crash_size,
 				suffix);
+		goto out;
+	}
 	/*
 	 * if the commandline contains a ':', then that's the extended
 	 * syntax -- if not, it must be the classic syntax
 	 */
 	first_colon = strchr(ck_cmdline, ':');
 	first_space = strchr(ck_cmdline, ' ');
-	if (first_colon && (!first_space || first_colon < first_space))
-		return parse_crashkernel_mem(ck_cmdline, system_ram,
+	if (first_colon && (!first_space || first_colon < first_space)) {
+		ret = parse_crashkernel_mem(ck_cmdline, system_ram,
 				crash_size, crash_base);
+		goto out;
+	}
 
-	return parse_crashkernel_simple(ck_cmdline, crash_size, crash_base);
+	ret = parse_crashkernel_simple(ck_cmdline, crash_size, crash_base);
+
+out:
+#ifdef CONFIG_KASAN
+#define KASAN_MIN_CRASH_SIZE (800ULL << 20)  /* MB */
+	if (*crash_size > 0 &&
+		*crash_size < KASAN_MIN_CRASH_SIZE &&
+		KASAN_MIN_CRASH_SIZE * 4 < system_ram) { /* ram > 3200M */
+		pr_info("crashkernel auto adjusted from %lluMB to %lluMB for KASAN\n",
+			(*crash_size >> 20),
+			(KASAN_MIN_CRASH_SIZE >> 20));
+		*crash_size = KASAN_MIN_CRASH_SIZE;
+	}
+#undef KASAN_MIN_CRASH_SIZE
+#endif
+	return ret;
 }
 
 /*
