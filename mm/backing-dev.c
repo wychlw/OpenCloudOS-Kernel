@@ -32,9 +32,6 @@ static u64 bdi_id_cursor;
 static struct rb_root bdi_tree = RB_ROOT;
 LIST_HEAD(bdi_list);
 
-/* switch for buffer io limit */
-unsigned int sysctl_buffer_io_limit;
-
 /* bdi_wq serves all asynchronous writeback tasks */
 struct workqueue_struct *bdi_wq;
 
