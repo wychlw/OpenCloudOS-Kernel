@@ -60,9 +60,6 @@
 #include <linux/sched/deadline.h>
 #include <linux/psi.h>
 #include <net/sock.h>
-#include <linux/memcontrol.h>
-
-#include <linux/blk-cgroup.h>
 
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
@@ -2779,9 +2776,6 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 				 mg_src_preload_node) {
 		struct css_set *dst_cset;
 		struct cgroup_subsys *ss;
-#if IS_ENABLED(CONFIG_MEMCG)
-		struct cgroup_subsys_state *css;
-#endif
 		int ssid;
 
 		dst_cset = find_css_set(src_cset, src_cset->mg_dst_cgrp);
@@ -2790,21 +2784,6 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 
 		WARN_ON_ONCE(src_cset->mg_dst_cset || dst_cset->mg_dst_cset);
 
-#if IS_ENABLED(CONFIG_MEMCG)
-		css = dst_cset->subsys[memory_cgrp_id];
-		if (css) {
-			struct mem_cgroup *memcg = mem_cgroup_from_css(css);
-			struct cgroup_subsys_state *b_css;
-
-			css = dst_cset->subsys[io_cgrp_id];
-			b_css = get_blkio_css(memcg);
-
-			if (css && b_css && css != blkcg_root_css && b_css != css) {
-				pr_err("memcg already bind blkio, disallow migrate");
-				return -EPERM;
-			}
-		}
-#endif
 		/*
 		 * If src cset equals dst, it's noop.  Drop the src.
 		 * cgroup_migrate() will skip the cset too.  Note that we

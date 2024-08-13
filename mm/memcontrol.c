@@ -42,7 +42,6 @@
 #include <linux/limits.h>
 #include <linux/export.h>
 #include <linux/mutex.h>
-#include <linux/namei.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
@@ -391,7 +390,7 @@ struct cgroup_subsys_state *mem_cgroup_css_from_folio(struct folio *folio)
 {
 	struct mem_cgroup *memcg = folio_memcg(folio);
 
-	if (!memcg)
+	if (!memcg || !cgroup_subsys_on_dfl(memory_cgrp_subsys))
 		memcg = root_mem_cgroup;
 
 	return &memcg->css;
@@ -5440,89 +5439,6 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
-/**
- * bind memcg to a blkcg.
- * NULL str    : clear this configure.
- * illegal str : do nothing.
- * legal str   : replace configure.
- */
-static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
-				char *buf, size_t nbytes, loff_t off)
-{
-	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
-	struct cgroup_subsys_state *css;
-	struct cgroup_subsys_state *orig_css;
-	struct path path;
-	char *pbuf;
-	int ret;
-
-	buf = strstrip(buf);
-	/* alloc memory outside mutex */
-	pbuf = kzalloc(PATH_MAX, GFP_KERNEL);
-	if (!pbuf)
-		return -ENOMEM;
-	strncpy(pbuf, buf, PATH_MAX - 1);
-	mutex_lock(&memcg_max_mutex);
-
-	/* 0 len means clear configure. */
-	if (!strnlen(buf, PATH_MAX)) {
-		memcg_blkio_free(memcg);
-		wb_memcg_offline(memcg);
-		INIT_LIST_HEAD(&memcg->cgwb_list);
-
-		mutex_unlock(&memcg_max_mutex);
-		kfree(pbuf);
-		return nbytes;
-	}
-	ret = kern_path(pbuf, LOOKUP_FOLLOW, &path);
-	if (ret)
-		goto err;
-	css = css_tryget_online_from_dir(path.dentry, &io_cgrp_subsys);
-	if (IS_ERR(css)) {
-		ret = PTR_ERR(css);
-		path_put(&path);
-		goto err;
-	}
-	path_put(&path);
-
-	/* if there exists old css, just free. */
-	orig_css = get_blkio_css(memcg);
-	if (orig_css) {
-		if (orig_css == css) {
-			ret = -EEXIST;
-			goto err;
-		} else {
-			memcg_blkio_free(memcg);
-			wb_memcg_offline(memcg);
-			INIT_LIST_HEAD(&memcg->cgwb_list);
-		}
-	}
-
-	/* we store this two into memcg->nodeinfo */
-	set_blkio_path(memcg, pbuf);
-	set_blkio_css(memcg, css);
-
-	mutex_unlock(&memcg_max_mutex);
-	return nbytes;
-
- err:
-	kfree(pbuf);
-	mutex_unlock(&memcg_max_mutex);
-	return ret;
-}
-
-static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
-{
-	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
-
-	char *bpath = get_blkio_path(memcg);
-
-	if (bpath)
-		seq_printf(m, "%s\n", bpath);
-
-	return 0;
-}
-
 static u64 memory_current_read(struct cgroup_subsys_state *css,
 			       struct cftype *cft);
 static int memory_low_show(struct seq_file *m, void *v);
@@ -5816,12 +5732,6 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.release = cgroup_mbuf_release,
 	},
 #endif
-	{
-		.name = "bind_blkio",
-		.flags = CFTYPE_NOT_ON_ROOT,
-		.write = mem_cgroup_bind_blkio_write,
-		.seq_show = mem_cgroup_bind_blkio_show,
-	},
 	{ },	/* terminate */
 };
 
@@ -5991,15 +5901,8 @@ static struct mem_cgroup *mem_cgroup_alloc(struct mem_cgroup *parent)
 	int node, cpu;
 	int __maybe_unused i;
 	long error = -ENOMEM;
-	unsigned int size;
 
-	/*
-	 * For KABI, we have to use this ugly method to store blkcg info.
-	 * [nr_node_ids + ITEM_BLKIO_CSS]: struct cgroup_subsys_state *bind_blkio;
-	 * [nr_node_ids + ITEM_BLKIO_PATH]: char *bind_blkio_path;
-	 */
-	size = struct_size(memcg, nodeinfo, nr_node_ids+ITEM_BLKIO_MAX);
-	memcg = kzalloc(size, GFP_KERNEL);
+	memcg = kzalloc(struct_size(memcg, nodeinfo, nr_node_ids), GFP_KERNEL);
 	if (!memcg)
 		return ERR_PTR(error);
 
@@ -6233,7 +6136,6 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 		static_branch_dec(&memcg_bpf_enabled_key);
 #endif
 
-	memcg_blkio_free(memcg);
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);
 	mem_cgroup_remove_from_trees(memcg);
