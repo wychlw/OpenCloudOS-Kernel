@@ -2768,8 +2768,6 @@ void cgroup_migrate_add_src(struct css_set *src_cset,
  * using cgroup_migrate(), cgroup_migrate_finish() must be called on
  * @mgctx.
  */
-unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind = 1;
-
 int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 {
 	struct css_set *src_cset, *tmp_cset;
@@ -2794,7 +2792,7 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 
 #if IS_ENABLED(CONFIG_MEMCG)
 		css = dst_cset->subsys[memory_cgrp_id];
-		if (!sysctl_allow_memcg_migrate_ignore_blkio_bind && css) {
+		if (css) {
 			struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 			struct cgroup_subsys_state *b_css;
 
