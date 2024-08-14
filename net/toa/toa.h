@@ -20,27 +20,28 @@
 #include <net/ipv6.h>
 #include <net/transp_v6.h>
 
-#define TOA_VERSION "1.0.0.0"
+#define TOA_VERSION "2.0.0.0"
 
-#define TOA_DBG(msg...)			\
-	do {						\
-		printk(KERN_DEBUG "[DEBUG] TOA: " msg);       \
-	} while (0)
+#define TOA_DBG(msg,...)			\
+    do {						\
+          if (0xff==dbg){printk(KERN_DEBUG "[DEBUG] TOA: comm:%s pid:%d " msg, current->comm, (int)current->pid, ##__VA_ARGS__);}       \
+    } while (0)
 
 #define TOA_INFO(msg...)			\
-	do { \
-		if (net_ratelimit()) \
-			printk(KERN_INFO "TOA: " msg);\
-	} while (0)
+     do { \
+          if(net_ratelimit()) \
+               printk(KERN_INFO "TOA: " msg);\
+     } while(0)
 
-#define TCPOPT_TOA  200
-/* MUST be 4n !!!! */
-/* |opcode|size|ip+port| = 1 + 1 + 6 */
-#define TCPOLEN_TOA 8
-
-#define TCPOPT_TOA_ALI_CIP 0xfe
-/* |opcode|size|sport|sip| = 1 + 1 + 2 + 4 */
-#define TCPOLEN_TOA_ALI_CIP 8
+#define TCPOPT_REAL_CLIENTIP 200
+/* |opcode|size|vmip+sport| = 1 + 1 + 6 */
+#define TCPOLEN_REAL_CLIENTIP 8
+#define TCPOPT_VM_VPCID 201
+/* |opcode=1|opcode=1|opcode|size|vpcid| = 1 + 1 + 4 */
+#define TCPOLEN_VM_VPCID 6
+#define TCPOPT_VIP 202
+/* |opcode|size|vip+vport| = 1 + 1 + 6 */
+#define TCPOLEN_VIP 8
 
 /* MUST be 4 bytes alignment */
 struct toa_data {
@@ -58,6 +59,12 @@ enum {
 	GETNAME_TOA_MISMATCH_CNT,
 	GETNAME_TOA_BYPASS_CNT,
 	GETNAME_TOA_EMPTY_CNT,
+	GETNAME_VTOA_GET_CNT,
+	GETNAME_VTOA_GET_ATTR_ERR_CNT,
+	GETNAME_VTOA_GET_LOCKUP_ERR_CNT,
+	GETNAME_VTOA_GET_NETLINK_ERR_CNT,
+	GETNAME_VTOA_GETPEERNAME_IPV4_ERR_CNT,
+	GETNAME_VTOA_GETPEERNAME_IPV6_ERR_CNT,
 	TOA_STAT_LAST
 };
 
@@ -67,13 +74,13 @@ struct toa_stats_entry {
 };
 
 #define TOA_STAT_ITEM(_name, _entry) { \
-	.name = _name,            \
-	.entry = _entry,          \
+        .name = _name,            \
+        .entry = _entry,          \
 }
 
 #define TOA_STAT_END {    \
-	NULL,           \
-	0,              \
+        NULL,           \
+        0,              \
 }
 
 struct toa_stat_mib {
@@ -81,7 +88,11 @@ struct toa_stat_mib {
 };
 
 #define DEFINE_TOA_STAT(type, name)       \
-		__typeof__(type)(*name)
+        __typeof__(type) *name
 #define TOA_INC_STATS(mib, field)         \
-		(per_cpu_ptr(mib, smp_processor_id())->mibs[field]++)
+        (per_cpu_ptr(mib, smp_processor_id())->mibs[field]++)
+
+
 #endif
+
+

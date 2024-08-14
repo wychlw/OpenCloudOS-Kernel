@@ -2002,6 +2002,14 @@ int sk_getsockopt(struct sock *sk, int level, int optname,
 		v.val = READ_ONCE(sk->sk_txrehash);
 		break;
 
+	case SO_TVPC_INFO:
+		if (len > sizeof(sk->sk_tvpc_info))
+			len = sizeof(sk->sk_tvpc_info);
+
+		if (copy_to_sockptr(optval, &sk->sk_tvpc_info, len))
+			return -EFAULT;
+		goto lenout;
+
 	default:
 		/* We implement the SO_SNDLOWAT etc to not be settable
 		 * (1003.1g 7).

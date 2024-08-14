@@ -245,6 +245,15 @@ struct sock_common {
 	/* public: */
 };
 
+/*tvpc data*/
+struct tvpc_info {
+	u32 vpcid;
+	__be32 vmip;
+	__be32 vip;
+	__be16 sport;
+	__be16 vport;
+};
+
 struct bpf_local_storage;
 struct sk_filter;
 
@@ -546,6 +555,9 @@ struct sock {
 	struct rcu_head		sk_rcu;
 	netns_tracker		ns_tracker;
 	struct hlist_node	sk_bind2_node;
+
+	/*VPC INFO*/
+	struct tvpc_info  sk_tvpc_info;
 
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
