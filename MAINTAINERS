@@ -23908,6 +23908,12 @@ L:	linux-kernel@vger.kernel.org
 S:	Maintained
 F:	arch/x86/kernel/cpu/zhaoxin.c
 
+ZHAOXIN TEMPERATURE MONITORING DRIVERS
+M:	Leoliu-oc <leoliu-oc@zhaoxin.com>
+L:	linux-hwmon@vger.kernel.org
+S:	Maintained
+F:	drivers/hwmon/zhaoxin-cputemp.c
+
 ZONEFS FILESYSTEM
 M:	Damien Le Moal <dlemoal@kernel.org>
 M:	Naohiro Aota <naohiro.aota@wdc.com>
