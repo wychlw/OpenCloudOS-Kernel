@@ -689,7 +689,7 @@ static struct blkcg_dkstats *blkcg_dkstats_alloc(struct block_device *bdev)
 	schedule_delayed_work(&dkstats_alloc_work, 0);
 	spin_unlock_irqrestore(&alloc_lock, flags);
 #else
-	ds->dkstats = alloc_percpu_gfp(struct iocg_pcpu_stat, GFP_NOWAIT);
+	ds->dkstats = alloc_percpu_gfp(struct disk_stats, GFP_NOWAIT);
 	if (!ds->dkstats) {
 		free(ds);
 		ds = NULL;
