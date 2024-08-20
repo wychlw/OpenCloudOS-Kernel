@@ -1,0 +1,1 @@
+../../dist/sources/download-and-copy-drivers.sh

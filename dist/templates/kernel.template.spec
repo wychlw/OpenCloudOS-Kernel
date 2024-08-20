@@ -134,6 +134,8 @@ BuildRequires: gcc-plugin-devel
 BuildRequires: glibc-static
 # Kernel could be compressed with lz4
 BuildRequires: lz4
+# Needing clone sub git repo
+BuildRequires: git
 
 %if %{with_perf}
 BuildRequires: zlib-devel binutils-devel newt-devel perl(ExtUtils::Embed) bison flex xz-devel
@@ -188,6 +190,12 @@ Source30: check-kabi
 # Start from Source2000 to Source2999, for userspace tools
 Source2000: cpupower.service
 Source2001: cpupower.config
+
+### Used for download thirdparty drivers
+# Start from Source3000 to Source3099, for thirdparty release drivers
+Source3000: download-and-copy-drivers.sh
+Source3001: release-drivers.tgz
+Source3002: MLNX_OFED_LINUX-23.10-3.2.2.0-rhel9.4-x86_64.tgz
 
 ###### Kernel package definations ##############################################
 ### Main meta package
@@ -598,8 +606,14 @@ case $KernUnameR in
 # Prepare Kernel config
 BuildConfig() {
 	# Prepare git sub-module, copy thirdparty drivers to override kernel native drivers
-	pushd $_KernSrc/drivers/thirdparty
-	./copy-drivers.sh
+	pushd ${_KernSrc}/drivers/thirdparty
+	rm -f download-and-copy-drivers.sh; cp -a %{SOURCE3000} ./
+	if [ -e ../../dist/sources ]; then
+		./copy-drivers.sh
+	else
+		cp -a %{SOURCE3001} ./ ; tar -zxf release-drivers.tgz ; rm -f release-drivers.tgz
+		cp -a %{SOURCE3002} release-drivers/mlnx/
+	fi
 	popd
 
 	mkdir -p $_KernBuild
@@ -1081,6 +1095,156 @@ CollectKernelFile() {
 	mv %{buildroot}/*.list ../
 }
 
+## Build MLNX OFED
+BuildInstMLNXOFED() {
+	inst_mod() {
+		src_mod=$1
+		src_mod_name=$(basename "$src_mod")
+		dest=""
+
+		# Replace old module
+		for mod in $(find $KernModule -name "*$src_mod_name*"); do
+			echo "MLNX_OFED: REPLACING: kernel module $mod"
+			dest=$(dirname "$mod")
+			rm -f "$mod"
+		done
+
+		# Install new module
+		if [ ! -d "$dest" ]; then
+			echo "MLNX_OFED: NEW: kernel module $dest/$mod"
+			dest="$KernModule/kernel/drivers/ofed_addon"
+			mkdir -p $dest
+		fi
+
+		cp -f "$src_mod" "$dest/"
+	}
+
+	handle_rpm() {
+		rm -rf extracted
+		mkdir -p extracted && pushd extracted
+
+		rpm2cpio $1 | cpio -id
+		find . -name "*.ko" -or -name "*.ko.xz" | while read -r mod; do
+			inst_mod "$mod"
+		done
+		# find . -name "*.debug" | while read -r mod; do
+		#       inst_debuginfo "$mod"
+		# done
+
+		popd
+	}
+
+	if [ ! -e drivers/thirdparty/release-drivers/mlnx ]; then
+		pwd ; echo "_KernSrc is ${_KernSrc}"
+		ls -al ${_KernSrc}/drivers/thirdparty/
+		return 0
+	fi
+	pushd drivers/thirdparty/release-drivers/mlnx
+	MLNX_OFED_VERSION=$(./get_mlnx_info.sh mlnx_version) ; 	MLNX_OFED_TGZ_NAME=$(./get_mlnx_info.sh mlnx_tgz_name)
+	tar -xzvf $MLNX_OFED_TGZ_NAME
+	pushd MLNX_OFED_LINUX-${MLNX_OFED_VERSION}-rhel9.4-x86_64
+	pushd src
+	echo "tar -xzvf MLNX_OFED_SRC-${MLNX_OFED_VERSION}.tgz"
+	tar -xzvf MLNX_OFED_SRC-${MLNX_OFED_VERSION}.tgz
+	pushd MLNX_OFED_SRC-${MLNX_OFED_VERSION}
+
+	# Unset $HOME, when doing koji build, koji insert special macros into ~/.rpmmacros that will break MLNX installer:
+	# Koji sets _rpmfilename  %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm,
+	# But the installer assumes "_rpmfilename %{_build_name_fmt}" so it will fail to find the built rpm.
+	DISTRO=$(echo "%{?dist}" | sed "s/\.//g")
+	# Fix TS4 compile errors by enabling LTO. So, disable LTO,  and enabling -fPIE.
+	if [ "${DISTRO}" == "tl4" ]; then
+		sed -i "s/rpmbuild --rebuild/rpmbuild --define 'rhel 9' --define '_lto_cflags -fno-lto' --define '_hardened_cflags -fPIE' --rebuild/g" ./install.pl
+	fi
+	HOME= ./install.pl --build-only --kernel-only --without-depcheck --distro $DISTRO \
+	--kernel $KernUnameR --kernel-sources $KernDevel \
+	--without-mlx5_fpga_tools --without-mlnx-rdma-rxe --without-mlnx-nfsrdma \
+	--without-mlnx-nvme --without-isert --without-iser --without-srp --without-rshim --without-mdev \
+	--disable-kmp
+
+	# get all kernel module rpms that were built against target kernel
+	find RPMS -name "*.rpm" -type f | while read -r pkg; do
+		if rpm -qlp $pkg | grep "\.ko"; then
+			handle_rpm "$(realpath $pkg)"
+		fi
+	done
+
+	popd ## MLNX_OFED_SRC*
+	popd ## src
+	popd ## MLNX_OFED_LINUX-${MLNX_OFED_VERSION}-rhel9.4-x86_64
+	## Building MLNX_OFED_SRC-${MLNX_OFED_VERSION} finish.
+	popd ## drivers/thirdparty/release-drivers/mlnx
+	return 0
+
+	echo "Begin to build $MLNX_OFED_TGZ_NAME"
+	## Now, we in MLNX_OFED_LINUX-* dir!
+	%if %{with_modsign}
+	%ifarch x86_64
+	# The purpose is to reorgnise the mlnx tgz files for our TencentOS
+	# Build the full packages of mlnx ofed.
+	# change to build/
+	tmp=%{buildroot}/tmp
+	mkdir $tmp
+	tmppath=$(realpath $tmp)
+
+	# We need to jump the root privilege because we'll assign a normal tmpdir
+	sed -i 's/$UID -ne 0/! -z $JUMP_ROOT/g' mlnx_add_kernel_support.sh
+	# unset home
+	#HOME= ./mlnx_add_kernel_support.sh -m ./ --distro $DISTRO --make-tgz -y \
+	HOME= ./mlnx_add_kernel_support.sh -m ./ --distro rhel9.4 --make-tgz -y \
+	--kernel $KernUnameR --kernel-sources $KernDevel --skip-repo --tmpdir $tmppath --without-depcheck
+	rm -rf MLNX_OFED_LINUX-*
+
+	# Prepare first
+	pushd $tmppath
+	tar -xzvf MLNX_OFED_LINUX-*
+	touch ko.location
+	# compatible with module signer script
+	signed=ko_files/lib/modules/$KernUnameR
+	mkdir -p workdir $signed
+
+	# Extract all the rpms containing ko files to workdir
+	rpm_rp=$(realpath MLNX_OFED_LINUX-*/RPMS)
+	pushd workdir
+	find $rpm_rp -name "*.rpm" -type f | while read -r pkg; do
+		if rpm -qlp $pkg | grep "\.ko$" | grep "5.4" >> ../ko.location; then
+			rpm_bn=$(basename $pkg)
+			mkdir $rpm_bn && pushd $rpm_bn
+			rpm2cpio $rpm_rp/$rpm_bn | cpio -id
+			popd # $rpm_bn
+		fi
+	done
+	popd # workdir
+
+	# Start collecting all the ko files
+	find workdir/ -name "*.ko" | while read -r mod; do
+		mv $mod $signed/
+	done
+
+	# Now we're about to sign them.
+	%{_module_signer} "$KernUnameR" "$_KernBuild" "ko_files" x509 || exit $?
+
+	# Compress it into a new tgz file.
+	mlnxfulname=$(basename %{SOURCE3001})
+	mlnxrelease=${mlnxfulname%.*}
+	mv $mlnxrelease-ext  $mlnxrelease-ext.$KernUnameR/
+	# Turn it back to the original file
+	sed -i 's/! -z $JUMP_ROOT/$UID -ne 0/g' $mlnxrelease-ext.$KernUnameR/mlnx_add_kernel_support.sh
+	cp -r $signed $mlnxrelease-ext.$KernUnameR/ko_files.signed
+	sed -i "s/KERNELMODULE_REPLACE/$KernUnameR/g" %{SOURCE3002}
+	cp -r ko.location %{SOURCE3002} $mlnxrelease-ext.$KernUnameR/
+	tar -zcvf $mlnxrelease-ext.$KernUnameR.tgz $mlnxrelease-ext.$KernUnameR
+	mkdir %{buildroot}/mlnx/
+	install -m 755 $mlnxrelease-ext.$KernUnameR.tgz %{buildroot}/mlnx/
+
+	popd # $tmppath
+	rm -rf $tmppath
+	%endif
+	%endif
+
+	popd ## drivers/thirdparty/release-drivers/mlnx
+}
+
 ###### Start Kernel Install
 
 %if %{with_core}
@@ -1095,6 +1259,13 @@ InstKernelDevel
 
 %if %{with_headers}
 InstKernelHeaders
+%endif
+
+%if %{with_ofed}
+# MLNXOFED driver's Makefile doesn't support cross build.
+%if !%{with_crossbuild}
+BuildInstMLNXOFED
+%endif
 %endif
 
 %if %{with_perf}

@@ -157,6 +157,10 @@ dist-tarball:
 	@echo "$(TARFILE)"
 	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar.gz --prefix=$(TARNAME)/ --output $(TARFILE)
 
+dist-drivers:
+	@echo "Preparing thirdparty drivers."
+	@cd $(TOPDIR)/dist/sources/ ; ./download-and-copy-drivers.sh ; cd $(TOPDIR)
+
 $(CONFIGFILE): $(DISTFILES)
 	@echo "Generating kernel config style '$(CONFIG)'"
 	@$(DISTDIR)/scripts/gen-configs.sh "$(CONFIG)" "$(GITREF)"
@@ -190,7 +194,7 @@ $(SPECFILE): always-rebuild dist-configs
 dist-specfile: $(SPECFILE)
 	@echo "$(SPECFILE)"
 
-dist-sources: dist-configs dist-tarball $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
+dist-sources: dist-configs dist-tarball dist-drivers $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
 	@cp $(DISTSOURCES) $(DISTKABIS) $(RPM_SOURCEDIR)
 
 define DO_RPMBUILD
@@ -213,6 +217,7 @@ endef
 
 dist-srpm: dist-sources
 	$(call DO_RPMBUILD,-bs --nodeps --rmsource --rmspec $(RPMFLAGS))
+	@cd $(TOPDIR) ; rm -f dist/sources/*.tgz ; git checkout dist/sources 1>/dev/null 2>&1
 
 dist: dist-rpm
 dist-rpms: dist-rpm

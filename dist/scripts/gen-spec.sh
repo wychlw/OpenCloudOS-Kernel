@@ -188,6 +188,7 @@ _gen_pkgopt_spec() {
 		debuginfo \
 		modsign \
 		kabichk \
+		ofed \
 		keypkg
 	do
 		case $DEFAULT_DISALBED in
