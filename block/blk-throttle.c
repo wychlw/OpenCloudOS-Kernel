@@ -12,6 +12,7 @@
 #include <linux/blktrace_api.h>
 #include <linux/psi.h>
 #include <linux/rue.h>
+#include <linux/swap.h>
 #include "blk.h"
 #include "blk-cgroup-rwstat.h"
 #include "blk-stat.h"
@@ -2407,6 +2408,17 @@ bool __blk_throtl_bio(struct bio *bio)
 	bool rw = bio_data_dir(bio);
 	bool throttled = false;
 	struct throtl_data *td = tg->td;
+
+	/* Won't throttle REQ_META/REQ_PRIO IOs or PF_KSWAPD IOs */
+	if (unlikely(sysctl_skip_throttle_prio_req)) {
+		if ((bio->bi_opf & (REQ_META | REQ_PRIO | REQ_SYNC)) || current_is_kswapd()) {
+			throtl_log(&tg->service_queue,
+					"Skip throttle %s(%d)/flags(0x%x): bi_opf is 0x%x",
+					current->comm, task_pid_nr(current),
+					current->flags, bio->bi_opf);
+			return false;
+		}
+	}
 
 	rcu_read_lock();
 

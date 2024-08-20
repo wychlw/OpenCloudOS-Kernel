@@ -436,6 +436,7 @@ static inline struct blkcg *blkcg_parent(struct blkcg *blkcg)
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 extern unsigned int sysctl_buffered_write_bps_hierarchy __read_mostly;
+extern unsigned int sysctl_skip_throttle_prio_req __read_mostly;
 
 static inline uint64_t blkcg_buffered_write_bps(struct blkcg *blkcg)
 {
