@@ -217,12 +217,13 @@ endef
 
 dist-srpm: dist-sources
 	$(call DO_RPMBUILD,-bs --nodeps --rmsource --rmspec $(RPMFLAGS))
-	@cd $(TOPDIR) ; rm -f dist/sources/*.tgz ; git checkout dist/sources 1>/dev/null 2>&1
+	@cd $(TOPDIR) ; rm -rf dist/sources ; git checkout dist/sources 1>/dev/null 2>&1
 
 dist: dist-rpm
 dist-rpms: dist-rpm
 dist-rpm: dist-sources
 	$(call DO_RPMBUILD,-bb $(RPMCROSSFLAGS) --rmsource --rmspec $(RPMFLAGS))
+	@cd $(TOPDIR) ; rm -rf dist/sources ; git checkout dist/sources 1>/dev/null 2>&1
 
 dist-prep: dist-sources
 	$(call DO_RPMBUILD,-bp --nodeps $(RPMCROSSFLAGS) $(RPMFLAGS))
