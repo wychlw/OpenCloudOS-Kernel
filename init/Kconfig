@@ -2037,3 +2037,10 @@ config ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
 # <asm/syscall_wrapper.h>.
 config ARCH_HAS_SYSCALL_WRAPPER
 	def_bool n
+
+config KABI_RESERVE
+	bool "Support for KABI RESERVE"
+	default y
+	help
+	  This option can be turned off for images that clearly do not require
+	  kabi compatibility.

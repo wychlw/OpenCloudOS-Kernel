@@ -45,7 +45,11 @@ union { \
 		"kABI failure: " \
 		__stringify(_item) " is larger than reserved size (" __stringify(_size) " bytes)")
 
+#ifdef CONFIG_KABI_RESERVE
 #define _KABI_RESERVE(n)		union {unsigned long kabi_reserved##n; }
+#else
+#define _KABI_RESERVE(n)
+#endif
 
 /* Just a little wrapper to make checkpatch.pl happy */
 #define _KABI_ARGS(...)			__VA_ARGS__
@@ -71,6 +75,7 @@ union { \
 	_KABI_ARGS(_type kabi_deprecate##_orig)
 #define KABI_DEPRECATE_FN(_type, _orig, _args...) \
 	_KABI_ARGS(_type(*kabi_deprecate##_orig)(_args))
+#ifdef CONFIG_KABI_RESERVE
 #define KABI_REPLACE(_orig, _new)			\
 	union {						\
 		_new;					\
@@ -79,6 +84,9 @@ union { \
 		} __UNIQUE_ID(kabi_hidden_);		\
 		__KABI_CHECK_SIZE_ALIGN(struct {_orig; }, _new);	\
 	}
+#else
+#define KABI_REPLACE(_orig, _new)			_new
+#endif
 #define KABI_EXCLUDE(_elem)		_elem
 
 #endif /* __GENKSYMS__ */
