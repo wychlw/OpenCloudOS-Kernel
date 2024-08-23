@@ -114,6 +114,11 @@ static inline void task_group_account_field(struct task_struct *p, int index,
 	 */
 	__this_cpu_add(kernel_cpustat.cpustat[index], tmp);
 
+#ifdef CONFIG_SCHED_CLASS_EXT
+	if (p->sched_class == &ext_sched_class)
+		__this_cpu_add(kernel_cpustat.cpustat[CPUTIME_SCX], tmp);
+#endif
+
 	cgroup_account_cputime_field(p, index, tmp);
 
 #ifdef CONFIG_CGROUP_SLI

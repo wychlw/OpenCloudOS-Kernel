@@ -4883,6 +4883,14 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	}
 #endif
 	rseq_migrate(p);
+#ifdef CONFIG_EXT_GROUP_SCHED
+	if (scx_enabled()) {
+		if (p->sched_class != &ext_sched_class && p->sched_task_group->scx)
+			p->sched_class = &ext_sched_class;
+		else if (p->sched_class == &ext_sched_class && !p->sched_task_group->scx)
+			p->sched_class = &fair_sched_class;
+	}
+#endif
 	/*
 	 * We're setting the CPU for the first time, we don't migrate,
 	 * so use __set_task_cpu().
@@ -10635,6 +10643,9 @@ void sched_move_task(struct task_struct *tsk)
 	struct task_group *group;
 	struct rq_flags rf;
 	struct rq *rq;
+#ifdef CONFIG_EXT_GROUP_SCHED
+	const struct sched_class *prev_class;
+#endif
 
 	rq = task_rq_lock(tsk, &rf);
 	/*
@@ -10656,8 +10667,20 @@ void sched_move_task(struct task_struct *tsk)
 		put_prev_task(rq, tsk);
 
 	sched_change_group(tsk, group);
+#ifdef CONFIG_EXT_GROUP_SCHED
+	prev_class = tsk->sched_class;
+	if (scx_enabled()) {
+		if (prev_class != &ext_sched_class && group->scx)
+			tsk->sched_class = &ext_sched_class;
+		else if (prev_class == &ext_sched_class && !group->scx)
+			tsk->sched_class = &fair_sched_class;
+	}
+#endif
 	scx_move_task(tsk);
 
+#ifdef CONFIG_EXT_GROUP_SCHED
+	check_class_changing(rq, tsk, prev_class);
+#endif
 	if (queued)
 		enqueue_task(rq, tsk, queue_flags);
 	if (running) {
@@ -10669,7 +10692,9 @@ void sched_move_task(struct task_struct *tsk)
 		 */
 		resched_curr(rq);
 	}
-
+#ifdef CONFIG_EXT_GROUP_SCHED
+	check_class_changed(rq, tsk, prev_class, tsk->prio);
+#endif
 unlock:
 	task_rq_unlock(rq, tsk, &rf);
 }
@@ -11416,6 +11441,31 @@ static int cpu_quota_aware_write_u64(struct cgroup_subsys_state *css,
 
 #endif
 
+#ifdef CONFIG_EXT_GROUP_SCHED
+static u64 cpu_scx_read_u64(struct cgroup_subsys_state *css,
+			    struct cftype *cft)
+{
+	struct task_group *tg = css_tg(css);
+
+	return tg->scx;
+}
+
+static int cpu_scx_write_u64(struct cgroup_subsys_state *css,
+			     struct cftype *cftype, u64 val)
+{
+	struct task_group *tg = css_tg(css);
+
+	if (val > 1)
+		return -ERANGE;
+
+	tg = css_tg(css);
+	if (tg->scx == val)
+		return 0;
+
+	return scx_cpu_cgroup_switch(tg, val);
+}
+#endif
+
 static struct cftype cpu_legacy_cftypes[] = {
 #ifdef CONFIG_CGROUPFS
 	{
@@ -11486,6 +11536,20 @@ static struct cftype cpu_legacy_cftypes[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpu_uclamp_max_show,
 		.write = cpu_uclamp_max_write,
+	},
+#endif
+#ifdef CONFIG_EXT_GROUP_SCHED
+	{
+		.name = "scx",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
+	},
+	{
+		.name = "offline",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
 	},
 #endif
 	{ }	/* Terminate */
@@ -11714,6 +11778,20 @@ struct cftype cpu_cftypes[CPU_CFTYPE_CNT + 1] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpu_uclamp_max_show,
 		.write = cpu_uclamp_max_write,
+	},
+#endif
+#ifdef CONFIG_EXT_GROUP_SCHED
+	[CPU_CFTYPE_SCX_SWITCH] = {
+		.name = "scx",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
+	},
+	[CPU_CFTYPE_OFFLINE_SWITCH] = {
+		.name = "offline",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
 	},
 #endif
 	{ }	/* terminate */

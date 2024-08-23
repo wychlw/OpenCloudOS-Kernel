@@ -208,9 +208,110 @@ static const struct proc_ops stat_proc_ops = {
 	.proc_release	= single_release,
 };
 
+#ifdef CONFIG_SCHED_CLASS_EXT
+static int scx_show_stat(struct seq_file *p, void *v)
+{
+	int i;
+	u64 user, nice, system, idle, iowait, irq, softirq, steal, scx;
+	u64 guest, guest_nice;
+
+	user = nice = system = idle = iowait =
+		irq = softirq = steal = scx = 0;
+	guest = guest_nice = 0;
+
+	for_each_possible_cpu(i) {
+		struct kernel_cpustat kcpustat;
+		u64 *cpustat = kcpustat.cpustat;
+
+		kcpustat_cpu_fetch(&kcpustat, i);
+
+		user		+= cpustat[CPUTIME_USER];
+		nice		+= cpustat[CPUTIME_NICE];
+		system		+= cpustat[CPUTIME_SYSTEM];
+		idle		+= get_idle_time(&kcpustat, i);
+		iowait		+= get_iowait_time(&kcpustat, i);
+		irq		+= cpustat[CPUTIME_IRQ];
+		softirq		+= cpustat[CPUTIME_SOFTIRQ];
+		steal		+= cpustat[CPUTIME_STEAL];
+		guest		+= cpustat[CPUTIME_GUEST];
+		guest_nice	+= cpustat[CPUTIME_GUEST_NICE];
+		scx		+= cpustat[CPUTIME_SCX];
+	}
+
+	seq_put_decimal_ull(p, "cpu  ", nsec_to_clock_t(user));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(nice));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(system));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(idle));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(iowait));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(irq));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(softirq));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(steal));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(guest));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(guest_nice));
+	seq_put_decimal_ull(p, " ", nsec_to_clock_t(scx));
+	seq_putc(p, '\n');
+
+	for_each_online_cpu(i) {
+		struct kernel_cpustat kcpustat;
+		u64 *cpustat = kcpustat.cpustat;
+
+		kcpustat_cpu_fetch(&kcpustat, i);
+
+		/* Copy values here to work around gcc-2.95.3, gcc-2.96 */
+		user		= cpustat[CPUTIME_USER];
+		nice		= cpustat[CPUTIME_NICE];
+		system		= cpustat[CPUTIME_SYSTEM];
+		idle		= get_idle_time(&kcpustat, i);
+		iowait		= get_iowait_time(&kcpustat, i);
+		irq		= cpustat[CPUTIME_IRQ];
+		softirq		= cpustat[CPUTIME_SOFTIRQ];
+		steal		= cpustat[CPUTIME_STEAL];
+		guest		= cpustat[CPUTIME_GUEST];
+		guest_nice	= cpustat[CPUTIME_GUEST_NICE];
+		scx		= cpustat[CPUTIME_SCX];
+		seq_printf(p, "cpu%d", i);
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(user));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(nice));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(system));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(idle));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(iowait));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(irq));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(softirq));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(steal));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(guest));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(guest_nice));
+		seq_put_decimal_ull(p, " ", nsec_to_clock_t(scx));
+		seq_putc(p, '\n');
+	}
+
+	seq_putc(p, '\n');
+
+	return 0;
+}
+
+static int scx_stat_open(struct inode *inode, struct file *file)
+{
+	unsigned int size = 1024 + 128 * num_online_cpus();
+
+	return single_open_size(file, scx_show_stat, NULL, size);
+}
+
+static const struct proc_ops scx_stat_proc_ops = {
+	.proc_flags	= PROC_ENTRY_PERMANENT,
+	.proc_open	= scx_stat_open,
+	.proc_read_iter	= seq_read_iter,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+#endif
+
 static int __init proc_stat_init(void)
 {
 	proc_create("stat", 0, NULL, &stat_proc_ops);
+#ifdef CONFIG_SCHED_CLASS_EXT
+	proc_create("scx_stat", 0, NULL, &scx_stat_proc_ops);
+	proc_create("bt_stat", 0, NULL, &scx_stat_proc_ops);
+#endif
 	return 0;
 }
 fs_initcall(proc_stat_init);

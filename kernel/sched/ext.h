@@ -254,6 +254,7 @@ void scx_move_task(struct task_struct *p);
 void scx_cgroup_finish_attach(void);
 void scx_cgroup_cancel_attach(struct cgroup_taskset *tset);
 void scx_group_set_weight(struct task_group *tg, unsigned long cgrp_weight);
+int scx_cpu_cgroup_switch(struct task_group *tg, int val);
 #else	/* CONFIG_EXT_GROUP_SCHED */
 static inline int scx_tg_online(struct task_group *tg) { return 0; }
 static inline void scx_tg_offline(struct task_group *tg) {}
@@ -262,5 +263,6 @@ static inline void scx_move_task(struct task_struct *p) {}
 static inline void scx_cgroup_finish_attach(void) {}
 static inline void scx_cgroup_cancel_attach(struct cgroup_taskset *tset) {}
 static inline void scx_group_set_weight(struct task_group *tg, unsigned long cgrp_weight) {}
+static inline int scx_cpu_cgroup_switch(struct task_group *tg, int val) { return 0; }
 #endif	/* CONFIG_EXT_GROUP_SCHED */
 #endif	/* CONFIG_CGROUP_SCHED */

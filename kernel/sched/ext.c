@@ -200,6 +200,7 @@ struct scx_task_iter {
 
 #define SCX_HAS_OP(op)	static_branch_likely(&scx_has_op[SCX_OP_IDX(op)])
 
+static u32 sysctl_cpu_qos_enabled;
 static u32 sysctl_scx_hung_exit = 1;
 
 /* if the highest set bit is N, return a mask with bits [N+1, 31] set */
@@ -476,6 +477,17 @@ scx_task_iter_next_filtered_locked(struct scx_task_iter *iter)
 	iter->rq = task_rq_lock(p, &iter->rf);
 	iter->locked = p;
 	return p;
+}
+
+static bool scx_task_iter_rq_unlock(struct scx_task_iter *iter)
+{
+	if (iter->locked) {
+		task_rq_unlock(iter->rq, iter->locked, &iter->rf);
+		iter->locked = NULL;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 static enum scx_ops_enable_state scx_ops_enable_state(void)
@@ -2159,6 +2171,8 @@ static bool check_rq_for_timeouts(struct rq *rq)
 	struct task_struct *p;
 	struct rq_flags rf;
 	bool timed_out = false;
+	bool log_wo_exit = false;
+	u32 dur_ms;
 
 	rq_lock_irqsave(rq, &rf);
 	list_for_each_entry(p, &rq->scx.watchdog_list, scx.watchdog_node) {
@@ -2166,7 +2180,7 @@ static bool check_rq_for_timeouts(struct rq *rq)
 
 		if (unlikely(time_after(jiffies,
 					last_runnable + scx_watchdog_timeout))) {
-			u32 dur_ms = jiffies_to_msecs(jiffies - last_runnable);
+			dur_ms = jiffies_to_msecs(jiffies - last_runnable);
 
 			if (sysctl_scx_hung_exit)
 				scx_ops_error_kind(SCX_EXIT_ERROR_STALL,
@@ -2175,17 +2189,20 @@ static bool check_rq_for_timeouts(struct rq *rq)
 						   dur_ms / 1000,
 						   dur_ms % 1000);
 			else
-				pr_warn_ratelimited(
-					"%s[%d] failed to run for %u.%03us\n",
-					p->comm, p->pid,
-					dur_ms / 1000,
-					dur_ms % 1000);
+				log_wo_exit = true;
 
 			timed_out = true;
 			break;
 		}
 	}
 	rq_unlock_irqrestore(rq, &rf);
+
+	if (log_wo_exit)
+		pr_warn_ratelimited(
+				"%s[%d] failed to run for %u.%03us\n",
+				p->comm, p->pid,
+				dur_ms / 1000,
+				dur_ms % 1000);
 
 	return timed_out;
 }
@@ -2636,6 +2653,50 @@ static void scx_cgroup_unlock(void)
 	percpu_up_write(&scx_cgroup_rwsem);
 }
 
+int scx_cpu_cgroup_switch(struct task_group *tg, int val)
+{
+	struct task_struct *p;
+	struct css_task_iter it;
+	int ret = 0;
+
+	percpu_down_write(&scx_fork_rwsem);
+	scx_cgroup_lock();
+
+	if (!scx_enabled() || READ_ONCE(scx_switching_all)) {
+		ret = -EPERM;
+		goto out;
+	}
+
+	tg->scx = val;
+
+	css_task_iter_start(&tg->css, 0, &it);
+	while ((p = css_task_iter_next(&it))) {
+		const struct sched_class *old_class = p->sched_class;
+		struct sched_enq_and_set_ctx ctx;
+		struct rq_flags rf;
+		struct rq *rq;
+
+		rq = task_rq_lock(p, &rf);
+		update_rq_clock(rq);
+
+		sched_deq_and_put_task(p, DEQUEUE_SAVE | DEQUEUE_MOVE,
+				&ctx);
+		if (old_class != &ext_sched_class && tg->scx)
+			p->sched_class = &ext_sched_class;
+		else if (old_class == &ext_sched_class && !tg->scx)
+			p->sched_class = &fair_sched_class;
+		check_class_changing(rq, p, old_class);
+		sched_enq_and_set_task(&ctx);
+		check_class_changed(rq, p, old_class, p->prio);
+
+		task_rq_unlock(rq, p, &rf);
+	}
+	css_task_iter_end(&it);
+out:
+	percpu_up_write(&scx_fork_rwsem);
+	scx_cgroup_unlock();
+	return ret;
+}
 #else	/* CONFIG_EXT_GROUP_SCHED */
 
 static inline void scx_cgroup_lock(void) {}
@@ -2796,6 +2857,7 @@ static void scx_cgroup_exit(void)
 		if (!(tg->scx_flags & SCX_TG_INITED))
 			continue;
 		tg->scx_flags &= ~SCX_TG_INITED;
+		tg->scx = 0;
 
 		if (!scx_ops.cgroup_exit)
 			continue;
@@ -2848,6 +2910,7 @@ static int scx_cgroup_init(void)
 			return ret;
 		}
 		tg->scx_flags |= SCX_TG_INITED;
+		tg->scx = 0;
 
 		rcu_read_lock();
 		css_put(css);
@@ -2926,9 +2989,27 @@ static void scx_ops_fallback_enqueue(struct task_struct *p, u64 enq_flags)
 
 static void scx_ops_fallback_dispatch(s32 cpu, struct task_struct *prev) {}
 
+static int sysctl_cpu_qos_handler(struct ctl_table *table, int write,
+                                  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	if (write)
+		return -EPERM;
+	else
+		return proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+}
+
 static struct ctl_table_header *scx_sysctl_table_hdr;
 
 static struct ctl_table scx_sysctl_table[] = {
+	{
+		.procname	= "cpu_qos",
+		.data		= &sysctl_cpu_qos_enabled,
+		.maxlen		= sizeof(u32),
+		.mode		= 0644,
+		.proc_handler	= &sysctl_cpu_qos_handler,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
 	{
 		.procname	= "scx_hung_exit",
 		.data		= &sysctl_scx_hung_exit,
@@ -2961,6 +3042,7 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 	struct scx_dispatch_q *dsq;
 	const char *reason;
 	int i, cpu, kind;
+	bool last_scx_switch_all;
 
 	kind = atomic_read(&scx_exit_kind);
 	while (true) {
@@ -3073,11 +3155,12 @@ forward_progress_guaranteed:
 	mutex_lock(&scx_ops_enable_mutex);
 
 	static_branch_disable(&__scx_switched_all);
+	last_scx_switch_all = READ_ONCE(scx_switching_all);
 	WRITE_ONCE(scx_switching_all, false);
 
 	/* avoid racing against fork and cgroup changes */
-	cpus_read_lock();
 	percpu_down_write(&scx_fork_rwsem);
+	cpus_read_lock();
 	scx_cgroup_lock();
 
 	spin_lock_irq(&scx_tasks_lock);
@@ -3101,6 +3184,19 @@ forward_progress_guaranteed:
 			check_class_changed(task_rq(p), p, old_class, p->prio);
 
 		scx_ops_disable_task(p);
+
+		if (alive && !last_scx_switch_all &&
+				!(p->flags & (PF_KTHREAD | PF_USER_WORKER)) &&
+				old_class == &ext_sched_class &&
+				p->sched_class != old_class) {
+
+			scx_task_iter_rq_unlock(&sti);
+			spin_unlock_irq(&scx_tasks_lock);
+			do_send_sig_info(SIGKILL, SEND_SIG_PRIV, p, PIDTYPE_TGID);
+			pr_err("scx: Unexpected scheduler unplug found, killed scx task %d (%s)\n",
+					task_pid_nr(p), p->comm);
+			spin_lock_irq(&scx_tasks_lock);
+		}
 	}
 	scx_task_iter_exit(&sti);
 	spin_unlock_irq(&scx_tasks_lock);
@@ -3115,11 +3211,13 @@ forward_progress_guaranteed:
 	static_branch_disable_cpuslocked(&scx_builtin_idle_enabled);
 	synchronize_rcu();
 
+	sysctl_cpu_qos_enabled = 0;
+
 	scx_cgroup_exit();
 
 	scx_cgroup_unlock();
-	percpu_up_write(&scx_fork_rwsem);
 	cpus_read_unlock();
+	percpu_up_write(&scx_fork_rwsem);
 
 	if (ei->kind >= SCX_EXIT_ERROR) {
 		printk(KERN_ERR "sched_ext: BPF scheduler \"%s\" errored, disabling\n", scx_ops.name);
@@ -3337,6 +3435,8 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 		goto err_disable_unlock;
 
 	static_branch_enable_cpuslocked(&__scx_ops_enabled);
+
+	sysctl_cpu_qos_enabled = 1;
 
 	/*
 	 * Enable ops for every task. Fork is excluded by scx_fork_rwsem

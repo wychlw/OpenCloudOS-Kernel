@@ -31,6 +31,9 @@ enum cpu_usage_stat {
 #ifdef CONFIG_SCHED_CORE
 	CPUTIME_FORCEIDLE,
 #endif
+#ifdef CONFIG_SCHED_CLASS_EXT
+	CPUTIME_SCX,
+#endif
 	NR_STATS,
 };
 
