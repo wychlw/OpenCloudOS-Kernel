@@ -1946,6 +1946,7 @@ static int __mcheck_cpu_apply_quirks(struct cpuinfo_x86 *c)
 			if (cfg->monarch_timeout < 0)
 				cfg->monarch_timeout = USEC_PER_SEC;
 		}
+		mca_cfg.bios_cmci_threshold = 1;
 	}
 
 	if (cfg->monarch_timeout < 0)
@@ -2121,11 +2122,17 @@ static __always_inline void exc_machine_check_kernel(struct pt_regs *regs)
 
 static __always_inline void exc_machine_check_user(struct pt_regs *regs)
 {
+	irqentry_state_t irq_state;
+
+	irq_state = irqentry_nmi_enter(regs);
+
 	irqentry_enter_from_user_mode(regs);
 
 	do_machine_check(regs);
 
 	irqentry_exit_to_user_mode(regs);
+
+	irqentry_nmi_exit(regs, irq_state);
 }
 
 #ifdef CONFIG_X86_64

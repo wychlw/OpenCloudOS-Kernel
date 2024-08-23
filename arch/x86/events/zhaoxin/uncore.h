@@ -9,10 +9,8 @@
 
 #define ZHAOXIN_FAM7_KX5000		0x1b
 #define ZHAOXIN_FAM7_KX6000		0x3b
-#define ZHAOXIN_FAM7_KH40000	0x5b
-#define ZHAOXIN_FAM7_KX8000		0x6b
-
-
+#define ZHAOXIN_FAM7_KH40000		0x5b
+#define ZHAOXIN_FAM7_KX7000		0x6b
 
 #define UNCORE_PMU_NAME_LEN		32
 #define UNCORE_PMU_HRTIMER_INTERVAL	(60LL * NSEC_PER_SEC)
@@ -82,14 +80,14 @@ struct zhaoxin_uncore_ops {
 };
 
 struct zhaoxin_uncore_pmu {
-	struct pmu			pmu;
-	char				name[UNCORE_PMU_NAME_LEN];
-	int				pmu_idx;
-	int				func_id;
-	bool				registered;
-	atomic_t			activeboxes;
-	struct zhaoxin_uncore_type	*type;
-	struct zhaoxin_uncore_box	**boxes;
+	struct pmu pmu;
+	char name[UNCORE_PMU_NAME_LEN];
+	int pmu_idx;
+	int func_id;
+	bool registered;
+	atomic_t activeboxes;
+	struct zhaoxin_uncore_type *type;
+	struct zhaoxin_uncore_box **boxes;
 };
 
 struct zhaoxin_uncore_extra_reg {
@@ -123,7 +121,7 @@ struct zhaoxin_uncore_box {
 	struct zhaoxin_uncore_extra_reg shared_regs[];
 };
 
-#define UNCORE_BOX_FLAG_INITIATED	0
+#define UNCORE_BOX_FLAG_INITIATED 0
 
 struct uncore_event_desc {
 	struct device_attribute attr;
@@ -135,8 +133,7 @@ struct hw_info {
 	u64 active_state;
 };
 
-ssize_t zx_uncore_event_show(struct device *dev,
-			  struct device_attribute *attr, char *buf);
+ssize_t zx_uncore_event_show(struct device *dev, struct device_attribute *attr, char *buf);
 
 #define ZHAOXIN_UNCORE_EVENT_DESC(_name, _config)			\
 {								\
@@ -160,8 +157,7 @@ static inline bool uncore_pmc_fixed(int idx)
 	return idx == UNCORE_PMC_IDX_FIXED;
 }
 
-static inline
-unsigned int uncore_mmio_box_ctl(struct zhaoxin_uncore_box *box)
+static inline unsigned int uncore_mmio_box_ctl(struct zhaoxin_uncore_box *box)
 {
 	return box->pmu->type->box_ctl +
 	       box->pmu->type->mmio_offset * box->pmu->pmu_idx;
@@ -182,14 +178,12 @@ static inline unsigned int uncore_pci_fixed_ctr(struct zhaoxin_uncore_box *box)
 	return box->pmu->type->fixed_ctr;
 }
 
-static inline
-unsigned int uncore_pci_event_ctl(struct zhaoxin_uncore_box *box, int idx)
+static inline unsigned int uncore_pci_event_ctl(struct zhaoxin_uncore_box *box, int idx)
 {
 	return idx * 4 + box->pmu->type->event_ctl;
 }
 
-static inline
-unsigned int uncore_pci_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
+static inline unsigned int uncore_pci_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
 {
 	if (!strncmp(box->pmu->type->name, "mc_", 3))
 		return idx * 2 + box->pmu->type->perf_ctr;
@@ -225,24 +219,21 @@ static inline unsigned int uncore_msr_fixed_ctr(struct zhaoxin_uncore_box *box)
 	return box->pmu->type->fixed_ctr + uncore_msr_box_offset(box);
 }
 
-static inline
-unsigned int uncore_msr_event_ctl(struct zhaoxin_uncore_box *box, int idx)
+static inline unsigned int uncore_msr_event_ctl(struct zhaoxin_uncore_box *box, int idx)
 {
 	return box->pmu->type->event_ctl +
 		(box->pmu->type->pair_ctr_ctl ? 2 * idx : idx) +
 		uncore_msr_box_offset(box);
 }
 
-static inline
-unsigned int uncore_msr_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
+static inline unsigned int uncore_msr_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
 {
 	return box->pmu->type->perf_ctr +
 		(box->pmu->type->pair_ctr_ctl ? 2 * idx : idx) +
 		uncore_msr_box_offset(box);
 }
 
-static inline
-unsigned int uncore_fixed_ctl(struct zhaoxin_uncore_box *box)
+static inline unsigned int uncore_fixed_ctl(struct zhaoxin_uncore_box *box)
 {
 	if (box->pci_dev)
 		return uncore_pci_fixed_ctl(box);
@@ -250,8 +241,7 @@ unsigned int uncore_fixed_ctl(struct zhaoxin_uncore_box *box)
 		return uncore_msr_fixed_ctl(box);
 }
 
-static inline
-unsigned int uncore_fixed_ctr(struct zhaoxin_uncore_box *box)
+static inline unsigned int uncore_fixed_ctr(struct zhaoxin_uncore_box *box)
 {
 	if (box->pci_dev)
 		return uncore_pci_fixed_ctr(box);
@@ -259,17 +249,17 @@ unsigned int uncore_fixed_ctr(struct zhaoxin_uncore_box *box)
 		return uncore_msr_fixed_ctr(box);
 }
 
-static inline
-unsigned int uncore_event_ctl(struct zhaoxin_uncore_box *box, int idx)
-{	if (box->pci_dev || box->io_addr)
+static inline unsigned int uncore_event_ctl(struct zhaoxin_uncore_box *box, int idx)
+{
+	if (box->pci_dev || box->io_addr)
 		return uncore_pci_event_ctl(box, idx);
 	else
 		return uncore_msr_event_ctl(box, idx);
 }
 
-static inline
-unsigned int uncore_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
-{	if (box->pci_dev || box->io_addr)
+static inline unsigned int uncore_perf_ctr(struct zhaoxin_uncore_box *box, int idx)
+{
+	if (box->pci_dev || box->io_addr)
 		return uncore_pci_perf_ctr(box, idx);
 	else
 		return uncore_msr_perf_ctr(box, idx);
@@ -302,20 +292,17 @@ static inline void uncore_enable_box(struct zhaoxin_uncore_box *box)
 		box->pmu->type->ops->enable_box(box);
 }
 
-static inline void uncore_disable_event(struct zhaoxin_uncore_box *box,
-				struct perf_event *event)
+static inline void uncore_disable_event(struct zhaoxin_uncore_box *box, struct perf_event *event)
 {
 	box->pmu->type->ops->disable_event(box, event);
 }
 
-static inline void uncore_enable_event(struct zhaoxin_uncore_box *box,
-				struct perf_event *event)
+static inline void uncore_enable_event(struct zhaoxin_uncore_box *box, struct perf_event *event)
 {
 	box->pmu->type->ops->enable_event(box, event);
 }
 
-static inline u64 uncore_read_counter(struct zhaoxin_uncore_box *box,
-				struct perf_event *event)
+static inline u64 uncore_read_counter(struct zhaoxin_uncore_box *box, struct perf_event *event)
 {
 	return box->pmu->type->ops->read_counter(box, event);
 }
@@ -351,12 +338,10 @@ static inline struct zhaoxin_uncore_box *uncore_event_to_box(struct perf_event *
 	return event->pmu_private;
 }
 
-
 static struct zhaoxin_uncore_box *uncore_pmu_to_box(struct zhaoxin_uncore_pmu *pmu, int cpu);
 static u64 uncore_msr_read_counter(struct zhaoxin_uncore_box *box, struct perf_event *event);
 static void uncore_mmio_exit_box(struct zhaoxin_uncore_box *box);
-static u64 uncore_mmio_read_counter(struct zhaoxin_uncore_box *box,
-			     struct perf_event *event);
+static u64 uncore_mmio_read_counter(struct zhaoxin_uncore_box *box, struct perf_event *event);
 static void uncore_pmu_start_hrtimer(struct zhaoxin_uncore_box *box);
 static void uncore_pmu_cancel_hrtimer(struct zhaoxin_uncore_box *box);
 static void uncore_pmu_event_start(struct perf_event *event, int flags);
@@ -365,7 +350,7 @@ static int uncore_pmu_event_add(struct perf_event *event, int flags);
 static void uncore_pmu_event_del(struct perf_event *event, int flags);
 static void uncore_pmu_event_read(struct perf_event *event);
 static void uncore_perf_event_update(struct zhaoxin_uncore_box *box, struct perf_event *event);
-struct event_constraint *
-uncore_get_constraint(struct zhaoxin_uncore_box *box, struct perf_event *event);
+struct event_constraint *uncore_get_constraint(struct zhaoxin_uncore_box *box,
+					       struct perf_event *event);
 void uncore_put_constraint(struct zhaoxin_uncore_box *box, struct perf_event *event);
 u64 uncore_shared_reg_config(struct zhaoxin_uncore_box *box, int idx);
