@@ -123,6 +123,7 @@
 
 #include <trace/events/sock.h>
 #include <linux/tkernel.h>
+#include <linux/hook_frame.h>
 
 /* The inetsw table contains everything that inet_create needs to
  * build a new socket.
@@ -1366,6 +1367,16 @@ void inet_sk_state_store(struct sock *sk, int newstate)
 {
 	trace_inet_sock_set_state(sk, sk->sk_state, newstate);
 	smp_store_release(&sk->sk_state, newstate);
+	#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	switch (sk->sk_state) {
+	case TCP_ESTABLISHED:
+	case TCP_LISTEN:
+		sock_hook_check(sk);
+		break;
+	default:
+		break;
+	}
+#endif
 }
 
 struct sk_buff *inet_gso_segment(struct sk_buff *skb,

@@ -109,6 +109,7 @@
 #include <linux/errqueue.h>
 #include <linux/ptp_clock_kernel.h>
 #include <trace/events/sock.h>
+#include <linux/hook_frame.h>
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
@@ -1572,6 +1573,11 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	if (err < 0)
 		goto out_module_put;
 
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	if (sock->sk)
+		sock->sk->pid = task_tgid_nr(current);
+#endif
+
 	/*
 	 * Now to bump the refcnt of the [loadable] module that owns this
 	 * socket at sock_release time we decrement its refcnt.
@@ -1935,6 +1941,12 @@ struct file *do_accept(struct file *file, unsigned file_flags,
 	if (err < 0)
 		goto out_fd;
 
+#ifdef CONFIG_SECURITY_MONITOR
+	if (newsock->sk)
+		newsock->sk->pid = task_tgid_nr(current);
+	accept_hook_check(newsock, newfile, &address, err);
+#endif
+
 	if (upeer_sockaddr) {
 		len = ops->getname(newsock, (struct sockaddr *)&address, 2);
 		if (len < 0) {
@@ -2051,6 +2063,11 @@ int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
 
 	err = READ_ONCE(sock->ops)->connect(sock, (struct sockaddr *)address,
 				addrlen, sock->file->f_flags | file_flags);
+
+#ifdef CONFIG_SECURITY_MONITOR
+	connect_hook_check(sock, file, address, err);
+#endif
+
 out:
 	return err;
 }
@@ -2195,6 +2212,10 @@ int __sys_sendto(int fd, void __user *buff, size_t len, unsigned int flags,
 	msg.msg_flags = flags;
 	err = __sock_sendmsg(sock, &msg);
 
+#ifdef CONFIG_SECURITY_MONITOR
+	sendto_hook_check(sock, fd, &address, err);
+#endif
+
 out_put:
 	fput_light(sock->file, fput_needed);
 out:
@@ -2253,6 +2274,10 @@ int __sys_recvfrom(int fd, void __user *ubuf, size_t size, unsigned int flags,
 		if (err2 < 0)
 			err = err2;
 	}
+
+#ifdef CONFIG_SECURITY_MONITOR
+	recvfrom_hook_check(sock, fd, &address, err);
+#endif
 
 	fput_light(sock->file, fput_needed);
 out:

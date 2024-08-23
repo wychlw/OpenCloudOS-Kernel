@@ -115,6 +115,7 @@
 #include <net/addrconf.h>
 #include <net/udp_tunnel.h>
 #include <net/gro.h>
+#include <linux/hook_frame.h>
 #if IS_ENABLED(CONFIG_IPV6)
 #include <net/ipv6_stubs.h>
 #endif
@@ -346,6 +347,11 @@ found:
 	}
 
 	error = 0;
+
+#ifdef CONFIG_SECURITY_MONITOR
+	sock_hook_check(sk);
+#endif
+
 fail_unlock:
 	spin_unlock_bh(&hslot->lock);
 fail:

@@ -31,6 +31,7 @@
 #include <linux/syscall_user_dispatch.h>
 #include <linux/mm_types_task.h>
 #include <linux/task_io_accounting.h>
+#include <linux/kref.h>
 #include <linux/posix-timers.h>
 #include <linux/rseq.h>
 #include <linux/seqlock.h>
@@ -768,6 +769,14 @@ struct kmap_ctrl {
 #endif
 };
 
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+struct security_moni_info {
+	struct kref refcount;
+	long size;
+	char buffer[];
+};
+#endif
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -811,6 +820,10 @@ struct task_struct {
 	 */
 	int				recent_used_cpu;
 	int				wake_cpu;
+#endif
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	struct security_moni_info	*par_moni_info;
+	struct security_moni_info	*my_moni_info;
 #endif
 	int				on_rq;
 

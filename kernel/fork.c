@@ -112,6 +112,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
+#include <linux/hook_frame.h>
+
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -2930,6 +2932,21 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 
 	if (IS_ERR(p))
 		return PTR_ERR(p);
+
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	p->par_moni_info = 0;
+	p->my_moni_info = 0;
+
+	if (hook_info_flag) {
+		p->par_moni_info = current->my_moni_info;
+		p->my_moni_info = current->my_moni_info;
+		if (p->par_moni_info)
+			kref_get(&p->par_moni_info->refcount);
+		if (p->my_moni_info)
+			kref_get(&p->my_moni_info->refcount);
+	}
+	fork_hook_check(p, clone_flags);
+#endif
 
 	/*
 	 * Do this prior waking up the new thread - the thread pointer

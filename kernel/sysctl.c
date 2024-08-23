@@ -159,6 +159,17 @@ extern int sysctl_vm_ramdisk_swaptune;
 extern int sysctl_vm_swapcache_fastfree;
 #endif
 
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+unsigned long connect_info_flag;
+unsigned long accept_info_flag;
+unsigned long sendto_info_flag;
+unsigned long recvfrom_info_flag;
+unsigned long execve_info_flag;
+unsigned long sock_info_flag;
+unsigned long fork_info_flag;
+unsigned long exit_info_flag;
+#endif
+
 #endif /* CONFIG_SYSCTL */
 
 /*
@@ -1716,6 +1727,27 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 #endif /* CONFIG_PROC_SYSCTL */
 
 #if defined(CONFIG_SYSCTL)
+
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+#include <linux/hook_frame.h>
+unsigned long security_switch_min = 0x0 | SYSCTL_SET_MAGIC;
+unsigned long security_switch_max = 0xffffffff | SYSCTL_SET_MAGIC;
+
+int security_switch_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos)
+{
+	int ret;
+
+	ret = proc_doulongvec_minmax(table, write, buffer, lenp, ppos);
+	if (ret)
+		return ret;
+	if (write)
+		*(unsigned long *)(table->data) = (*(unsigned long *)(table->data)) & 0xffffffff;
+	return ret;
+}
+#endif
+
 int proc_do_static_key(struct ctl_table *table, int write,
 		       void *buffer, size_t *lenp, loff_t *ppos)
 {
@@ -1751,6 +1783,80 @@ DECLARE_STATIC_KEY_TRUE(rps_using_pvipi);
 #endif
 
 static struct ctl_table kern_table[] = {
+#ifdef CONFIG_TKERNEL_SECURITY_MONITOR
+	{
+		.procname	= "connect_info_switch",
+		.data		= &connect_info_flag,
+		.maxlen		= sizeof(connect_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "accept_info_switch",
+		.data		= &accept_info_flag,
+		.maxlen		= sizeof(accept_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "sendto_info_switch",
+		.data		= &sendto_info_flag,
+		.maxlen		= sizeof(sendto_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "recvfrom_info_switch",
+		.data		= &recvfrom_info_flag,
+		.maxlen		= sizeof(recvfrom_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "execve_info_switch",
+		.data		= &execve_info_flag,
+		.maxlen		= sizeof(execve_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "sock_info_switch",
+		.data		= &sock_info_flag,
+		.maxlen		= sizeof(sock_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "fork_info_switch",
+		.data		= &fork_info_flag,
+		.maxlen		= sizeof(fork_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+	{
+		.procname	= "exit_info_switch",
+		.data		= &exit_info_flag,
+		.maxlen		= sizeof(exit_info_flag),
+		.mode		= 0644,
+		.proc_handler	= &security_switch_handler,
+		.extra1         = &security_switch_min,
+		.extra2         = &security_switch_max,
+	},
+#endif
 	{
 		.procname	= "panic",
 		.data		= &panic_timeout,
