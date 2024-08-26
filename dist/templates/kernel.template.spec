@@ -1215,7 +1215,7 @@ BuildInstMLNXOFED() {
 
 	# We need to jump the root privilege because we'll assign a normal tmpdir
 	sed -i 's/$UID -ne 0/! -z $JUMP_ROOT/g' mlnx_add_kernel_support.sh
-	if [ "${DISTRO}" == "tl4" ]; then
+	if [ "${DISTRO}" != "tl3" ]; then
 		sed -i '/# Check for needed packages by install.pl/a sed -i "s/rpmbuild --rebuild/rpmbuild --define '\''rhel 9'\'' --define '\''_lto_cflags -fno-lto'\'' --define '\''_hardened_cflags -fPIE'\'' --rebuild/g" ${ofed}/install.pl' mlnx_add_kernel_support.sh
 	fi
 	sed -i 's/\(ex ${ofed}\/install\.pl\)/\1 --without-mlnx-nvme/g' mlnx_add_kernel_support.sh
