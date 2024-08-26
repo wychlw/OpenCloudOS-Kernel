@@ -277,6 +277,7 @@ unsigned long kallsyms_lookup_name(const char *name)
 
 	return module_kallsyms_lookup_name(name);
 }
+EXPORT_SYMBOL_GPL(kallsyms_lookup_name);
 
 /*
  * Iterate over all symbols in vmlinux.  For symbols from modules use
@@ -317,6 +318,7 @@ int kallsyms_on_each_match_symbol(int (*fn)(void *, unsigned long),
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(kallsyms_on_each_symbol);
 
 static unsigned long get_symbol_pos(unsigned long addr,
 				    unsigned long *symbolsize,
