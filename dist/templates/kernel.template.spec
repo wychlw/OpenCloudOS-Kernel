@@ -642,6 +642,9 @@ BuildConfig() {
 	mkdir -p $_KernBuild
 	pushd $_KernBuild
 	cp $1 .config
+	%if "%{?dist}" == ".oc9"
+		cat ${_KernSrc}/kernel/configs/oc.config >> .config
+	%endif
 
 	[ "$_KernBuild" != "$_KernSrc" ] && echo "include $_KernSrc/Makefile" > Makefile
 	[ "$_KernBuild" != "$_KernSrc" ] && cp $_KernSrc/.dist.localversion ./
