@@ -1,3 +1,92 @@
+* Tue Aug 27 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-11
+- config,oc: support WLAN and MTD and more SND drivers
+- Merge linux 6.6.47
+- Merge linux 6.6.46
+- Merge linux 6.6.45
+- Merge OCK next branch to TK5 master branch
+- x86/hpet: Read HPET directly if panic in progress
+- i2c/zhaoxin: I2C controller driver enhancement and optimization
+- x86/mce: Add NMIs setup in machine_check func
+- x86/mce/zhaoxin: Enable mcelog to decode PCIE, ZDI/ZPI, and DRAM errors
+- x86/mce: Set bios_cmci_threshold for CMCI threshold
+- perf/x86/zhaoxin/uncore: update KX-7000 support
+- iommu/dma: Fix not fully traversing iova reservations issue
+- x86/cpu: Remove pointless evaluation of x86_coreid_bits
+- i2c: smbus: Add support for Zhaoxin SMBUS controller
+- anolis: efi: cper: Add Zhaoxin/Centaur ZDI/ZPI error decode
+- ata: ahci: Add support for AHCI SGPIO Enclosure Management
+- Set ASYM_PACKING Flag on Zhaoxin KH-40000 platform
+- cpufreq: ACPI: add ITMT support when CPPC enabled
+- iommu/vt-d: Add support for detecting ACPI namespace device in RMRR
+- Add kh40000_iommu_dma_ops for KH-40000 platform
+- Add kh40000_direct_dma_ops for KH-40000 platform
+- Add early quirk to identify kh-40000
+- Merge OCK next branch to TK5 master branch
+- !201 [next-6.6] Intel: Backport some core PMU bugfixes to kernel 6.6
+- !200 [next-6.6] Intel: Backport SPR/EMR CXL and HBM perfmon support to kernel 6.6
+- USB:Fix kernel NULL pointer when unbind UHCI form vfio-pci
+- hwmon: Add support for Zhaoxin core temperature monitoring
+- anolis: Add support for Zhaoxin Serial ATA IDE.
+- rue/scx: Kill user tasks in SCHED_EXT when scheduler is gone
+- rue/scx: Add readonly sysctl knob kernel.cpu_qos for SCHED_BT compatibility
+- rue/scx: Add /proc/bt_stat to maintain SCHED_BT compatibility
+- rue/scx: Add cpu.offline to maintain SCHED_BT compatibility
+- rue/scx: Add cpu.scx to the cpu cgroup controller
+- rue/scx: Add /proc/scx_stat to do scx cputime accounting
+- rue/scx: Fix lockdep warn on printk with rq lock held
+- rue/scx: Reorder scx_fork_rwsem, cpu_hotplug_lock and scx_cgroup_rwsem
+- Revert "sched: adaptive default skew_tick value"
+- KVM: x86: Don't sync user-written TSC against startup values
+- KVM: s390: Don't re-setup dummy routing when KVM_CREATE_IRQCHIP
+- KVM: x86: Don't re-setup empty IRQ routing when KVM_CAP_SPLIT_IRQCHIP
+- KVM: Setup empty IRQ routing when creating a VM
+- kabi: Introduce CONFIG_KABI_RESERVE
+- null_blk: Fix return value of nullb_device_power_store()
+- null_blk: fix null-ptr-dereference while configuring 'power' and 'submit_queues'
+- [PATCH] security: add security hook point
+- dist: provide mlnx-ofed-dist rpm
+- drivers,dist: add mlnx commercial quality drivers
+- submodule: update emm and thirdparty/release-drivers
+- net: csig toa patch toa patch from csig luckyqiu@tencent.com
+- Merge linux 6.6.44
+
+* Thu Aug 1 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.43-10
+- !199 [next-6.6] LoongArch: Add writecombine support for DMW-based ioremap and fix kexec boot faild issue.
+- pci-driver: Do not disable PCIE ports and bridge on kexec reboot
+- LoongArch: enable CONFIG_CRYPTO_XTS by default
+- LoongArch: Add writecombine support for DMW-based ioremap()
+- Merge linux 6.6.43
+- Merge linux 6.6.42
+- !197 [next-6.6] AMD: Backport Turin patches from upstream Merge pull request !197 from kile2009/next-turin-6.6
+- perf/x86/amd/core: Define a proper ref-cycles event for Zen 4 and later
+- x86/CPU/AMD: Add models 0x10-0x1f to the Zen5 range
+- x86/CPU/AMD: Do the common init on future Zens too
+- x86/CPU/AMD: Add more models to X86_FEATURE_ZEN5
+- x86/CPU/AMD: Add X86_FEATURE_ZEN5
+- x86/CPU/AMD: Drop now unused CPU erratum checking function
+- x86/CPU/AMD: Get rid of amd_erratum_1485[]
+- x86/CPU/AMD: Get rid of amd_erratum_400[]
+- x86/CPU/AMD: Get rid of amd_erratum_383[]
+- x86/CPU/AMD: Rename init_amd_zn() to init_amd_zen_common()
+- x86/CPU/AMD: Call the spectral chicken in the Zen2 init function
+- x86/CPU/AMD: Move the Zen3 BTC_NO detection to the Zen3 init function
+- Revert "vfio/type1: Unpin zero pages"
+- drivers/thirdparty: keep compile bnxt_re if not using thirdparty drivers
+- iommu/arm-smmu: Use the correct type in nvidia_smmu_context_fault()
+- thermal: intel: powerclamp: fix mismatch in get function for max_idle
+- Merge linux 6.6.41
+- drivers/thirdparty: add copy-drivers.sh to using thirdparty drivers
+- Merge linux 6.6.40
+- Merge linux 6.6.39
+- Merge linux 6.6.38
+- Merge linux 6.6.37
+- config: enable CONFIG_WIREGUARD
+- Merge linux 6.6.36
+- kabi: fix check-kabi file path when checking kABI
+- x86/tencentconfig: Enable CONFIG_UNWINDER_ORC in tencent.config
+- Merge linux 6.6.35
+- emm: don't set zram_memcg_nocharge as true until module load
+
 * Wed Jun 19 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.34-9
 - dist: do not run scripts fail in kernel.template.spec
 - drm/amdgpu: Fix possible NULL dereference in amdgpu_ras_query_error_status_helper()
