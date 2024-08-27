@@ -475,8 +475,6 @@ This package provides debug information for the bpftool package.
 #
 # Some oc9 partners have nic driver, and the driver support RDMA and only compatble with kernel native infiniband.
 # If integrate mlnx driver, oc9 partners RDMA nic driver cloud not run.
-#
-# %if "%{?dist}" != ".tl4" && "%{?dist}" != ".oc9" && "%{?dist}" != ".tl3"
 %if "%{?dist}" != ".tl4" && "%{?dist}" != ".tl3"
 %define with_ofed 0
 %endif
