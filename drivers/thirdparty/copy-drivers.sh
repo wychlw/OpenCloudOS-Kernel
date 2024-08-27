@@ -1,26 +1,18 @@
 #!/bin/bash
 
 thirdparty_prepare_source_code(){
-	if [ ! -e release-drivers/.git ] ; then
-		## Real release-drivers.tgz will more than 1024 bytes.
-		## Real release-drivers.tgz will less than 1024bytes.
-		if [ $(stat -c%s ../../dist/sources/release-drivers.tgz) -gt 1024 ]; then
-			cp -a ../../dist/sources/release-drivers.tgz ./ ; rm -rf release-drivers
-			tar -zxf release-drivers.tgz ; rm -f release-drivers.tgz
-		else
-			../../dist/sources/download-and-copy-drivers.sh
-		fi
-	fi
-
 	mlnx_tgz_name=$(release-drivers/mlnx/get_mlnx_info.sh mlnx_tgz_name)
+
 	if [ ! -e release-drivers/mlnx/${mlnx_tgz_name} ] ; then
-		if [ $(stat -c%s ../../dist/sources/${mlnx_tgz_name}) -gt 1024 ]; then
-			cp -a ../../dist/sources/${mlnx_tgz_name} release-drivers/mlnx/ ; return 0
+		## This script will only be called when existing ../../dist/sources dir
+		if [ $(stat -c%s ../../dist/sources/${mlnx_tgz_name}) -lt 1024 ]; then
+			## Real MLNX_OFED_LINUX-*.tgz will more than 1024 bytes.
+			## Real MLNX_OFED_LINUX-*.tgz will more than 1024 bytes.
+			pushd ../../dist/sources
+			./download-and-copy-drivers.sh
+			popd
 		fi
-		if [ -e ${mlnx_tgz_name} ]; then
-			mv -f ${mlnx_tgz_name} release-drivers/mlnx/ ; return 0
-		fi
-		../../dist/sources/download-and-copy-drivers.sh ; mv -f ${mlnx_tgz_name} release-drivers/mlnx/
+		cp -a ../../dist/sources/${mlnx_tgz_name} release-drivers/mlnx/
 	fi
 }
 

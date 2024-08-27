@@ -194,9 +194,8 @@ Source2001: cpupower.config
 ### Used for download thirdparty drivers
 # Start from Source3000 to Source3099, for thirdparty release drivers
 Source3000: download-and-copy-drivers.sh
-Source3001: release-drivers.tgz
-Source3002: MLNX_OFED_LINUX-23.10-3.2.2.0-rhel9.4-x86_64.tgz
-Source3003: install.sh
+Source3001: MLNX_OFED_LINUX-23.10-3.2.2.0-rhel9.4-x86_64.tgz
+Source3002: install.sh
 
 ###### Kernel package definations ##############################################
 ### Main meta package
@@ -635,8 +634,7 @@ BuildConfig() {
 	if [ -e ../../dist/sources ]; then
 		./copy-drivers.sh
 	else
-		cp -a %{SOURCE3001} ./ ; tar -zxf release-drivers.tgz ; rm -f release-drivers.tgz
-		cp -a %{SOURCE3002} release-drivers/mlnx/
+		cp -a %{SOURCE3001} release-drivers/mlnx/
 	fi
 	popd
 
@@ -1264,7 +1262,7 @@ BuildInstMLNXOFED() {
 	# Compress it into a new tgz file.
 	if [[ "${DISTRO}" != "tl3" ]]; then
 		## "${DISTRO}" == "tl4" or "${DISTRO}" == "oc9"
-		mlnxfulname=$(basename %{SOURCE3002})
+		mlnxfulname=$(basename %{SOURCE3001})
 		mlnxrelease=${mlnxfulname%.*}
 	else
 		## "${DISTRO}" == "tl3"
@@ -1274,8 +1272,8 @@ BuildInstMLNXOFED() {
 	# Turn it back to the original file
 	sed -i 's/! -z $JUMP_ROOT/$UID -ne 0/g' $mlnxrelease-ext.$KernUnameR/mlnx_add_kernel_support.sh
 	cp -r $signed $mlnxrelease-ext.$KernUnameR/ko_files.signed
-	sed -i "s/KERNELMODULE_REPLACE/$KernUnameR/g" %{SOURCE3003}
-	cp -r ko.location %{SOURCE3003} $mlnxrelease-ext.$KernUnameR/
+	sed -i "s/KERNELMODULE_REPLACE/$KernUnameR/g" %{SOURCE3002}
+	cp -r ko.location %{SOURCE3002} $mlnxrelease-ext.$KernUnameR/
 	tar -zcvf $mlnxrelease-ext.$KernUnameR.tgz $mlnxrelease-ext.$KernUnameR
 	mkdir %{buildroot}/mlnx/
 	install -m 755 $mlnxrelease-ext.$KernUnameR.tgz %{buildroot}/mlnx/
