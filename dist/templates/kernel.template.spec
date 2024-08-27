@@ -487,6 +487,7 @@ License: GPLv2
 BuildRequires: kernel-srpm-macros
 BuildRequires: kernel-rpm-macros
 BuildRequires: lsof
+BuildRequires: perl-sigtrap
 %endif
 %description -n mlnx-ofed-dist
 This package contains all the signed ko files.
