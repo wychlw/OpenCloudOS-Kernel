@@ -472,7 +472,12 @@ This package provides debug information for the bpftool package.
 
 # To avoid compile error, do not integrate mlnx commercial quality drivers if not tencentos release.
 # Users could compile and install MLNX_OFED_LINUX-* manually.
-%if "%{?dist}" != ".tl4" && "%{?dist}" != ".oc9" && "%{?dist}" != ".tl3"
+#
+# Some oc9 partners have nic driver, and the driver support RDMA and only compatble with kernel native infiniband.
+# If integrate mlnx driver, oc9 partners RDMA nic driver cloud not run.
+#
+# %if "%{?dist}" != ".tl4" && "%{?dist}" != ".oc9" && "%{?dist}" != ".tl3"
+%if "%{?dist}" != ".tl4" && "%{?dist}" != ".tl3"
 %define with_ofed 0
 %endif
 
@@ -628,15 +633,17 @@ case $KernUnameR in
 
 # Prepare Kernel config
 BuildConfig() {
-	# Prepare git sub-module, copy thirdparty drivers to override kernel native drivers
-	pushd ${_KernSrc}/drivers/thirdparty
-	rm -f download-and-copy-drivers.sh; cp -a %{SOURCE3000} ./
-	if [ -e ../../dist/sources ]; then
-		./copy-drivers.sh
-	else
-		cp -a %{SOURCE3001} release-drivers/mlnx/
-	fi
-	popd
+	# Copy mlnx drivers to drivers/thirdparty/release-drivers/mlnx/ dir
+	%if %{with_ofed}
+		pushd ${_KernSrc}/drivers/thirdparty
+		rm -f download-and-copy-drivers.sh; cp -a %{SOURCE3000} ./
+		if [ -e ../../dist/sources ]; then
+			./copy-drivers.sh
+		else
+			cp -a %{SOURCE3001} release-drivers/mlnx/
+		fi
+		popd
+	%endif
 
 	mkdir -p $_KernBuild
 	pushd $_KernBuild

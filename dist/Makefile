@@ -159,7 +159,9 @@ dist-tarball:
 
 dist-drivers:
 	@echo "Preparing thirdparty drivers."
+ifneq ($(KDIST),oc9)
 	@cd $(TOPDIR)/dist/sources/ ; ./download-and-copy-drivers.sh ; cd $(TOPDIR)
+endif
 
 $(CONFIGFILE): $(DISTFILES)
 	@echo "Generating kernel config style '$(CONFIG)'"
