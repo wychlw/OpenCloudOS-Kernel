@@ -1164,13 +1164,6 @@ BuildInstMLNXOFED() {
 		popd
 	}
 
-	if [ ! -e drivers/thirdparty/release-drivers/mlnx ]; then
-		pwd ; echo "_KernSrc is ${_KernSrc}"
-		ls -al ${_KernSrc}/drivers/thirdparty/
-		## Return 0 to using kernel native mlnx drivers.
-		return 0
-	fi
-
 	pushd drivers/thirdparty/release-drivers/mlnx
 	MLNX_OFED_VERSION=$(./get_mlnx_info.sh mlnx_version) ; 	MLNX_OFED_TGZ_NAME=$(./get_mlnx_info.sh mlnx_tgz_name)
 	tar -xzvf $MLNX_OFED_TGZ_NAME
