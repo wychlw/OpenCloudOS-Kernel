@@ -11778,6 +11778,20 @@ struct cftype cpu_cftypes[CPU_CFTYPE_CNT + 1] = {
 		.write_s64 = cpu_idle_write_s64,
 	},
 #endif
+#ifdef CONFIG_EXT_GROUP_SCHED
+	[CPU_CFTYPE_SCX_SWITCH] = {
+		.name = "scx",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
+	},
+	[CPU_CFTYPE_OFFLINE_SWITCH] = {
+		.name = "offline",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_scx_read_u64,
+		.write_u64 = cpu_scx_write_u64,
+	},
+#endif
 #ifdef CONFIG_CFS_BANDWIDTH
 	[CPU_CFTYPE_MAX] = {
 		.name = "max",
@@ -11804,20 +11818,6 @@ struct cftype cpu_cftypes[CPU_CFTYPE_CNT + 1] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpu_uclamp_max_show,
 		.write = cpu_uclamp_max_write,
-	},
-#endif
-#ifdef CONFIG_EXT_GROUP_SCHED
-	[CPU_CFTYPE_SCX_SWITCH] = {
-		.name = "scx",
-		.flags = CFTYPE_NOT_ON_ROOT,
-		.read_u64 = cpu_scx_read_u64,
-		.write_u64 = cpu_scx_write_u64,
-	},
-	[CPU_CFTYPE_OFFLINE_SWITCH] = {
-		.name = "offline",
-		.flags = CFTYPE_NOT_ON_ROOT,
-		.read_u64 = cpu_scx_read_u64,
-		.write_u64 = cpu_scx_write_u64,
 	},
 #endif
 	{ }	/* terminate */
