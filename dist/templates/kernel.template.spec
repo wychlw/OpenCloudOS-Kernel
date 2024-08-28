@@ -632,16 +632,21 @@ case $KernUnameR in
 # Prepare Kernel config
 BuildConfig() {
 	# Copy mlnx drivers to drivers/thirdparty/release-drivers/mlnx/ dir
+	pushd ${_KernSrc}/drivers/thirdparty
 	%if %{with_ofed}
-		pushd ${_KernSrc}/drivers/thirdparty
 		rm -f download-and-copy-drivers.sh; cp -a %{SOURCE3000} ./
-		if [ -e ../../dist/sources ]; then
-			./copy-drivers.sh
-		else
+		## Real MLNX_OFED_LINUX-*.tgz will more than 1024 bytes.
+		## Dummy MLNX_OFED_LINUX-*.tgz will less than 1024 bytes.
+		if [ $(stat -c%s %{SOURCE3001}) -gt 1024 ]; then
 			cp -a %{SOURCE3001} release-drivers/mlnx/
+			./copy-drivers.sh without_mlnx
+		else
+			./copy-drivers.sh
 		fi
-		popd
+	%else
+		./copy-drivers.sh without_mlnx
 	%endif
+	popd
 
 	mkdir -p $_KernBuild
 	pushd $_KernBuild
