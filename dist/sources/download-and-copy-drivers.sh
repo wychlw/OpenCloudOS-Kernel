@@ -20,10 +20,12 @@ thirdparty_mlnx(){
 	mlnx_tgz_sha256=$(../../drivers/thirdparty/release-drivers/mlnx/get_mlnx_info.sh mlnx_tgz_sha256)
 	get_mlnx_tgz_ok=1
 
-	if [ $(stat -c%s ${mlnx_tgz_name}) -gt 1024 ]; then return 0; fi
-
-	rm -f ${mlnx_tgz_name}
-	timeout 900 wget -q $mlnx_tgz_url || get_mlnx_tgz_ok=0
+	# Real MLNX_OFED_LINUX-*.tgz will more than 1024 bytes.
+	# Dummy MLNX_OFED_LINUX-*.tgz will less than 1024 bytes.
+	if [ $(stat -c%s ${mlnx_tgz_name}) -lt 1024 ]; then
+		rm -f ${mlnx_tgz_name}
+		timeout 900 wget -q $mlnx_tgz_url || get_mlnx_tgz_ok=0
+	fi
 
 	sha256_tmp=$(sha256sum ${mlnx_tgz_name} | awk '{printf $1}')
 	if [[ $sha256_tmp != $mlnx_tgz_sha256 ]]; then get_mlnx_tgz_ok=0; fi
