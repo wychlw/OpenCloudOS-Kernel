@@ -843,7 +843,16 @@ int proc_watchdog_cpumask(struct ctl_table *table, int write,
 	return err;
 }
 
+/*
+ * If enable CONFIG_KASAN or CONFIG_KCSAN, the system will run much
+ * slower, increase watchdog_thresh's max value to avoid soft lockup
+ * or hungtask when run heavy test suit.
+ */
+#if defined(CONFIG_KASAN) || defined(CONFIG_KCSAN)
+static const int three_hundred = 300;
+#else
 static const int sixty = 60;
+#endif
 
 static struct ctl_table watchdog_sysctls[] = {
 	{
@@ -862,7 +871,11 @@ static struct ctl_table watchdog_sysctls[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_watchdog_thresh,
 		.extra1		= SYSCTL_ZERO,
+#if defined(CONFIG_KASAN) || defined(CONFIG_KCSAN)
+		.extra2		= (void *)&three_hundred,
+#else
 		.extra2		= (void *)&sixty,
+#endif
 	},
 	{
 		.procname	= "watchdog_cpumask",
