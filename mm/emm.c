@@ -54,6 +54,11 @@ int emm_init(struct emm_memcg_ops *ops)
 	int ret = 0;
 	struct mem_cgroup *memcg;
 
+	if (!root_mem_cgroup) {
+		pr_err("Memory Cgroup is disabled, EMM init aborting.");
+		return -EINVAL;
+	}
+
 	/*
 	 * Going to iterate through exiting cgroups,
 	 * also use it to protect __emm_memcg_ops
