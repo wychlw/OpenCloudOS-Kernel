@@ -1480,16 +1480,24 @@ static u64 tg_prfill_throttle_stat(struct seq_file *sf, struct blkg_policy_data 
 	if (!dname || !rue_io_enabled())
 		return 0;
 
-	seq_printf(sf, "%s limit_valid:[%d %d] limit_index=%d iops=%u/%u iops_low=%u/%u iops_max=%u/%u bio_queued=%u/%u slice=%lu/%lu io_disp=[%u/%u]\n",
+	seq_printf(sf, "%s limit_valid:[%d %d] limit_index=%d bps=%llu/%llu bps_low=%llu/%llu bps_max=%llu/%llu ",
 			dname,
 			td->limit_valid[0], td->limit_valid[1], td->limit_index,
+			tg_bps_limit(tg, READ), tg_bps_limit(tg, WRITE),
+			tg->bps[READ][LIMIT_LOW], tg->bps[WRITE][LIMIT_LOW],
+			tg->bps[READ][LIMIT_MAX], tg->bps[WRITE][LIMIT_MAX]
+			);
+
+	seq_printf(sf, "iops=%u/%u iops_low=%u/%u iops_max=%u/%u bio_queued=%u/%u slice=%lu/%lu bytes_disp=[%llu/%llu] io_disp=[%u/%u]\n",
 			tg_iops_limit(tg, READ), tg_iops_limit(tg, WRITE),
 			tg->iops[READ][LIMIT_LOW], tg->iops[WRITE][LIMIT_LOW],
 			tg->iops[READ][LIMIT_MAX], tg->iops[WRITE][LIMIT_MAX],
 			tg->service_queue.nr_queued[READ], tg->service_queue.nr_queued[WRITE],
 			read_slice, write_slice,
+			tg->bytes_disp[READ], tg->bytes_disp[WRITE],
 			tg->io_disp[READ], tg->io_disp[WRITE]
 			);
+
 	return 0;
 }
 
