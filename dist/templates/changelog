@@ -1,3 +1,14 @@
+* Tue Sep  3 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-12
+- config,x86: set CONFIG_HW_RANDOM_ZHAOXIN to m
+- emm: fix panic in kdump
+- config: trace: enable CONFIG_FUNCTION_GRAPH_RETVAL
+- rue/scx: Fix cgroupv2 cpu controller regression
+- watchdog: increase watchdog_thresh max value to 300 in debug kernel
+- drivers,mlnx: add sha256 check for MLNX tgz
+- Merge OKC next branch to TK5 master branch
+- i2c/zhaoxin: switch i2c registration to devm functions
+- lkp: intel: selftests/bpf: Add netlink helper library
+
 * Tue Aug 27 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-11
 - config,oc: support WLAN and MTD and more SND drivers
 - Merge linux 6.6.47
