@@ -539,7 +539,6 @@ xfs_rui_item_recover(
 		return error;
 
 	rudp = xfs_trans_get_rud(tp, ruip);
-	xlog_recover_transfer_intent(tp, dfp);
 
 	for (i = 0; i < ruip->rui_format.rui_nextents; i++) {
 		struct xfs_rmap_intent	fake = { };

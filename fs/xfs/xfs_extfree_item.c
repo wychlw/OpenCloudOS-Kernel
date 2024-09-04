@@ -691,7 +691,6 @@ xfs_efi_item_recover(
 		return error;
 
 	efdp = xfs_trans_get_efd(tp, efip, efip->efi_format.efi_nextents);
-	xlog_recover_transfer_intent(tp, dfp);
 
 	for (i = 0; i < efip->efi_format.efi_nextents; i++) {
 		struct xfs_extent_free_item	fake = {
