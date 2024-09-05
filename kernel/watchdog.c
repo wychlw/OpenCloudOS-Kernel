@@ -39,7 +39,12 @@ unsigned long __read_mostly watchdog_enabled;
 int __read_mostly watchdog_user_enabled = 1;
 static int __read_mostly watchdog_hardlockup_user_enabled = WATCHDOG_HARDLOCKUP_DEFAULT;
 static int __read_mostly watchdog_softlockup_user_enabled = 1;
+#if defined(CONFIG_KASAN)
+int __read_mostly watchdog_thresh = 300;
+#else
 int __read_mostly watchdog_thresh = 10;
+#endif
+
 static int __read_mostly watchdog_hardlockup_available;
 
 struct cpumask watchdog_cpumask __read_mostly;
@@ -844,11 +849,11 @@ int proc_watchdog_cpumask(struct ctl_table *table, int write,
 }
 
 /*
- * If enable CONFIG_KASAN or CONFIG_KCSAN, the system will run much
+ * If enable CONFIG_KASAN, the system will run much
  * slower, increase watchdog_thresh's max value to avoid soft lockup
  * or hungtask when run heavy test suit.
  */
-#if defined(CONFIG_KASAN) || defined(CONFIG_KCSAN)
+#if defined(CONFIG_KASAN)
 static const int three_hundred = 300;
 #else
 static const int sixty = 60;
@@ -871,7 +876,7 @@ static struct ctl_table watchdog_sysctls[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_watchdog_thresh,
 		.extra1		= SYSCTL_ZERO,
-#if defined(CONFIG_KASAN) || defined(CONFIG_KCSAN)
+#if defined(CONFIG_KASAN)
 		.extra2		= (void *)&three_hundred,
 #else
 		.extra2		= (void *)&sixty,
