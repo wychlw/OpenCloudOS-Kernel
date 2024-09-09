@@ -297,12 +297,14 @@ static ssize_t do_mbuf_write(struct mbuf_slot *mbuf, char *buffer, size_t size)
 
 void mbuf_reset(struct mbuf_slot *mbuf)
 {
-	write_seqlock(&mbuf->slot_lock);
+	unsigned long flags;
+
+	write_seqlock_irqsave(&mbuf->slot_lock, flags);
 	mbuf->mring->first_idx = mbuf->mring->base_idx;
 	mbuf->mring->first_seq = 0;
 	mbuf->mring->next_idx = mbuf->mring->base_idx;
 	mbuf->mring->next_seq = 0;
-	write_sequnlock(&mbuf->slot_lock);
+	write_sequnlock_irqrestore(&mbuf->slot_lock, flags);
 }
 EXPORT_SYMBOL(mbuf_reset);
 
