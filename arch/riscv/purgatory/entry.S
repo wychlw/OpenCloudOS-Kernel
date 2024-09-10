@@ -7,6 +7,7 @@
  * Author: Li Zhengyu (lizhengyu3@huawei.com)
  *
  */
+#include <asm/asm.h>
 
 .macro	size, sym:req
 	.size \sym, . - \sym
@@ -39,6 +40,7 @@ size purgatory_start
 
 .data
 
+.align LGREG
 .globl riscv_kernel_entry
 riscv_kernel_entry:
 	.quad	0
