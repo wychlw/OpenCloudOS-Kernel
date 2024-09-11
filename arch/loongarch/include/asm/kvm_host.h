@@ -170,10 +170,9 @@ enum emulation_result {
 #define KVM_LARCH_FPU		(0x1 << 0)
 #define KVM_LARCH_LSX		(0x1 << 1)
 #define KVM_LARCH_LASX		(0x1 << 2)
-#define KVM_LARCH_SWCSR_LATEST	(0x1 << 3)
-#define KVM_LARCH_HWCSR_USABLE	(0x1 << 4)
-#define KVM_GUEST_PMU_ENABLE	(0x1 << 5)
-#define KVM_GUEST_PMU_ACTIVE	(0x1 << 6)
+#define KVM_LARCH_LBT		(0x1 << 3)
+#define KVM_LARCH_SWCSR_LATEST	(0x1 << 4)
+#define KVM_LARCH_HWCSR_USABLE	(0x1 << 5)
 
 struct kvm_vcpu_arch {
 	/*
@@ -207,6 +206,7 @@ struct kvm_vcpu_arch {
 
 	/* FPU state */
 	struct loongarch_fpu fpu FPU_ALIGN;
+	struct loongarch_lbt lbt;
 
 	/* CSR state */
 	struct loongarch_csrs *csr;
@@ -303,6 +303,11 @@ static inline bool kvm_guest_has_pmu(struct kvm_vcpu_arch *arch)
 static inline int kvm_get_pmu_num(struct kvm_vcpu_arch *arch)
 {
 	return (arch->cpucfg[LOONGARCH_CPUCFG6] & CPUCFG6_PMNUM) >> CPUCFG6_PMNUM_SHIFT;
+}
+
+static inline bool kvm_guest_has_lbt(struct kvm_vcpu_arch *arch)
+{
+	return arch->cpucfg[2] & (CPUCFG2_X86BT | CPUCFG2_ARMBT | CPUCFG2_MIPSBT);
 }
 
 /* Debug: dump vcpu state */
