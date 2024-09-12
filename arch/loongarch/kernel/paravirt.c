@@ -249,10 +249,13 @@ static int pv_cpu_down_prepare(unsigned int cpu)
 }
 #endif
 
-static bool kvm_para_available(void)
+bool kvm_para_available(void)
 {
 	static int hypervisor_type;
 	int config;
+
+	if (!cpu_has_hypervisor)
+		return false;
 
 	if (!hypervisor_type) {
 		config = read_cpucfg(CPUCFG_KVM_SIG);
@@ -263,28 +266,31 @@ static bool kvm_para_available(void)
 	return hypervisor_type == HYPERVISOR_KVM;
 }
 
+unsigned int kvm_arch_para_features(void)
+{
+	static unsigned int feature;
+
+	if (!kvm_para_available())
+		return 0;
+
+	if (!feature)
+		feature = read_cpucfg(CPUCFG_KVM_FEATURE);
+
+	return feature;
+}
+
 int __init pv_ipi_init(void)
 {
-	int feature;
-
-	if (!cpu_has_hypervisor)
-		return 0;
-	if (!(feature & BIT(KVM_FEATURE_IPI)))
+	if (!kvm_para_has_feature(KVM_FEATURE_IPI))
 		return 0;
 
-	/*
-	 * check whether KVM hypervisor supports pv_ipi or not
-	 */
-	feature = read_cpucfg(CPUCFG_KVM_FEATURE);
 #ifdef CONFIG_SMP
-	if (feature & KVM_FEATURE_PV_IPI) {
-		smp_ops.init_ipi		= pv_init_ipi;
-		smp_ops.send_ipi_single		= pv_send_ipi_single;
-		smp_ops.send_ipi_mask		= pv_send_ipi_mask;
-	}
+	smp_ops.init_ipi		= pv_init_ipi;
+	smp_ops.send_ipi_single		= pv_send_ipi_single;
+	smp_ops.send_ipi_mask		= pv_send_ipi_mask;
 #endif
 
-	return 1;
+	return 0;
 }
 
 static void pv_cpu_reboot(void *unused)
@@ -408,15 +414,9 @@ static struct notifier_block pv_reboot_nb = {
 
 int __init pv_time_init(void)
 {
-	int r, feature;
+	int r;
 
-	if (!cpu_has_hypervisor)
-		return 0;
-	if (!kvm_para_available())
-		return 0;
-
-	feature = read_cpucfg(CPUCFG_KVM_FEATURE);
-	if (!(feature & BIT(KVM_FEATURE_STEAL_TIME)))
+	if (!kvm_para_has_feature(KVM_FEATURE_STEAL_TIME))
 		return 0;
 
 	has_steal_clock = 1;
