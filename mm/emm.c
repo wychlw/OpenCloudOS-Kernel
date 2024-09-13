@@ -54,8 +54,8 @@ int emm_init(struct emm_memcg_ops *ops)
 	int ret = 0;
 	struct mem_cgroup *memcg;
 
-	if (!root_mem_cgroup) {
-		pr_err("Memory Cgroup is disabled, EMM init aborting.");
+	if (mem_cgroup_disabled()) {
+		pr_err("Memory Cgroup is disabled, EMM init aborting.\n");
 		return -EINVAL;
 	}
 
@@ -72,11 +72,11 @@ int emm_init(struct emm_memcg_ops *ops)
 
 	WRITE_ONCE(__emm_memcg_ops, ops);
 
-	memcg = mem_cgroup_iter(NULL, NULL, NULL);
-	do {
+	for (memcg = mem_cgroup_iter(NULL, NULL, NULL);
+	     memcg != NULL;
+	     memcg = mem_cgroup_iter(NULL, memcg, NULL)) {
 		_emm_do_memcg_init(memcg);
-	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
-
+	}
 out:
 	cgroup_unlock();
 
