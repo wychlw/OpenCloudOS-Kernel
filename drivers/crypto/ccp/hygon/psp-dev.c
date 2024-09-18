@@ -597,7 +597,7 @@ int psp_do_cmd(int cmd, void *data, int *psp_ret)
 	int rc;
 	int mutex_enabled = READ_ONCE(hygon_psp_hooks.psp_mutex_enabled);
 
-	if (is_vendor_hygon() && mutex_enabled) {
+	if (mutex_enabled) {
 		if (psp_mutex_lock_timeout(&psp_misc->data_pg_aligned->mb_mutex,
 					   PSP_MUTEX_TIMEOUT) != 1)
 			return -EBUSY;
@@ -605,7 +605,7 @@ int psp_do_cmd(int cmd, void *data, int *psp_ret)
 		mutex_lock(hygon_psp_hooks.sev_cmd_mutex);
 	}
 	rc = __psp_do_cmd_locked(cmd, data, psp_ret);
-	if (is_vendor_hygon() && mutex_enabled)
+	if (mutex_enabled)
 		psp_mutex_unlock(&psp_misc->data_pg_aligned->mb_mutex);
 	else
 		mutex_unlock(hygon_psp_hooks.sev_cmd_mutex);
