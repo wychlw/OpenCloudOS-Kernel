@@ -1245,7 +1245,7 @@ BuildInstMLNXOFED() {
 	rpm_rp=$(realpath MLNX_OFED_LINUX-*/RPMS)
 	pushd workdir
 	find $rpm_rp -name "*.rpm" -type f | while read -r pkg; do
-		if rpm -qlp $pkg | grep "\.ko$" | grep "5.4" >> ../ko.location; then
+		if rpm -qlp $pkg | grep "\.ko$" | grep "6.6" >> ../ko.location; then
 			rpm_bn=$(basename $pkg)
 			mkdir $rpm_bn && pushd $rpm_bn
 			rpm2cpio $rpm_rp/$rpm_bn | cpio -id
