@@ -14,7 +14,7 @@ endif
 ### Downstream marker, update this when forking to another downstream
 KDIST =
 
-ifeq ($(KDIST),oc9)
+ifeq ($(DIST),oc9)
 ### Vendor mark
 VENDOR = opencloudos
 VENDOR_CAPITALIZED = OpenCloudOS
@@ -159,7 +159,7 @@ dist-tarball:
 
 dist-drivers:
 	@echo "Preparing thirdparty drivers."
-ifneq ($(KDIST),oc9)
+ifneq ($(DIST),oc9)
 	@cd $(TOPDIR)/dist/sources/ ; ./download-and-copy-drivers.sh ; cd $(TOPDIR)
 endif
 
