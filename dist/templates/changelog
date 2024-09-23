@@ -1,11 +1,25 @@
-* Tue Sep  3 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-12
+* Mon Sep 23 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-12
+- crypto: ccp: fix the sev_do_cmd panic on non-Hygon platforms
+- emm: upadate to v0.1.7.3
+- emm: fix cgroup initilization check
+- tools headers UAPI: Sync kvm headers with the kernel sources
+- KVM: x86: Prevent excluding the BSP on setting max_vcpu_ids
+- KVM: x86: Limit check IDs for KVM_SET_BOOT_CPU_ID
+- KVM: Reject overly excessive IDs in KVM_CREATE_VCPU
+- KVM: x86: Make x2APIC ID 100% readonly
+- KVM: Introduce KVM_SET_USER_MEMORY_REGION2
+- config/x86: Add EROFS_FS and CACHEFILES for image-granularity acceleration
+- config,x86: open edr
+- riscv/purgatory: align riscv_kernel_entry
+- config,x86: disable CONFIG_IOMMU_DEBUGFS
+- hung_task,watchdog: set thresh time to 600 seconds
+- zhaoxin_rng: Remove redundant pr_err log after matching cpu_ids
 - config,x86: set CONFIG_HW_RANDOM_ZHAOXIN to m
 - emm: fix panic in kdump
 - config: trace: enable CONFIG_FUNCTION_GRAPH_RETVAL
 - rue/scx: Fix cgroupv2 cpu controller regression
 - watchdog: increase watchdog_thresh max value to 300 in debug kernel
-- drivers,mlnx: add sha256 check for MLNX tgz
-- Merge OKC next branch to TK5 master branch
+- dist: delete useless code in kernel.template.spec
 - i2c/zhaoxin: switch i2c registration to devm functions
 - lkp: intel: selftests/bpf: Add netlink helper library
 
