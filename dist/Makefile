@@ -104,15 +104,15 @@ endif
 
 ### RPM build options
 # All params enabled by default (except kABI check, see below), ENABLED overrides DEFAULT_DISABLE.
-DISABLED=$(DEFAULT_DISABLED)
-ENABLED=$(DEFAULT_ENABLED)
+DISABLED = $(DEFAULT_DISABLED)
+ENABLED = $(DEFAULT_ENABLED)
 # Automatically disable non core package for non standard build, such as eks/cloudgame
 ifneq ($(CONFIG),generic-release)
-DISABLED=ofed
+DISABLED = ofed
 endif
 # generic-debug only build kernel rpm, disable other rpms
 ifeq ($(CONFIG),generic-debug)
-DISABLED=ofed bpftool perf tools headers keypkg doc
+override DISABLED := bpftool perf tools headers keypkg doc $(DISABLED)
 endif
 
 ## A few shortcut for commonly used params:
