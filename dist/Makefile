@@ -106,9 +106,13 @@ endif
 # All params enabled by default (except kABI check, see below), ENABLED overrides DEFAULT_DISABLE.
 DISABLED=$(DEFAULT_DISABLED)
 ENABLED=$(DEFAULT_ENABLED)
-# Automatically disable non core package for non standard build
+# Automatically disable non core package for non standard build, such as eks/cloudgame
 ifneq ($(CONFIG),generic-release)
 DISABLED=ofed
+endif
+# generic-debug only build kernel rpm, disable other rpms
+ifeq ($(CONFIG),generic-debug)
+DISABLED=ofed bpftool perf tools headers keypkg doc
 endif
 
 ## A few shortcut for commonly used params:
@@ -160,7 +164,9 @@ dist-tarball:
 dist-drivers:
 	@echo "Preparing thirdparty drivers."
 ifneq ($(DIST),oc9)
+ifneq ($(filter ofed, $(DISABLED)), ofed)
 	@cd $(TOPDIR)/dist/sources/ ; ./download-and-copy-drivers.sh ; cd $(TOPDIR)
+endif
 endif
 
 $(CONFIGFILE): $(DISTFILES)
