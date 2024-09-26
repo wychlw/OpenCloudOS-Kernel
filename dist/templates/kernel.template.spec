@@ -230,8 +230,8 @@ This is the meta package of %{?rpm_vendor:%{rpm_vendor} }Linux kernel, the core 
 Summary: %{rpm_vendor} Linux Kernel
 Provides: installonlypkg(kernel)
 Provides: kernel = %{version}-%{release}
-Provides: kernel-core = %{version}-%{release}
-Provides: kernel-core-uname-r = %{kernel_unamer}
+Provides: %{rpm_name}-core = %{version}-%{release}
+Provides: %{rpm_name}-core-uname-r = %{kernel_unamer}
 Provides: kernel-uname-r = %{kernel_unamer}
 Requires(pre): coreutils
 Requires(post): coreutils kmod dracut
@@ -257,7 +257,9 @@ input and output, etc.
 %package modules
 Summary: %{rpm_vendor} Kernel modules to match the %{rpm_name}-core kernel
 Provides: installonlypkg(kernel-module)
-Provides: kernel-modules = %{version}-%{release}
+Provides: %{rpm_name}-modules = %{version}-%{release}
+Provides: %{rpm_name}-modules-uname-r = %{kernel_unamer}
+Provides: kernel-modules = %{kernel_unamer}
 Provides: kernel-modules-extra = %{version}-%{release}
 Requires: %{rpm_name}-core = %{version}-%{release}
 AutoReq: no
@@ -272,8 +274,8 @@ This package provides commonly used kernel modules for the %{?2:%{2}-}core kerne
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
 Release: %{release}
 Provides: installonlypkg(kernel)
-Provides: kernel-devel = %{version}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{version}-%{release}
+Provides: %{rpm_name}-devel = %{version}-%{release}
+Provides: %{rpm_name}-devel-%{_target_cpu} = %{version}-%{release}
 Provides: kernel-devel-uname-r = %{kernel_unamer}
 AutoReqprov: no
 %description devel
