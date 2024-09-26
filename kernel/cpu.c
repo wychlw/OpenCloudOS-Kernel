@@ -3211,7 +3211,17 @@ enum cpu_mitigations {
 	CPU_MITIGATIONS_AUTO_NOSMT,
 };
 
+/*
+ * For safety, in arch/Kconfig, CPU_MITIGATIONS_DEFAULT_OFF have much
+ * "depends on" items.
+ * Only debug version will enable CONFIG_CPU_MITIGATIONS_DEFAULT_OFF.
+ * This can't be changed at run time.
+ */
+#ifdef CONFIG_CPU_MITIGATIONS_DEFAULT_OFF
+static enum cpu_mitigations cpu_mitigations __ro_after_init = CPU_MITIGATIONS_OFF;
+#else
 static enum cpu_mitigations cpu_mitigations __ro_after_init = CPU_MITIGATIONS_AUTO;
+#endif
 
 static int __init mitigations_parse_cmdline(char *arg)
 {

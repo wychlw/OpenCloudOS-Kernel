@@ -17,6 +17,18 @@ config CPU_MITIGATIONS
 	def_bool y
 endif
 
+config CPU_MITIGATIONS_DEFAULT_OFF
+	depends on CPU_MITIGATIONS
+	depends on KASAN || KCSAN || DEBUG_LOCKDEP
+	depends on LOCALVERSION="+debug"
+	def_bool y
+	help
+	  Disable CPU mitigations by default only on debug version
+	  of kernel.
+	  Because debug kernel run too slowly, need to improve it
+	  performance. And debug kernel will only be used to debug,
+	  will not be used as release version.
+
 menu "General architecture-dependent options"
 
 config ARCH_HAS_SUBPAGE_FAULTS
