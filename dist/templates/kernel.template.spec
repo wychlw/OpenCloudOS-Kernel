@@ -306,7 +306,7 @@ Summary: Debug information for package %{rpm_name}
 # More info, pls run "git blame dist/templates/kernel.template.spec" (or "git log -p dist/templates/kernel.template.spec")
 # to find and read the relevant commit.
 Provides: installonlypkg(kernel)
-Provides: kernel-debuginfo = %{version}-%{release}
+Provides: %{rpm_name}-debuginfo = %{version}-%{release}
 AutoReqProv: no
 %description debuginfo
 This package provides debug information including
@@ -331,7 +331,7 @@ This is required to use SystemTap with %{rpm_name}.
 %package debuginfo-common
 Summary: Kernel source files used by %{rpm_name}-debuginfo packages
 Provides: installonlypkg(kernel)
-Provides: kernel-debuginfo-common = %{version}-%{release}
+Provides: %{rpm_name}-debuginfo-common = %{version}-%{release}
 %description debuginfo-common
 This package is required by %{rpm_name}-debuginfo subpackages.
 It provides the kernel source files common to all builds.
