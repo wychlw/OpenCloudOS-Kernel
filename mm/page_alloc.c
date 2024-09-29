@@ -56,6 +56,8 @@
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
 #endif
+#include <linux/log2.h>
+#include <linux/sched/clock.h>
 
 #include "internal.h"
 #include "shuffle.h"
@@ -290,7 +292,7 @@ const char * const migratetype_names[MIGRATE_TYPES] = {
 
 int min_free_kbytes = 1024;
 int user_min_free_kbytes = -1;
-static int watermark_boost_factor __read_mostly = 15000;
+static int watermark_boost_factor __read_mostly;
 static int watermark_scale_factor = 10;
 
 /* movable_zone is the "real" zone pages in ZONE_MOVABLE are taken from */
@@ -4429,6 +4431,8 @@ failed:
 }
 EXPORT_SYMBOL_GPL(__alloc_pages_bulk);
 
+extern unsigned int vm_memcg_latency_histogram;
+
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
@@ -4439,6 +4443,12 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 start_ns;
+	u64 delta;
+	int delta_log;
+#endif
 
 	/*
 	 * There are several places where we assume that the order value is sane
@@ -4460,6 +4470,16 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 	if (!prepare_alloc_pages(gfp, order, preferred_nid, nodemask, &ac,
 			&alloc_gfp, &alloc_flags))
 		return NULL;
+
+#ifdef CONFIG_MEMCG
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_latency_histogram && memcg)
+		start_ns = local_clock();
+	if (memcg)
+		css_get(&memcg->css);
+	rcu_read_unlock();
+#endif
 
 	/*
 	 * Forbid the first pass from falling back to types that fragment
@@ -4489,6 +4509,17 @@ out:
 		__free_pages(page, order);
 		page = NULL;
 	}
+
+#ifdef CONFIG_MEMCG
+	if (sysctl_vm_memory_qos && vm_memcg_latency_histogram && memcg) {
+		delta = local_clock() - start_ns;
+		delta_log = __ilog2_u64(delta);
+		if (delta_log < 0)
+			delta_log = 0;
+		this_cpu_add(*memcg->latency_histogram[delta_log], 1);
+	}
+	mem_cgroup_put(memcg);
+#endif
 
 	trace_mm_page_alloc(page, order, alloc_gfp, ac.migratetype);
 	kmsan_alloc_page(page, order, alloc_gfp);

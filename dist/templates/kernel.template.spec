@@ -181,6 +181,9 @@ Source21: module-keygen.sh
 
 Source30: check-kabi
 
+# RUE module load at boot
+Source40: rue.conf
+
 ### Arch speficied kernel configs and kABI
 # Start from Source1000 to Source1199, for kernel config
 # Start from Source1200 to Source1399, for kabi
@@ -842,6 +845,10 @@ InstKernelBasic() {
 	install -m 644 $_KernBuild/.config %{buildroot}/boot/config-$KernUnameR
 	install -m 644 $_KernBuild/System.map System.map
 	install -m 644 $_KernBuild/System.map %{buildroot}/boot/System.map-$KernUnameR
+
+	# Install RUE module probe file
+	mkdir -p %{buildroot}%{_modulesloaddir}
+	install -m 644 %{SOURCE40} %{buildroot}%{_modulesloaddir}/rue.conf
 
 	# NOTE: If we need to sign the vmlinuz, this is the place to do it.
 	%ifarch aarch64
@@ -1515,6 +1522,8 @@ fi
 /boot/System.map-%{kernel_unamer}
 /boot/config-%{kernel_unamer}
 /boot/symvers-%{kernel_unamer}.gz
+# RUE module probe file
+%config(noreplace) %{_modulesloaddir}/rue.conf
 # Initramfs will be generated after install
 %ghost /boot/initramfs-%{kernel_unamer}.img
 %ghost /boot/initramfs-%{kernel_unamer}kdump.img

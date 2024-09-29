@@ -13,12 +13,120 @@
 #include <linux/rcupdate.h>
 #include <net/sock.h>
 #include <net/inet_sock.h>
+#include <net/gen_stats.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_CGROUP_NET_CLASSID
+
+#define NET_MSCALE          (1000 * 1000)
+#define RATE_UNLIMITED      0
+#define TOKEN_CHARGE_TIKES  16
+#define WND_DIV_SHIFT       10
+#define WND_DIVISOR         (1 << WND_DIV_SHIFT)
+#define MAX_NIC_SUPPORT     16
+
+enum {
+	CLS_TC_PRIO_HIGH,
+	CLS_TC_PRIO_NORMAL,
+	CLS_TC_PRIO_MAX = CGROUP_PRIORITY_MAX
+};
+
+struct dev_bw_config {
+	char *name;
+	unsigned long rx_bps_min;
+	unsigned long rx_bps_max;
+	unsigned long tx_bps_min;
+	unsigned long tx_bps_max;
+};
+
+struct dev_limit_config {
+	char *name;
+};
+
+struct cls_token_bucket {
+	s64 depth;		/* depth in bytes. */
+	s64 max_ticks;		/* bound of time diff. */
+	atomic64_t tokens;	/* number of tokens in bytes. */
+	atomic64_t t_c;		/* last time we touch it. */
+	u64 rate;		/* rate of token generation. */
+};
+
+struct cls_cgroup_stats {
+	struct gnet_stats_basic_sync bstats;
+	struct net_rate_estimator __rcu *est;
+	spinlock_t lock;
+	atomic64_t dropped;
+};
+
 struct cgroup_cls_state {
 	struct cgroup_subsys_state css;
+	struct cls_cgroup_stats rx_stats;
+	struct cls_cgroup_stats tx_stats;
 	u32 classid;
+	u32 prio;
+	struct cls_token_bucket rx_bucket;
+	struct cls_token_bucket tx_bucket;
+	struct cls_token_bucket rx_dev_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket tx_dev_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket rx_online_bucket[MAX_NIC_SUPPORT];
+	struct cls_token_bucket tx_online_bucket[MAX_NIC_SUPPORT];
+	u16 rx_scale;
+	u16 rx_dev_scale[MAX_NIC_SUPPORT];
+	u16 rx_online_scale[MAX_NIC_SUPPORT];
+	struct list_head rx_list;
+	struct list_head tx_list;
+	unsigned long *whitelist_lports;
+	unsigned long *whitelist_rports;
 };
+
+struct rue_net_ops {
+	int (*read_rx_stat)(struct cgroup_subsys_state *css,
+			struct seq_file *sf);
+	int (*read_tx_stat)(struct cgroup_subsys_state *css,
+			struct seq_file *sf);
+	void (*dump_rx_tb)(struct seq_file *m);
+	void (*dump_tx_tb)(struct seq_file *m);
+	void (*dump_rx_bps_limit_tb)(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+	void (*dump_tx_bps_limit_tb)(struct cgroup_subsys_state *css,
+				struct seq_file *sf);
+	void (*cgroup_set_rx_limit)(struct cls_token_bucket *tb, u64 rate);
+	void (*cgroup_set_tx_limit)(struct cls_token_bucket *tb, u64 rate);
+	int (*write_rx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
+	int (*write_tx_bps_minmax)(int ifindex, u64 min, u64 max, int all);
+	int (*write_rx_online_bps_max)(int ifindex, u64 max);
+	int (*write_tx_online_bps_max)(int ifindex, u64 max);
+	int (*write_rx_online_bps_min)(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+	int (*write_tx_online_bps_min)(struct cgroup_cls_state *cs,
+				int ifindex, u64 rate);
+	int (*rx_online_list_del)(struct cgroup_cls_state *cs);
+	int (*tx_online_list_del)(struct cgroup_cls_state *cs);
+	int (*write_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
+				  struct cftype *cft, u64 value);
+	u64 (*read_rx_min_rwnd_segs)(struct cgroup_subsys_state *css,
+				 struct cftype *cft);
+	u32 (*cls_cgroup_adjust_wnd)(struct sock *sk, u32 wnd,
+				 u32 mss, u16 wscale);
+	int (*cls_cgroup_factor)(const struct sock *sk);
+	bool (*is_low_prio)(struct sock *sk);
+};
+
+extern int sysctl_net_qos_enable;
+extern int rx_throttle_all_enabled;
+extern int tx_throttle_all_enabled;
+extern struct dev_bw_config bw_config[];
+extern struct dev_limit_config limit_bw_config[];
+extern struct dev_bw_config online_max_config[];
+extern struct dev_limit_config online_min_config[];
+extern int netqos_notifier(struct notifier_block *this,
+			   unsigned long event, void *ptr);
+
+static inline struct
+cgroup_cls_state *css_cls_state(struct cgroup_subsys_state *css)
+{
+	return css ? container_of(css, struct cgroup_cls_state, css) : NULL;
+}
 
 struct cgroup_cls_state *task_cls_state(struct task_struct *p);
 
@@ -43,6 +151,9 @@ static inline void sock_update_classid(struct sock_cgroup_data *skcd)
 
 	classid = task_cls_classid(current);
 	sock_cgroup_set_classid(skcd, classid);
+	rcu_read_lock();
+	skcd->cs = task_cls_state(current);
+	rcu_read_unlock();
 }
 
 static inline u32 __task_get_classid(struct task_struct *task)
@@ -75,6 +186,33 @@ static inline u32 task_get_classid(const struct sk_buff *skb)
 
 	return classid;
 }
+
+static inline s64 ns_to_bytes(u64 rate, s64 diff)
+{
+	return rate * (u64)diff / NSEC_PER_SEC;
+}
+
+static inline s64 bytes_to_ns(u64 rate, u64 bytes)
+{
+	if (unlikely(!rate))
+		return 0;
+
+	return bytes * NSEC_PER_SEC / rate;
+}
+
+static inline struct cgroup_cls_state *sock_get_css(const struct sock *sk)
+{
+	struct cgroup_cls_state *cs;
+
+	rcu_read_lock();
+	cs = READ_ONCE(sk->sk_cgrp_data.cs);
+	if (!cs || unlikely(!css_tryget_online(&cs->css)))
+		cs = NULL;
+	rcu_read_unlock();
+
+	return cs;
+}
+
 #else /* !CONFIG_CGROUP_NET_CLASSID */
 static inline void sock_update_classid(struct sock_cgroup_data *skcd)
 {

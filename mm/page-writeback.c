@@ -41,8 +41,9 @@
 #include <linux/mm_inline.h>
 #include <trace/events/writeback.h>
 
+#include <linux/rue.h>
+
 #include "internal.h"
-#include "../block/blk-cgroup.h"
 
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
@@ -109,6 +110,15 @@ EXPORT_SYMBOL_GPL(dirty_writeback_interval);
  * The longest time for which data is allowed to remain dirty
  */
 unsigned int dirty_expire_interval = 30 * 100; /* centiseconds */
+
+
+/*
+ * Support buffer write bps hierarchy
+ * Enable this will check all parents's limitations
+ */
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+unsigned int sysctl_buffered_write_bps_hierarchy;
+#endif
 
 /*
  * Flag that puts the machine in "laptop mode". Doubles as a timeout in jiffies:
@@ -1642,55 +1652,6 @@ static long wb_min_pause(struct bdi_writeback *wb,
 	return pages >= DIRTY_POLL_THRESH ? 1 + t / 2 : t;
 }
 
-#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-static void blkcg_update_dirty_ratelimit(struct blkcg *blkcg,
-					 unsigned long dirtied,
-					 unsigned long elapsed)
-{
-	unsigned long long bps = blkcg_buffered_write_bps(blkcg);
-	unsigned long long ratelimit;
-	unsigned long dirty_rate;
-
-	dirty_rate = (dirtied - blkcg->dirtied_stamp) * HZ;
-	dirty_rate /= elapsed;
-
-	ratelimit = blkcg->dirty_ratelimit;
-	ratelimit *= div_u64(bps, dirty_rate + 1);
-	ratelimit = min(ratelimit, bps);
-	ratelimit >>= PAGE_SHIFT;
-
-	blkcg->dirty_ratelimit = (blkcg->dirty_ratelimit + ratelimit) / 2 + 1;
-	trace_blkcg_dirty_ratelimit(bps, dirty_rate, blkcg->dirty_ratelimit, ratelimit);
-}
-
-void blkcg_update_bandwidth(struct blkcg *blkcg)
-{
-	unsigned long now = jiffies;
-	unsigned long dirtied;
-	unsigned long elapsed;
-
-	if (!blkcg)
-		return;
-	if (!spin_trylock(&blkcg->lock))
-		return;
-
-	elapsed = now - blkcg->bw_time_stamp;
-	dirtied = percpu_counter_read(&blkcg->nr_dirtied);
-
-	if (elapsed > MAX_PAUSE * 2)
-		goto snapshot;
-	if (elapsed <= MAX_PAUSE)
-		goto unlock;
-
-	blkcg_update_dirty_ratelimit(blkcg, dirtied, elapsed);
-snapshot:
-	blkcg->dirtied_stamp = dirtied;
-	blkcg->bw_time_stamp = now;
-unlock:
-	spin_unlock(&blkcg->lock);
-}
-#endif
-
 static inline void wb_dirty_limits(struct dirty_throttle_control *dtc)
 {
 	struct bdi_writeback *wb = dtc->wb;
@@ -1732,6 +1693,10 @@ static inline void wb_dirty_limits(struct dirty_throttle_control *dtc)
 	}
 }
 
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+EXPORT_TRACEPOINT_SYMBOL_GPL(blkcg_dirty_ratelimit);
+#endif
+
 /*
  * balance_dirty_pages() must be called by processes which are generating dirty
  * data.  It looks at the number of dirty pages in the machine and will force
@@ -1765,6 +1730,7 @@ static int balance_dirty_pages(struct bdi_writeback *wb,
 	int ret = 0;
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 	struct blkcg *blkcg = get_task_blkcg(current);
+	struct blkcg *parent_blkcg;
 #endif
 
 	for (;;) {
@@ -1854,7 +1820,7 @@ free_running:
 			m_intv = ULONG_MAX;
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-			if (blkcg_buffered_write_bps(blkcg))
+			if (blkcg && blkcg_buffered_write_bps_enabled(blkcg))
 				goto blkcg_bps;
 #endif
 
@@ -1938,12 +1904,32 @@ free_running:
 							RATELIMIT_CALC_SHIFT;
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-		if (blkcg_buffered_write_bps(blkcg) &&
+		if (blkcg && blkcg_buffered_write_bps_enabled(blkcg) &&
 			task_ratelimit > blkcg_dirty_ratelimit(blkcg)) {
 blkcg_bps:
-				blkcg_update_bandwidth(blkcg);
+			if (likely(sysctl_buffered_write_bps_hierarchy)) {
 				dirty_ratelimit = blkcg_dirty_ratelimit(blkcg);
-				task_ratelimit = dirty_ratelimit;
+				parent_blkcg = blkcg;
+
+				while (parent_blkcg) {
+					if (blkcg_buffered_write_bps(parent_blkcg)) {
+						RUE_CALL_VOID(IO, blkcg_update_bandwidth,
+								parent_blkcg);
+						if (dirty_ratelimit > blkcg_dirty_ratelimit(parent_blkcg))
+							dirty_ratelimit = blkcg_dirty_ratelimit(parent_blkcg);
+					}
+
+					parent_blkcg = blkcg_parent(parent_blkcg);
+				}
+			} else {
+				RUE_CALL_VOID(IO, blkcg_update_bandwidth, blkcg);
+				dirty_ratelimit = blkcg_dirty_ratelimit(blkcg);
+			}
+			task_ratelimit = dirty_ratelimit;
+
+			trace_blkcg_calc_task_ratelimit(blkcg->css.cgroup->kn->name,
+					blkcg_buffered_write_bps(blkcg), blkcg_dirty_ratelimit(blkcg),
+					task_ratelimit);
 		}
 #endif
 
@@ -2706,6 +2692,21 @@ static void folio_account_dirtied(struct folio *folio,
 	struct inode *inode = mapping->host;
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 	struct blkcg *blkcg = get_task_blkcg(current);
+#endif
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 *page_acc;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_page_cache_hit) {
+		if (memcg) {
+			page_acc = get_cpu_ptr(memcg->apd);
+			*page_acc = *page_acc + 1;
+			put_cpu_ptr(memcg->apd);
+		}
+	}
+	rcu_read_unlock();
 #endif
 
 	trace_writeback_dirty_folio(folio, mapping);

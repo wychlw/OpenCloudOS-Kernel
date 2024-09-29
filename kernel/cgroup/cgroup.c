@@ -60,9 +60,9 @@
 #include <linux/sched/deadline.h>
 #include <linux/psi.h>
 #include <net/sock.h>
-#include <linux/memcontrol.h>
-
 #include <linux/blk-cgroup.h>
+#include <linux/rue.h>
+#include <linux/backing-dev.h>
 
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
@@ -2014,6 +2014,34 @@ static int cgroup_reconfigure(struct fs_context *fc)
 	return 0;
 }
 
+static void css_account_procs(struct task_struct *task, struct css_set *cset,
+			      int num)
+{
+	struct cgroup_subsys *ss;
+	int ssid;
+
+	if (!thread_group_leader(task))
+		return;
+
+	for_each_subsys(ss, ssid) {
+		struct cgroup_subsys_state *css = cset->subsys[ssid];
+
+		if (!css)
+			continue;
+		css->nr_procs += num;
+		while (css->parent) {
+			css = css->parent;
+			css->nr_procs += num;
+		}
+	}
+}
+
+static void do_css_account_procs(struct task_struct *task, struct css_set *cset,
+				 int num)
+{
+	css_account_procs(task, cset, num);
+}
+
 static void init_cgroup_housekeeping(struct cgroup *cgrp)
 {
 	struct cgroup_subsys *ss;
@@ -2029,6 +2057,7 @@ static void init_cgroup_housekeeping(struct cgroup *cgrp)
 	cgrp->dom_cgrp = cgrp;
 	cgrp->max_descendants = INT_MAX;
 	cgrp->max_depth = INT_MAX;
+	cgrp->priority = 0;
 	INIT_LIST_HEAD(&cgrp->rstat_css_list);
 	prev_cputime_init(&cgrp->prev_cputime);
 
@@ -2573,8 +2602,10 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 
 			get_css_set(to_cset);
 			to_cset->nr_tasks++;
+			do_css_account_procs(task, to_cset, 1);
 			css_set_move_task(task, from_cset, to_cset, true);
 			from_cset->nr_tasks--;
+			do_css_account_procs(task, from_cset, -1);
 			/*
 			 * If the source or destination cgroup is frozen,
 			 * the task might require to change its state.
@@ -2768,7 +2799,9 @@ void cgroup_migrate_add_src(struct css_set *src_cset,
  * using cgroup_migrate(), cgroup_migrate_finish() must be called on
  * @mgctx.
  */
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
 unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind = 1;
+#endif
 
 int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 {
@@ -2781,7 +2814,7 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 				 mg_src_preload_node) {
 		struct css_set *dst_cset;
 		struct cgroup_subsys *ss;
-#if IS_ENABLED(CONFIG_MEMCG)
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
 		struct cgroup_subsys_state *css;
 #endif
 		int ssid;
@@ -2792,21 +2825,21 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 
 		WARN_ON_ONCE(src_cset->mg_dst_cset || dst_cset->mg_dst_cset);
 
-#if IS_ENABLED(CONFIG_MEMCG)
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
 		css = dst_cset->subsys[memory_cgrp_id];
-		if (!sysctl_allow_memcg_migrate_ignore_blkio_bind && css) {
+		if (rue_io_enabled() &&
+		    !sysctl_allow_memcg_migrate_ignore_blkio_bind && css) {
 			struct mem_cgroup *memcg = mem_cgroup_from_css(css);
-			struct cgroup_subsys_state *b_css;
 
 			css = dst_cset->subsys[io_cgrp_id];
-			b_css = get_blkio_css(memcg);
-
-			if (css && b_css && css != blkcg_root_css && b_css != css) {
+			if (css && memcg->bind_blkio && css != blkcg_root_css &&
+			    memcg->bind_blkio != css) {
 				pr_err("memcg already bind blkio, disallow migrate");
 				return -EPERM;
 			}
 		}
 #endif
+
 		/*
 		 * If src cset equals dst, it's noop.  Drop the src.
 		 * cgroup_migrate() will skip the cset too.  Note that we
@@ -5504,6 +5537,89 @@ static ssize_t cgroup_threads_write(struct kernfs_open_file *of,
 	return __cgroup_procs_write(of, buf, false) ?: nbytes;
 }
 
+int cgroup_priority_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgrp = seq_css(seq)->cgroup;
+	unsigned int prio = cgrp->priority;
+
+	seq_printf(seq, "%d\n", prio);
+
+	return 0;
+}
+
+static void cgroup_set_priority(struct cgroup *cgrp, u16 priority)
+{
+	u16 old = cgrp->priority;
+	struct cgroup_subsys_state *css;
+	int ssid;
+
+	cgrp->priority = priority;
+
+	for_each_css(css, ssid, cgrp) {
+		if (css->ss->css_priority_change)
+			css->ss->css_priority_change(css, old, priority);
+	}
+}
+
+static void cgroup_priority_propagate(struct cgroup *cgrp)
+{
+	struct cgroup *dsct;
+	struct cgroup_subsys_state *d_css;
+	u16 priority = cgrp->priority;
+
+	lockdep_assert_held(&cgroup_mutex);
+	cgroup_for_each_live_descendant_pre(dsct, d_css, cgrp) {
+		cgroup_set_priority(dsct, priority);
+	}
+}
+
+ssize_t cgroup_priority_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct cgroup *cgrp, *parent;
+	ssize_t ret;
+	u16 prio, old;
+
+	buf = strstrip(buf);
+	ret = kstrtou16(buf, 0, &prio);
+	if (ret)
+		return ret;
+
+	if (prio < 0 || prio >= CGROUP_PRIORITY_MAX)
+		return -ERANGE;
+
+	cgrp = cgroup_kn_lock_live(of->kn, false);
+	if (!cgrp)
+		return -ENOENT;
+	parent = cgroup_parent(cgrp);
+	if (parent && parent->priority && prio != parent->priority) {
+		ret = -EINVAL;
+		goto unlock_out;
+	}
+
+	old = cgrp->priority;
+	if (prio == old)
+		goto unlock_out;
+	cgroup_set_priority(cgrp, prio);
+	if (prio > old)
+		cgroup_priority_propagate(cgrp);
+unlock_out:
+	cgroup_kn_unlock(of->kn);
+
+	return ret ?: nbytes;
+}
+
+ssize_t cgroup_priority(struct cgroup_subsys_state *css)
+{
+	struct cgroup *cgrp = css->cgroup;
+	unsigned int prio = 0;
+
+	if (cgrp)
+		prio = cgrp->priority;
+	return prio;
+}
+EXPORT_SYMBOL(cgroup_priority);
+
 #ifdef CONFIG_CGROUP_SLI
 int cgroup_sli_monitor_open(struct kernfs_open_file *of)
 {
@@ -5592,6 +5708,12 @@ static struct cftype cgroup_base_files[] = {
 		.name = "cgroup.max.depth",
 		.seq_show = cgroup_max_depth_show,
 		.write = cgroup_max_depth_write,
+	},
+	{
+		.name = "cgroup.priority",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_priority_show,
+		.write = cgroup_priority_write,
 	},
 	{
 		.name = "cgroup.stat",
@@ -6076,6 +6198,7 @@ static struct cgroup *cgroup_create(struct cgroup *parent, const char *name,
 	cgrp->self.parent = &parent->self;
 	cgrp->root = root;
 	cgrp->level = level;
+	cgrp->priority = parent->priority;
 #ifdef CONFIG_RQM
 	cgrp->mbuf = NULL;
 #endif
@@ -7115,6 +7238,7 @@ void cgroup_post_fork(struct task_struct *child,
 
 		WARN_ON_ONCE(!list_empty(&child->cg_list));
 		cset->nr_tasks++;
+		do_css_account_procs(child, cset, 1);
 		css_set_move_task(child, NULL, cset, false);
 	} else {
 		put_css_set(cset);
@@ -7196,6 +7320,7 @@ void cgroup_exit(struct task_struct *tsk)
 	css_set_move_task(tsk, cset, NULL, false);
 	list_add_tail(&tsk->cg_list, &cset->dying_tasks);
 	cset->nr_tasks--;
+	do_css_account_procs(tsk, cset, -1);
 
 	if (dl_task(tsk))
 		dec_dl_tasks_cs(tsk);
@@ -7252,6 +7377,13 @@ static int __init cgroup_disable(char *str)
 			static_branch_disable(cgroup_subsys_enabled_key[i]);
 			pr_info("Disabling %s control group subsystem\n",
 				ss->name);
+
+#ifdef CONFIG_CGROUP_WRITEBACK
+			if ((i == memory_cgrp_id) || (i == io_cgrp_id)) {
+				pr_info("Disable cgv1 buffer IO writeback\n");
+				sysctl_io_cgv1_buff_wb_enabled = 0;
+			}
+#endif
 		}
 
 		for (i = 0; i < OPT_FEATURE_COUNT; i++) {

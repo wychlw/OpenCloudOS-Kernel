@@ -44,6 +44,7 @@
 #include <linux/gfp.h>
 #include <linux/module.h>
 #include <linux/static_key.h>
+#include <net/cls_cgroup.h>
 
 #include <trace/events/tcp.h>
 #include "netlat.h"
@@ -266,6 +267,9 @@ static u16 tcp_select_window(struct sock *sk)
 	struct net *net = sock_net(sk);
 	u32 old_win = tp->rcv_wnd;
 	u32 cur_win, new_win;
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	u32 orig_new_win;
+#endif
 
 	/* Make the window 0 if we failed to queue the data because we
 	 * are out of memory. The window is temporary, so we don't store
@@ -304,6 +308,19 @@ static u16 tcp_select_window(struct sock *sk)
 	else
 		new_win = min(new_win, (65535U << tp->rx_opt.rcv_wscale));
 
+#ifdef CONFIG_CGROUP_NET_CLASSID
+	if (sysctl_net_qos_enable) {
+		orig_new_win = new_win;
+
+		new_win = RUE_CALL_TYPE(NET, cls_cgroup_adjust_wnd, u32,
+					sk, new_win,
+					inet_csk(sk)->icsk_ack.rcv_mss,
+					tp->rx_opt.rcv_wscale);
+
+		if (unlikely(!new_win))
+			new_win = orig_new_win;
+	}
+#endif
 	/* RFC1323 scaling applied */
 	new_win >>= tp->rx_opt.rcv_wscale;
 

@@ -63,12 +63,19 @@
 #include <linux/mount.h>
 #include <linux/userfaultfd_k.h>
 #include <linux/pid.h>
-
 #include <linux/blkdev.h>
+#include <linux/backing-dev.h>
+
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+#include <linux/blk-cgroup.h>
+#endif
+
 #include "../lib/kstrtox.h"
 
 #include <linux/uaccess.h>
 #include <asm/processor.h>
+#include <linux/memcontrol.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_X86
 #include <asm/nmi.h>
@@ -95,6 +102,20 @@ EXPORT_SYMBOL_GPL(sysctl_long_vals);
 extern int sysctl_qos_mbuf_enable;
 #endif
 
+#ifdef CONFIG_MEMCG
+extern int sysctl_vm_memory_qos;
+extern int sysctl_vm_use_priority_oom;
+extern int sysctl_vm_qos_highest_reclaim_prio;
+extern unsigned int sysctl_vm_qos_prio_reclaim_ratio;
+extern unsigned int sysctl_clean_dying_memcg_async;
+extern void memory_qos_update(void);
+extern int memory_qos_prio_reclaim_ratio_update(void);
+static int vm_lowest_prio = CGROUP_PRIORITY_MAX;
+static int twenty = 20;
+#endif
+
+extern unsigned long sysctl_async_mem_free_pages;
+
 /* Constants used for minimum and maximum */
 
 #ifdef CONFIG_PERF_EVENTS
@@ -104,10 +125,6 @@ static const int six_hundred_forty_kb = 640 * 1024;
 
 static const int ngroups_max = NGROUPS_MAX;
 static const int cap_last_cap = CAP_LAST_CAP;
-
-#ifdef CONFIG_CGROUPS
-extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind;
-#endif
 
 #ifdef CONFIG_PROC_SYSCTL
 
@@ -157,6 +174,10 @@ extern int sysctl_vm_force_swappiness;
 #ifdef CONFIG_EMM_RAMDISK_SWAP
 extern int sysctl_vm_ramdisk_swaptune;
 extern int sysctl_vm_swapcache_fastfree;
+#endif
+
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
+extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind __read_mostly;
 #endif
 
 #ifdef CONFIG_TKERNEL_SECURITY_MONITOR
@@ -586,8 +607,6 @@ static int do_proc_dointvec(struct ctl_table *table, int write,
 			buffer, lenp, ppos, conv, data);
 }
 
-#ifdef CONFIG_PAGECACHE_LIMIT
-#define ADDITIONAL_RECLAIM_RATIO 2
 static int setup_pagecache_limit(void)
 {
 	/* reclaim ADDITIONAL_RECLAIM_PAGES more than limit. */
@@ -655,7 +674,6 @@ static int pc_limit_async_handler(struct ctl_table *table, int write,
 
 	return ret;
 }
-#endif /* CONFIG_PAGECACHE_LIMIT */
 
 static int do_proc_douintvec_w(unsigned int *tbl_data,
 			       struct ctl_table *table,
@@ -1638,6 +1656,182 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 	return err;
 }
 
+static int netcls_put_char(void **buf, size_t *size, char c)
+{
+	if (*size) {
+		char **buffer = (char **)buf;
+
+		memcpy(*buffer, &c, 1);
+		(*size)--, (*buffer)++;
+		*buf = *buffer;
+	}
+	return 0;
+}
+
+static int netcls_put_long(void **buf, size_t *size, unsigned long val,
+			  bool neg)
+{
+	int len;
+	char tmp[22], *p = tmp;
+
+	sprintf(p, "%s%lu", neg ? "-" : "", val);
+	len = strlen(tmp);
+	if (len > *size)
+		len = *size;
+	memcpy(*buf, tmp, len);
+	*size -= len;
+	*buf += len;
+	return 0;
+}
+
+int netcls_do_large_bitmap(struct ctl_table *table, int write,
+			 void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int err = 0;
+	bool first = 1;
+	size_t left = *lenp;
+	unsigned long bitmap_len = table->maxlen;
+	unsigned long *bitmap = *(unsigned long **) table->data;
+	unsigned long *tmp_bitmap = NULL;
+	char tr_a[] = { '-', ',', '\n' }, tr_b[] = { ',', '\n', 0 }, c;
+
+	if (!bitmap || !bitmap_len || !left || (*ppos && !write)) {
+		*lenp = 0;
+		return 0;
+	}
+
+	if (write) {
+		char *kbuf, *p;
+		size_t skipped = 0;
+
+		if (left > PAGE_SIZE - 1) {
+			left = PAGE_SIZE - 1;
+			/* How much of the buffer we'll skip this pass */
+			skipped = *lenp - left;
+		}
+
+		p = kbuf = buffer;
+		if (IS_ERR(kbuf))
+			return PTR_ERR(kbuf);
+
+		tmp_bitmap = bitmap_zalloc(bitmap_len, GFP_KERNEL);
+		if (!tmp_bitmap)
+			return -ENOMEM;
+
+		proc_skip_char(&p, &left, '\n');
+		while (!err && left) {
+			unsigned long val_a, val_b;
+			bool neg;
+			size_t saved_left;
+
+			/* In case we stop parsing mid-number, we can reset */
+			saved_left = left;
+			err = proc_get_long(&p, &left, &val_a, &neg, tr_a,
+					     sizeof(tr_a), &c);
+			/*
+			 * If we consumed the entirety of a truncated buffer or
+			 * only one char is left (may be a "-"), then stop here,
+			 * reset, & come back for more.
+			 */
+			if ((left <= 1) && skipped) {
+				left = saved_left;
+				break;
+			}
+
+			if (err)
+				break;
+			if (val_a >= bitmap_len || neg) {
+				err = -EINVAL;
+				break;
+			}
+
+			val_b = val_a;
+			if (left) {
+				p++;
+				left--;
+			}
+
+			if (c == '-') {
+				err = proc_get_long(&p, &left, &val_b,
+						     &neg, tr_b, sizeof(tr_b),
+						     &c);
+				/*
+				 * If we consumed all of a truncated buffer or
+				 * then stop here, reset, & come back for more.
+				 */
+				if (!left && skipped) {
+					left = saved_left;
+					break;
+				}
+
+				if (err)
+					break;
+				if (val_b >= bitmap_len || neg ||
+				    val_a > val_b) {
+					err = -EINVAL;
+					break;
+				}
+				if (left) {
+					p++;
+					left--;
+				}
+			}
+
+			bitmap_set(tmp_bitmap, val_a, val_b - val_a + 1);
+			first = 0;
+			proc_skip_char(&p, &left, '\n');
+		}
+		left += skipped;
+	} else {
+		unsigned long bit_a, bit_b = 0;
+
+		while (left) {
+			bit_a = find_next_bit(bitmap, bitmap_len, bit_b);
+			if (bit_a >= bitmap_len)
+				break;
+			bit_b = find_next_zero_bit(bitmap, bitmap_len,
+						   bit_a + 1) - 1;
+
+			if (!first) {
+				err = netcls_put_char(&buffer, &left, ',');
+				if (err)
+					break;
+			}
+			err = netcls_put_long(&buffer, &left, bit_a, false);
+			if (err)
+				break;
+			if (bit_a != bit_b) {
+				err = netcls_put_char(&buffer, &left, '-');
+				if (err)
+					break;
+				err = netcls_put_long(&buffer, &left,
+							bit_b, false);
+				if (err)
+					break;
+			}
+
+			first = 0; bit_b++;
+		}
+		if (!err)
+			err = netcls_put_char(&buffer, &left, '\n');
+	}
+
+	if (!err) {
+		if (write) {
+			if (*ppos)
+				bitmap_or(bitmap, bitmap, tmp_bitmap,
+						bitmap_len);
+			else
+				bitmap_copy(bitmap, tmp_bitmap, bitmap_len);
+		}
+		*lenp -= left;
+		*ppos += *lenp;
+	}
+
+	bitmap_free(tmp_bitmap);
+	return err;
+}
+
 #else /* CONFIG_PROC_SYSCTL */
 
 int proc_dostring(struct ctl_table *table, int write,
@@ -1777,6 +1971,121 @@ int proc_do_static_key(struct ctl_table *table, int write,
 	mutex_unlock(&static_key_mutex);
 	return ret;
 }
+
+#ifdef CONFIG_MEMCG
+int memory_qos_sysctl_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int error;
+
+	mutex_lock(&rue_mutex);
+	if (write && !READ_ONCE(rue_installed)) {
+		error = -EBUSY;
+		pr_info("RUE: rue kernel module is not enabled or installed.");
+		goto out;
+	}
+
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		goto out;
+
+	if (write)
+		memory_qos_update();
+
+	mutex_unlock(&rue_mutex);
+	return 0;
+
+out:
+	mutex_unlock(&rue_mutex);
+	return error;
+}
+
+int memory_qos_sysctl_highest_reclaim_prio_handler(struct ctl_table *table,
+				int write, void __user *buffer,
+				size_t *lenp, loff_t *ppos)
+{
+	int error;
+
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		return error;
+
+	if (write)
+		memory_qos_update();
+
+	return 0;
+}
+
+int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
+				int write, void __user *buffer,
+				size_t *lenp, loff_t *ppos)
+{
+	int error;
+	unsigned int old;
+
+	old = sysctl_vm_qos_prio_reclaim_ratio;
+	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (error)
+		return error;
+
+	if (old == sysctl_vm_qos_prio_reclaim_ratio)
+		return 0;
+
+	if (write) {
+		error = memory_qos_prio_reclaim_ratio_update();
+		if (error) {
+			sysctl_vm_qos_prio_reclaim_ratio = old;
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int clean_dying_memcg_async_handler(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (write && (sysctl_vm_memory_qos == 0 ||
+			 sysctl_clean_dying_memcg_threshold == 0))
+		return -EINVAL;
+
+	if (write && !ret) {
+		if (sysctl_clean_dying_memcg_async > 0) {
+			if (kclean_dying_memcg_run()) {
+				sysctl_clean_dying_memcg_async = 0;
+				return -EINVAL;
+			}
+		} else
+			kclean_dying_memcg_stop();
+	}
+
+	return ret;
+}
+
+static int clean_dying_memcg_threshold_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int old_val = sysctl_clean_dying_memcg_threshold;
+	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (write && (sysctl_vm_memory_qos == 0))
+		return -EINVAL;
+
+	if (write && !ret) {
+		if (old_val != sysctl_clean_dying_memcg_threshold) {
+			if (atomic_long_read(&dying_memcgs_count) >=
+					sysctl_clean_dying_memcg_threshold) {
+				atomic_long_set(&dying_memcgs_count, 0);
+				wakeup_kclean_dying_memcg();
+			}
+		}
+	}
+
+	return ret;
+}
+#endif
 
 #ifdef CONFIG_RPS
 DECLARE_STATIC_KEY_TRUE(rps_using_pvipi);
@@ -2342,6 +2651,26 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = proc_dointvec,
 	},
 #endif
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+	{
+		.procname	= "io_buffered_write_bps_hierarchy",
+		.data		= &sysctl_buffered_write_bps_hierarchy,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "skip_throttle_prio_req",
+		.data		= &sysctl_skip_throttle_prio_req,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif
 #ifdef CONFIG_RQM
 	{
 		.procname	= "qos_mbuf_enable",
@@ -2354,15 +2683,22 @@ static struct ctl_table kern_table[] = {
 	},
 #endif
 	{
-		.procname	= "buffer_io_limit",
-		.data		= &sysctl_buffer_io_limit,
-		.maxlen		= sizeof(unsigned int),
+		.procname	= "async_mem_free_pages",
+		.data		= &sysctl_async_mem_free_pages,
+		.maxlen		= sizeof(sysctl_async_mem_free_pages),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2 	= SYSCTL_ONE,
+		.proc_handler	= proc_doulongvec_minmax,
 	},
-#ifdef CONFIG_CGROUPS
+	{
+		.procname		= "io_qos",
+		.data			= &sysctl_io_qos_enabled,
+		.maxlen			= sizeof(unsigned int),
+		.mode			= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+#if defined(CONFIG_MEMCG) && defined(CONFIG_BLK_CGROUP)
 	{
 		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
 		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
@@ -2370,11 +2706,26 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,
-		.extra2 	= SYSCTL_ONE,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif
+#ifdef CONFIG_CGROUP_WRITEBACK
+	{
+		.procname	= "io_cgv1_buff_wb",
+		.data		= &sysctl_io_cgv1_buff_wb_enabled,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 #endif
 	{ }
 };
+
+unsigned int vm_memcg_latency_histogram;
+unsigned int vm_memcg_page_cache_hit;
+unsigned long vm_pagecache_system_usage;
 
 static struct ctl_table vm_table[] = {
 	{
@@ -2619,7 +2970,6 @@ static struct ctl_table vm_table[] = {
 		.extra2		= (void *)&mmap_rnd_compat_bits_max,
 	},
 #endif
-#ifdef CONFIG_PAGECACHE_LIMIT
 	{
 		.procname	= "pagecache_limit_ratio",
 		.data		= &vm_pagecache_limit_ratio,
@@ -2659,7 +3009,103 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
-#endif /* CONFIG_PAGECACHE_LIMIT */
+#ifdef CONFIG_MEMCG
+	{
+		.procname	= "pagecache_limit_global",
+		.data		= &vm_pagecache_limit_global,
+		.maxlen		= sizeof(vm_pagecache_limit_global),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "pagecache_limit_retry_times",
+		.data		= &vm_pagecache_limit_retry_times,
+		.maxlen		= sizeof(vm_pagecache_limit_retry_times),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_MAXOLDUID,
+	},
+	{
+		.procname	= "pagecache_system_usage",
+		.data		= &vm_pagecache_system_usage,
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0444,
+		.proc_handler	= proc_pagecache_system_usage,
+	},
+	{
+		.procname	= "memcg_latency_histogram",
+		.data		= &vm_memcg_latency_histogram,
+		.maxlen		= sizeof(vm_memcg_latency_histogram),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "memcg_page_cache_hit",
+		.data		= &vm_memcg_page_cache_hit,
+		.maxlen		= sizeof(vm_memcg_page_cache_hit),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname		= "memory_qos",
+		.data			= &sysctl_vm_memory_qos,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_handler,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "use_priority_oom",
+		.data			= &sysctl_vm_use_priority_oom,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "qos_highest_reclaim_prio",
+		.data			= &sysctl_vm_qos_highest_reclaim_prio,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_highest_reclaim_prio_handler,
+		.extra1			= SYSCTL_ONE,
+		.extra2			= &vm_lowest_prio,
+	},
+	{
+		.procname		= "qos_prio_reclaim_ratio",
+		.data			= &sysctl_vm_qos_prio_reclaim_ratio,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
+		.proc_handler	= memory_qos_sysctl_prio_reclaim_ratio_handler,
+		.extra1			= SYSCTL_ONE,
+		.extra2			= &twenty,
+	},
+	{
+		.procname		= "clean_dying_memcg_async",
+		.data			= &sysctl_clean_dying_memcg_async,
+		.maxlen			= sizeof(sysctl_clean_dying_memcg_async),
+		.mode			= 0644,
+		.proc_handler	= clean_dying_memcg_async_handler,
+		.extra1			= SYSCTL_ZERO,
+		.extra2			= SYSCTL_ONE,
+	},
+	{
+		.procname		= "clean_dying_memcg_threshold",
+		.data			= &sysctl_clean_dying_memcg_threshold,
+		.maxlen			= sizeof(sysctl_clean_dying_memcg_threshold),
+		.mode			= 0644,
+		.proc_handler	= clean_dying_memcg_threshold_handler,
+	},
+#endif
 	{ }
 };
 

@@ -1048,7 +1048,18 @@ static struct cftype iolatency_files[] = {
 	{}
 };
 
+static struct cftype iolatency_legacy_files[] = {
+	{
+		.name = "latency",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = iolatency_print_limit,
+		.write = iolatency_set_limit,
+	},
+	{}
+};
+
 static struct blkcg_policy blkcg_policy_iolatency = {
+	.legacy_cftypes = iolatency_legacy_files,
 	.dfl_cftypes	= iolatency_files,
 	.pd_alloc_fn	= iolatency_pd_alloc,
 	.pd_init_fn	= iolatency_pd_init,

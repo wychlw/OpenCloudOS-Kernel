@@ -266,6 +266,9 @@ void bio_init(struct bio *bio, struct block_device *bdev, struct bio_vec *table,
 #ifdef CONFIG_BLK_CGROUP_IOCOST
 	bio->bi_iocost_cost = 0;
 #endif
+#ifdef CONFIG_BLK_WBT
+	bio->bi_wbt_acct = 0;
+#endif
 #endif
 #ifdef CONFIG_BLK_INLINE_ENCRYPTION
 	bio->bi_crypt_context = NULL;

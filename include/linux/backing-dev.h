@@ -46,7 +46,6 @@ extern spinlock_t bdi_lock;
 extern struct list_head bdi_list;
 
 extern struct workqueue_struct *bdi_wq;
-extern unsigned int sysctl_buffer_io_limit;
 
 static inline bool wb_has_dirty_io(struct bdi_writeback *wb)
 {
@@ -160,6 +159,9 @@ struct bdi_writeback *wb_get_create(struct backing_dev_info *bdi,
 void wb_memcg_offline(struct mem_cgroup *memcg);
 void wb_blkcg_offline(struct cgroup_subsys_state *css);
 
+extern unsigned int sysctl_io_cgv1_buff_wb_enabled __read_mostly;
+bool buff_wb_enabled(void);
+
 /**
  * inode_cgwb_enabled - test whether cgroup writeback is enabled on an inode
  * @inode: inode of interest
@@ -175,9 +177,9 @@ static inline bool inode_cgwb_enabled(struct inode *inode)
 {
 	struct backing_dev_info *bdi = inode_to_bdi(inode);
 
-	return (sysctl_buffer_io_limit ||
+	return (buff_wb_enabled() ||
 		(cgroup_subsys_on_dfl(memory_cgrp_subsys) &&
-		 cgroup_subsys_on_dfl(io_cgrp_subsys))) &&
+		cgroup_subsys_on_dfl(io_cgrp_subsys))) &&
 		(bdi->capabilities & BDI_CAP_WRITEBACK) &&
 		(inode->i_sb->s_iflags & SB_I_CGROUPWB);
 }

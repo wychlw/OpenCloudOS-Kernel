@@ -22,11 +22,21 @@
 #include <linux/writeback.h>
 #include <linux/page-flags.h>
 
+#define MEM_LATENCY_MAX_SLOTS 64
+
 struct mem_cgroup;
 struct obj_cgroup;
 struct page;
 struct mm_struct;
 struct kmem_cache;
+struct oom_control;
+
+extern int sysctl_vm_use_priority_oom;
+extern int kclean_dying_memcg_run(void);
+extern unsigned int sysctl_clean_dying_memcg_threshold;
+extern void kclean_dying_memcg_stop(void);
+extern void wakeup_kclean_dying_memcg(void);
+extern atomic_long_t dying_memcgs_count;
 
 /* Cgroup-specific page state, on top of universal node page state */
 enum memcg_stat_item {
@@ -54,6 +64,8 @@ enum memcg_memory_event {
 	MEMCG_SWAP_HIGH,
 	MEMCG_SWAP_MAX,
 	MEMCG_SWAP_FAIL,
+	MEMCG_PAGECACHE_MAX,
+	MEMCG_PAGECACHE_OOM,
 	MEMCG_NR_MEMORY_EVENTS,
 };
 
@@ -65,6 +77,18 @@ struct mem_cgroup_reclaim_cookie {
 #ifdef CONFIG_MEMCG
 
 #define MEM_CGROUP_ID_SHIFT	16
+
+#define MEM_128M		(128 * 1024 * 1024)
+#define MEM_128M_PAGES	(MEM_128M / PAGE_SIZE)
+#define PRIORITY_RECLAIM_RETRY_MAX	3
+
+struct rue_mem_ops {
+	bool (*mem_cgroup_prio_need_reclaim)(struct mem_cgroup *memcg);
+	void (*mem_cgroup_notify_alloc)(struct mem_cgroup *memcg,
+					unsigned int nr_pages);
+	bool (*mem_cgroup_notify_reclaim)(struct mem_cgroup *memcg,
+					unsigned int nr_pages);
+};
 
 struct mem_cgroup_id {
 	int id;
@@ -188,6 +212,8 @@ struct memcg_cgwb_frn {
 	struct wb_completion done;	/* tracks in-flight foreign writebacks */
 };
 
+void drain_all_stock(struct mem_cgroup *root_memcg);
+
 /*
  * Bucket for arbitrarily byte-sized objects charged to a memory
  * cgroup. The bucket can be reparented in one piece when the cgroup
@@ -202,13 +228,6 @@ struct obj_cgroup {
 		struct list_head list; /* protected by objcg_lock */
 		struct rcu_head rcu;
 	};
-};
-
-/* Define item offset base on nr_node_ids in memcg->nodeinfo */
-enum memcg_blkio_item {
-	ITEM_BLKIO_CSS,
-	ITEM_BLKIO_PATH,
-	ITEM_BLKIO_MAX
 };
 
 /*
@@ -230,6 +249,11 @@ struct mem_cgroup {
 		struct page_counter swap;	/* v2 only */
 		struct page_counter memsw;	/* v1 only */
 	};
+
+	unsigned long offline_times;
+	struct page_counter pagecache;
+	u64 pagecache_reclaim_ratio;
+	u32 pagecache_max_ratio;
 
 	/* Legacy consumer-oriented counters */
 	struct page_counter kmem;		/* v1 only */
@@ -262,6 +286,11 @@ struct mem_cgroup {
 	/* protected by memcg_oom_lock */
 	bool		oom_lock;
 	int		under_oom;
+
+	/* memcg priority */
+	bool use_priority_oom;
+	int num_oom_skip;
+	struct mem_cgroup *next_reset;
 
 	int	swappiness;
 	/* OOM-Killer disable */
@@ -324,6 +353,22 @@ struct mem_cgroup {
 
 	CACHELINE_PADDING(_pad2_);
 
+	u64 __percpu *mpa;
+	u64 __percpu *mbd;
+	u64 __percpu *apcl;
+	u64 __percpu *apd;
+	u64 __percpu *latency_histogram[MEM_LATENCY_MAX_SLOTS];
+
+	int reclaim_failed;
+	struct list_head	prio_list;
+	struct list_head	prio_list_async;
+	/* per cgroup memory async reclaim */
+	unsigned int		async_wmark;
+	unsigned int		async_distance_factor;
+	int			async_wmark_delta;
+	unsigned int		async_distance_delta;
+	struct work_struct	async_work;
+
 	/*
 	 * set > 0 if pages under this cgroup are moving to other cgroup.
 	 */
@@ -367,6 +412,10 @@ struct mem_cgroup {
 	atomic_long_t unevictable_size;
 #endif
 
+	/* attach a blkio with memcg for cgroup v1 */
+	struct cgroup_subsys_state *bind_blkio;
+	char *bind_blkio_path;
+
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
@@ -381,6 +430,21 @@ struct mem_cgroup {
  * workload.
  */
 #define MEMCG_CHARGE_BATCH 64U
+
+/*
+ * Iteration constructs for visiting all cgroups (under a tree).  If
+ * loops are exited prematurely (break), mem_cgroup_iter_break() must
+ * be used for reference counting.
+ */
+#define for_each_mem_cgroup_tree(iter, root)		\
+	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(root, iter, NULL))
+
+#define for_each_mem_cgroup(iter)			\
+	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(NULL, iter, NULL))
 
 extern struct mem_cgroup *root_mem_cgroup;
 
@@ -666,40 +730,6 @@ static inline void mem_cgroup_protection(struct mem_cgroup *root,
 	*low = READ_ONCE(memcg->memory.elow);
 }
 
-/* For buffer io limit module*/
-static inline struct cgroup_subsys_state *get_blkio_css(struct mem_cgroup *memcg)
-{
-	return (struct cgroup_subsys_state *)memcg->nodeinfo[nr_node_ids + ITEM_BLKIO_CSS];
-}
-
-static inline char *get_blkio_path(struct mem_cgroup *memcg)
-{
-	return (char *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH];
-}
-
-static inline void set_blkio_css(struct mem_cgroup *memcg, struct cgroup_subsys_state *css)
-{
-	memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS] = (struct mem_cgroup_per_node *)css;
-}
-
-static inline void set_blkio_path(struct mem_cgroup *memcg, char *bpath)
-{
-	memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH] = (struct mem_cgroup_per_node *)bpath;
-}
-
-static inline void memcg_blkio_free(struct mem_cgroup *memcg)
-{
-	if (memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS]) {
-		css_put((struct cgroup_subsys_state *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_CSS]);
-		set_blkio_css(memcg, NULL);
-	}
-	if (memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH]) {
-		kfree((char *)memcg->nodeinfo[nr_node_ids+ITEM_BLKIO_PATH]);
-		set_blkio_path(memcg, NULL);
-	}
-}
-/*For buffer io module end*/
-
 void mem_cgroup_calculate_protection(struct mem_cgroup *root,
 				     struct mem_cgroup *memcg);
 
@@ -978,6 +1008,25 @@ static inline bool mem_cgroup_online(struct mem_cgroup *memcg)
 	if (mem_cgroup_disabled())
 		return true;
 	return !!(memcg->css.flags & CSS_ONLINE);
+}
+
+/* memcg priority */
+void mem_cgroup_account_oom_skip(struct task_struct *task,
+				 struct oom_control *oc);
+
+void mem_cgroup_select_bad_process(struct oom_control *oc);
+
+void mem_cgroup_oom_select_bad_process(struct oom_control *oc);
+
+static inline bool root_memcg_use_priority_oom(void)
+{
+	if (mem_cgroup_disabled())
+		return false;
+
+	if (root_mem_cgroup->use_priority_oom || sysctl_vm_use_priority_oom)
+		return true;
+
+	return false;
 }
 
 void mem_cgroup_update_lru_size(struct lruvec *lruvec, enum lru_list lru,
@@ -1484,6 +1533,25 @@ static inline bool mem_cgroup_online(struct mem_cgroup *memcg)
 	return true;
 }
 
+/* memcg priority */
+static inline void mem_cgroup_account_oom_skip(struct task_struct *task,
+					       struct oom_control *oc)
+{
+}
+
+static inline void mem_cgroup_select_bad_process(struct oom_control *oc)
+{
+}
+
+static inline void mem_cgroup_oom_select_bad_process(struct oom_control *oc)
+{
+}
+
+static inline bool root_memcg_use_priority_oom(void)
+{
+	return false;
+}
+
 static inline
 unsigned long mem_cgroup_get_zone_lru_size(struct lruvec *lruvec,
 		enum lru_list lru, int zone_idx)
@@ -1816,6 +1884,13 @@ int alloc_shrinker_info(struct mem_cgroup *memcg);
 void free_shrinker_info(struct mem_cgroup *memcg);
 void set_shrinker_bit(struct mem_cgroup *memcg, int nid, int shrinker_id);
 void reparent_shrinker_deferred(struct mem_cgroup *memcg);
+
+extern int sysctl_vm_memory_qos;
+extern unsigned int vm_pagecache_limit_retry_times;
+extern unsigned int vm_memcg_page_cache_hit;
+extern void
+mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
+
 #else
 #define mem_cgroup_sockets_enabled 0
 static inline void mem_cgroup_sk_alloc(struct sock *sk) { };

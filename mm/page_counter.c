@@ -235,6 +235,34 @@ void page_counter_set_low(struct page_counter *counter, unsigned long nr_pages)
 }
 
 /**
+ * page_counter_set_async_high - set the start throttle of memory for
+ * memcg async reclaim
+ * @counter: counter
+ * @nr_pages: value to set
+ *
+ * The caller must serialize invocations on the same counter.
+ */
+void page_counter_set_async_high(struct page_counter *counter,
+				 unsigned long nr_pages)
+{
+	xchg(&counter->async_high, nr_pages);
+}
+
+/**
+ * page_counter_set_async_low - set the stop throttle of memory for
+ * memcg async reclaim
+ * @counter: counter
+ * @nr_pages: value to set
+ *
+ * The caller must serialize invocations on the same counter.
+ */
+void page_counter_set_async_low(struct page_counter *counter,
+				unsigned long nr_pages)
+{
+	xchg(&counter->async_low, nr_pages);
+}
+
+/**
  * page_counter_memparse - memparse() for page counter limits
  * @buf: string to parse
  * @max: string meaning maximum possible value

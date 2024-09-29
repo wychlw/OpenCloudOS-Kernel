@@ -457,6 +457,22 @@ static void folio_inc_refs(struct folio *folio)
  */
 void folio_mark_accessed(struct folio *folio)
 {
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	u64 *page_acc;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(current);
+	if (sysctl_vm_memory_qos && vm_memcg_page_cache_hit) {
+		if (memcg) {
+			page_acc = get_cpu_ptr(memcg->mpa);
+			*page_acc = *page_acc + 1;
+			put_cpu_ptr(memcg->mpa);
+		}
+	}
+	rcu_read_unlock();
+#endif
+
 	if (lru_gen_enabled()) {
 		folio_inc_refs(folio);
 		return;

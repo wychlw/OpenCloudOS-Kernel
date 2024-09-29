@@ -35,6 +35,25 @@ enum writeback_sync_modes {
 };
 
 /*
+ * Passed into wb_writeback(), essentially a subset of writeback_control
+ */
+struct wb_writeback_work {
+	long nr_pages;
+	struct super_block *sb;
+	enum writeback_sync_modes sync_mode;
+	unsigned int tagged_writepages:1;
+	unsigned int for_kupdate:1;
+	unsigned int range_cyclic:1;
+	unsigned int for_background:1;
+	unsigned int for_sync:1;	/* sync(2) WB_SYNC_ALL writeback */
+	unsigned int auto_free:1;	/* free on completion */
+	enum wb_reason reason;		/* why was writeback initiated? */
+
+	struct list_head list;		/* pending work list */
+	struct wb_completion *done;	/* set if the caller waits */
+};
+
+/*
  * A control structure which tells the writeback code what to do.  These are
  * always on the stack, and hence need no locking.  They are always initialised
  * in a manner such that unspecified fields are set to zero.
@@ -215,6 +234,7 @@ void wbc_account_cgroup_owner(struct writeback_control *wbc, struct page *page,
 			      size_t bytes);
 int cgroup_writeback_by_id(u64 bdi_id, int memcg_id,
 			   enum wb_reason reason, struct wb_completion *done);
+void cgroup_sync(struct mem_cgroup *memcg);
 void cgroup_writeback_umount(void);
 bool cleanup_offline_cgwb(struct bdi_writeback *wb);
 
@@ -384,5 +404,7 @@ bool redirty_page_for_writepage(struct writeback_control *, struct page *);
 
 void sb_mark_inode_writeback(struct inode *inode);
 void sb_clear_inode_writeback(struct inode *inode);
+
+void wb_queue_work(struct bdi_writeback *wb, struct wb_writeback_work *work);
 
 #endif		/* WRITEBACK_H */

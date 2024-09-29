@@ -49,6 +49,7 @@
 /* generic data direction definitions */
 #define READ			0
 #define WRITE			1
+#define READWRITE		2
 
 /**
  * ARRAY_SIZE - get the number of elements in array @arr

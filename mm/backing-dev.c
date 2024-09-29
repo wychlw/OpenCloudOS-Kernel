@@ -16,6 +16,7 @@
 #include <linux/writeback.h>
 #include <linux/device.h>
 #include <trace/events/writeback.h>
+#include <linux/rue.h>
 #include "internal.h"
 
 struct backing_dev_info noop_backing_dev_info;
@@ -31,9 +32,6 @@ DEFINE_SPINLOCK(bdi_lock);
 static u64 bdi_id_cursor;
 static struct rb_root bdi_tree = RB_ROOT;
 LIST_HEAD(bdi_list);
-
-/* switch for buffer io limit */
-unsigned int sysctl_buffer_io_limit;
 
 /* bdi_wq serves all asynchronous writeback tasks */
 struct workqueue_struct *bdi_wq;
@@ -513,6 +511,30 @@ static LIST_HEAD(offline_cgwbs);
 static void cleanup_offline_cgwbs_workfn(struct work_struct *work);
 static DECLARE_WORK(cleanup_offline_cgwbs_work, cleanup_offline_cgwbs_workfn);
 
+/*
+ * Support buffer IO writeback in cgroup v1
+ * Enable this will count buffer IO in memcg
+ */
+unsigned int sysctl_io_cgv1_buff_wb_enabled = 1;
+
+/**
+ * buff_wb_enabled - test whether buffer writeback is enabled
+ *
+ * Cgroup v1 not support counting buffer IO by default.
+ * Could bind memory and blkio cgroup to count buffer IO
+ * in cgroup v1.
+ *
+ * Need to enable io_qos and io_cgv1_buff_wb to use.
+ *
+ */
+bool buff_wb_enabled(void)
+{
+	return rue_io_enabled() && sysctl_io_cgv1_buff_wb_enabled &&
+	       !cgroup_subsys_on_dfl(memory_cgrp_subsys) &&
+	       !cgroup_subsys_on_dfl(io_cgrp_subsys);
+}
+EXPORT_SYMBOL(buff_wb_enabled);
+
 static void cgwb_free_rcu(struct rcu_head *rcu_head)
 {
 	struct bdi_writeback *wb = container_of(rcu_head,
@@ -589,10 +611,12 @@ static int cgwb_create(struct backing_dev_info *bdi,
 	if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
 		blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
 	else {
-		blkcg_css = get_blkio_css(memcg) ? get_blkio_css(memcg) : blkcg_root_css;
+		if (memcg->bind_blkio && rue_io_enabled())
+			blkcg_css = memcg->bind_blkio;
+		else
+			blkcg_css = blkcg_root_css;
 		css_get(blkcg_css);
 	}
-
 	memcg_cgwb_list = &memcg->cgwb_list;
 	blkcg_cgwb_list = blkcg_get_cgwb_list(blkcg_css);
 
@@ -718,10 +742,12 @@ struct bdi_writeback *wb_get_lookup(struct backing_dev_info *bdi,
 		if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
 			blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
 		else {
-			blkcg_css = get_blkio_css(memcg) ? get_blkio_css(memcg) : blkcg_root_css;
+			if (memcg->bind_blkio && rue_io_enabled())
+				blkcg_css = memcg->bind_blkio;
+			else
+				blkcg_css = blkcg_root_css;
 			css_get(blkcg_css);
 		}
-
 		if (unlikely(wb->blkcg_css != blkcg_css || !wb_tryget(wb)))
 			wb = NULL;
 		css_put(blkcg_css);

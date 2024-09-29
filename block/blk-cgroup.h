@@ -19,6 +19,7 @@
 #include <linux/kthread.h>
 #include <linux/blk-mq.h>
 #include <linux/llist.h>
+#include <linux/part_stat.h>
 
 struct blkcg_gq;
 struct blkg_policy_data;
@@ -28,116 +29,6 @@ struct blkg_policy_data;
 #define BLKG_STAT_CPU_BATCH	(INT_MAX / 2)
 
 #ifdef CONFIG_BLK_CGROUP
-
-enum blkg_iostat_type {
-	BLKG_IOSTAT_READ,
-	BLKG_IOSTAT_WRITE,
-	BLKG_IOSTAT_DISCARD,
-
-	BLKG_IOSTAT_NR,
-};
-
-struct blkg_iostat {
-	u64				bytes[BLKG_IOSTAT_NR];
-	u64				ios[BLKG_IOSTAT_NR];
-};
-
-struct blkg_iostat_set {
-	struct u64_stats_sync		sync;
-	struct blkcg_gq		       *blkg;
-	struct llist_node		lnode;
-	int				lqueued;	/* queued in llist */
-	struct blkg_iostat		cur;
-	struct blkg_iostat		last;
-};
-
-/* association between a blk cgroup and a request queue */
-struct blkcg_gq {
-	/* Pointer to the associated request_queue */
-	struct request_queue		*q;
-	struct list_head		q_node;
-	struct hlist_node		blkcg_node;
-	struct blkcg			*blkcg;
-
-	/* all non-root blkcg_gq's are guaranteed to have access to parent */
-	struct blkcg_gq			*parent;
-
-	/* reference count */
-	struct percpu_ref		refcnt;
-
-	/* is this blkg online? protected by both blkcg and q locks */
-	bool				online;
-
-	struct blkg_iostat_set __percpu	*iostat_cpu;
-	struct blkg_iostat_set		iostat;
-
-	struct blkg_policy_data		*pd[BLKCG_MAX_POLS];
-#ifdef CONFIG_BLK_CGROUP_PUNT_BIO
-	spinlock_t			async_bio_lock;
-	struct bio_list			async_bios;
-#endif
-	union {
-		struct work_struct	async_bio_work;
-		struct work_struct	free_work;
-	};
-
-	atomic_t			use_delay;
-	atomic64_t			delay_nsec;
-	atomic64_t			delay_start;
-	u64				last_delay;
-	int				last_use;
-
-	struct rcu_head			rcu_head;
-};
-
-struct blkcg {
-	struct cgroup_subsys_state	css;
-	spinlock_t			lock;
-	refcount_t			online_pin;
-
-	struct radix_tree_root		blkg_tree;
-	struct blkcg_gq	__rcu		*blkg_hint;
-	struct hlist_head		blkg_list;
-
-	struct blkcg_policy_data	*cpd[BLKCG_MAX_POLS];
-
-	struct list_head		all_blkcgs_node;
-
-	/*
-	 * List of updated percpu blkg_iostat_set's since the last flush.
-	 */
-	struct llist_head __percpu	*lhead;
-
-#ifdef CONFIG_BLK_CGROUP_FC_APPID
-	char                            fc_app_id[FC_APPID_LEN];
-#endif
-#ifdef CONFIG_CGROUP_WRITEBACK
-	struct list_head		cgwb_list;
-#endif
-#ifdef CONFIG_BLK_CGROUP_DISKSTATS
-	unsigned int			dkstats_on;
-	struct list_head		dkstats_list;
-	struct blkcg_dkstats		*dkstats_hint;
-#endif
-
-#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-	struct percpu_counter           nr_dirtied;
-	unsigned long                   bw_time_stamp;
-	unsigned long                   dirtied_stamp;
-	unsigned long                   dirty_ratelimit;
-	unsigned long long              buffered_write_bps;
-#endif
-
-	KABI_RESERVE(1);
-	KABI_RESERVE(2);
-	KABI_RESERVE(3);
-	KABI_RESERVE(4);
-};
-
-static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
-{
-	return css ? container_of(css, struct blkcg, css) : NULL;
-}
 
 #ifdef CONFIG_BLK_CGROUP_DISKSTATS
 /*
@@ -160,6 +51,11 @@ struct blkcg_dkstats {
 	struct block_device		*part;
 	struct list_head		list_node;
 	struct rcu_head			rcu_head;
+};
+
+struct disk_stats_sum {
+	struct disk_stats		dkstats;
+	struct block_device		*part;
 };
 
 static inline int blkcg_do_io_stat(struct blkcg *blkcg)
@@ -209,24 +105,6 @@ struct disk_stats *blkcg_dkstats_find_create(struct blkcg *blkcg,
 #define blkcg_part_stat_sub(blkcg, gendiskp, field, subnd)
 #define blkcg_part_stat_read(blkcg, part, field)
 #endif /* CONFIG_BLK_CGROUP_DISKSTATS */
-
-/*
- * A blkcg_gq (blkg) is association between a block cgroup (blkcg) and a
- * request_queue (q).  This is used by blkcg policies which need to track
- * information per blkcg - q pair.
- *
- * There can be multiple active blkcg policies and each blkg:policy pair is
- * represented by a blkg_policy_data which is allocated and freed by each
- * policy's pd_alloc/free_fn() methods.  A policy can allocate private data
- * area by allocating larger data structure which embeds blkg_policy_data
- * at the beginning.
- */
-struct blkg_policy_data {
-	/* the blkg and policy id this per-policy data belongs to */
-	struct blkcg_gq			*blkg;
-	int				plid;
-	bool				online;
-};
 
 /*
  * Policies that need to keep per-blkcg data which is independent from any
@@ -560,33 +438,6 @@ static inline bool blk_cgroup_mergeable(struct request *rq, struct bio *bio)
 void blk_cgroup_bio_start(struct bio *bio);
 void blkcg_add_delay(struct blkcg_gq *blkg, u64 now, u64 delta);
 
-#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-static inline uint64_t blkcg_buffered_write_bps(struct blkcg *blkcg)
-{
-	return blkcg->buffered_write_bps;
-}
-
-static inline unsigned long blkcg_dirty_ratelimit(struct blkcg *blkcg)
-{
-	return blkcg->dirty_ratelimit;
-}
-
-static inline struct blkcg *get_task_blkcg(struct task_struct *tsk)
-{
-	struct cgroup_subsys_state *css;
-
-	rcu_read_lock();
-	do {
-		css = kthread_blkcg();
-		if (!css)
-			css = task_css(tsk, io_cgrp_id);
-	} while (!css_tryget(css));
-	rcu_read_unlock();
-
-	return container_of(css, struct blkcg, css);
-}
-#endif
-
 #else	/* CONFIG_BLK_CGROUP */
 
 struct blkg_policy_data {
@@ -600,12 +451,6 @@ struct blkcg_policy {
 
 struct blkcg {
 };
-
-#define blkcg_part_stat_add(blkcg, cpu, part, field, addnd) do {} while (0)
-#define blkcg_part_stat_dec(blkcg, cpu, gendiskp, field) do {} while (0)
-#define blkcg_part_stat_inc(blkcg, cpu, gendiskp, field) do {} while (0)
-#define blkcg_part_stat_sub(blkcg, cpu, gendiskp, field, subnd) do {} while (0)
-#define blkcg_part_stat_read(blkcg, part, field) do {} while (0)
 
 static inline struct blkcg_gq *blkg_lookup(struct blkcg *blkcg, void *key) { return NULL; }
 static inline void blkg_init_queue(struct request_queue *q) { }

@@ -1275,6 +1275,70 @@ PAGE_SIZE multiple when read back.
 	The max memory usage recorded for the cgroup and its
 	descendants since the creation of the cgroup.
 
+  memory.async_ratio
+	A read-write single value file which exists on non-root
+	cgroups.  The default is 0.
+
+	Memory usage water mark for async reclaim. Valid value is from 0
+	to 100, which represents percentage of memory.high, the actual value
+	of percentage * memory.high will be asigned to async_high. When
+	charge pages to memory cgroup, it will schedule a work to reclaim
+	pages when the memory usage exceed the async_high.
+
+	0 means async reclaim is disabled, both async_low and async_high
+	would be max, which is the default value, and the mechanism takes
+	effect.
+
+  memory.async_high
+	A read-only single value file which exists on non-root cgroups.
+	The default is max.
+
+	Memory usage high water mark for async reclaim, if a cgroup's
+	memory usage exceeds this limit will trigger the async reclaim
+	logic.
+
+  memory.async_low
+	A read-only single value file which exists on non-root cgroups.
+	The default is max.
+
+	Memory usage low water mark for async reclaim, if a reclaim work
+	is scheduled, it will try to reclaim (async_high - async_low)
+	pages.
+
+  memory.async_distance_factor
+	A read-write single value file which exists on non-root cgroups.
+	The default is 1.
+
+	Define the distance between async_high and async_low.  Valid value is
+	from 1 to 150000, the unit is in fractions of 1000000. The default value of
+	1 means the distance between async_high and async_low is 0.01% of memory.high
+	of the cgroup.  The maximum value is 150000, which 15% of memory.high.
+
+  memory.async_ratio_delta
+	A read-write single value file which exists on non-root
+	cgroups.  The default is -1.
+
+	Memory usage watermark calculation factor for async reclaim. Valid
+	value is from 1	to 10, which will be used to calculate the memory.async_ratio
+	relay on cgroup priority, async_ratio = 100 - (MAX_PRIORITY - cgroup_prio) *
+	async_ratio_delta, and the result will be used to calculate the
+	async reclaim wmark.
+
+	Default value -1 is a show stop value which means the async reclaim wmark
+	calculation will not relay on the cgroup priority, it only depends on the
+	async_ratio value we manully set.
+
+  memory.async_distance_delta
+	A read-write single value file which exists on non-root cgroups.
+	The default is 1.
+
+	Per cgroup prioirty factor to define the distance between async_high
+	and async_low.  Valid value is from 1 to 50, The formula is
+	async_distance_factor = async_distance_delta * (cgroup_priority_value + 1).
+	Async reclaim mechanism will use the result for reclaim distance
+	cacluation. And when async_ratio_delta == -1, this value won't
+	take effect either when cgroup priority changes.
+
   memory.oom.group
 	A read-write single value file which exists on non-root
 	cgroups.  The default value is "0".

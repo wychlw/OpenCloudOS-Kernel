@@ -43,12 +43,13 @@ struct blk_crypto_profile;
 extern const struct device_type disk_type;
 extern const struct device_type part_type;
 extern struct class block_class;
+extern unsigned int sysctl_io_qos_enabled __read_mostly;
 
 /*
  * Maximum number of blkcg policies allowed to be registered concurrently.
  * Defined here to simplify include dependency.
  */
-#define BLKCG_MAX_POLS		6
+#define BLKCG_MAX_POLS		7
 
 #define DISK_MAX_PARTS			256
 #define DISK_NAME_LEN			32
@@ -556,6 +557,53 @@ struct request_queue {
 	bool			mq_sysfs_init_done;
 };
 
+enum {
+	WBT_RWQ_BG		= 0,
+	WBT_RWQ_KSWAPD,
+	WBT_RWQ_DISCARD,
+	WBT_NUM_RWQ,
+};
+
+struct rq_wait {
+	wait_queue_head_t wait;
+	atomic_t inflight;
+};
+
+struct wbt_throtl_info {
+	unsigned int max_depth;
+	unsigned int min_depth;
+	unsigned int scale_up_percent;
+	unsigned int scale_down_percent;
+	unsigned int current_depth;
+
+	/*calc by wg_calc_limit from current_depth*/
+	unsigned int wb_normal, wb_background;
+
+	unsigned long last_issue;		/* last non-throttled issue */
+	unsigned long last_comp;		/* last non-throttled comp */
+
+
+	struct rq_wait rq_wait[WBT_NUM_RWQ]; /*online focus on write back IO*/
+
+	u64 min_lat_nsec;			/*user set min lat*/
+	/*
+	 * used to record how many expired bio happened
+	 * from each cgroup priority for this request queue
+	 */
+	atomic64_t read_expired_cnt;
+
+	/*debug info*/
+	atomic64_t tracked_cnt[WBT_NUM_RWQ];
+	atomic64_t finished_cnt[WBT_NUM_RWQ];
+	atomic64_t read_cnt;
+	atomic64_t direct_write_cnt;
+	atomic64_t escaped_merge_cnt;
+	atomic64_t wr_sync_cnt;
+	unsigned int recent_limit;
+	u64 recent_rd_latency_us;
+	struct blk_rq_stat __percpu *read_lat_stats;
+};
+
 /* Keep blk_queue_flag_name[] in sync with the definitions below */
 #define QUEUE_FLAG_STOPPED	0	/* queue is stopped */
 #define QUEUE_FLAG_DYING	1	/* queue being torn down */
@@ -597,6 +645,9 @@ struct request_queue {
 void blk_queue_flag_set(unsigned int flag, struct request_queue *q);
 void blk_queue_flag_clear(unsigned int flag, struct request_queue *q);
 bool blk_queue_flag_test_and_set(unsigned int flag, struct request_queue *q);
+void blkcg_account_io_completion(struct request *req,
+		struct bio *bio, unsigned int bytes);
+void blkcg_account_io_done(struct request *req, struct bio *bio);
 
 #define blk_queue_stopped(q)	test_bit(QUEUE_FLAG_STOPPED, &(q)->queue_flags)
 #define blk_queue_dying(q)	test_bit(QUEUE_FLAG_DYING, &(q)->queue_flags)

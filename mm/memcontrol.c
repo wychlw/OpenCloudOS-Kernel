@@ -42,7 +42,6 @@
 #include <linux/limits.h>
 #include <linux/export.h>
 #include <linux/mutex.h>
-#include <linux/namei.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
@@ -66,6 +65,7 @@
 #include <linux/seq_buf.h>
 #include <linux/emm.h>
 #include <linux/sched/isolation.h>
+#include <linux/namei.h>
 #ifdef CONFIG_CGROUP_SLI
 #include <linux/sli.h>
 #endif
@@ -82,6 +82,7 @@
 #include <linux/uaccess.h>
 
 #include <trace/events/vmscan.h>
+#include <linux/rue.h>
 
 #ifdef CONFIG_MEMCG_ZRAM
 bool zram_memcg_nocharge;
@@ -111,6 +112,36 @@ static bool cgroup_memory_nobpf __ro_after_init;
 #ifdef CONFIG_CGROUP_WRITEBACK
 static DECLARE_WAIT_QUEUE_HEAD(memcg_cgwb_frn_waitq);
 #endif
+
+#define MEMCG_PAGECACHE_RETRIES		20
+#define DEFAULT_PAGE_RECLAIM_RATIO	5
+#define PAGECACHE_MAX_RATIO_MIN		5
+#define PAGECACHE_MAX_RATIO_MAX		100
+
+int sysctl_vm_memory_qos;
+int sysctl_vm_use_priority_oom;
+/* default has none reclaim priority */
+int sysctl_vm_qos_highest_reclaim_prio = CGROUP_PRIORITY_MAX;
+
+unsigned int sysctl_clean_dying_memcg_async;
+unsigned int sysctl_clean_dying_memcg_threshold = 100;
+static struct task_struct *kclean_dying_memcg;
+DECLARE_WAIT_QUEUE_HEAD(kclean_dying_memcg_wq);
+
+static unsigned long rmem_wmark_limit;
+static unsigned long rmem_wmark_setpoint;
+static unsigned long rmem_wmark_freerun;
+static long memcg_pos_ratio;
+static atomic_long_t memcg_allocated_count;
+static atomic_long_t memcg_reclaimed_count;
+static unsigned long memcg_reclaim_goal;
+static int memcg_cur_reclaim_prio = CGROUP_PRIORITY_MAX;
+static DEFINE_SPINLOCK(memcg_reclaim_prio_lock);
+/* workqueue for async reclaim */
+struct workqueue_struct *memcg_async_reclaim_wq;
+#define ASYNC_DISTANCE_DIV	1000000
+#define ASYNC_RATIO_DIV		100
+#define ASYNC_DISTANCE_DEF	1
 
 /* Whether legacy memory+swap accounting is active */
 static bool do_memsw_account(void)
@@ -234,21 +265,6 @@ enum res_type {
 #define MEMFILE_PRIVATE(x, val)	((x) << 16 | (val))
 #define MEMFILE_TYPE(val)	((val) >> 16 & 0xffff)
 #define MEMFILE_ATTR(val)	((val) & 0xffff)
-
-/*
- * Iteration constructs for visiting all cgroups (under a tree).  If
- * loops are exited prematurely (break), mem_cgroup_iter_break() must
- * be used for reference counting.
- */
-#define for_each_mem_cgroup_tree(iter, root)		\
-	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
-	     iter != NULL;				\
-	     iter = mem_cgroup_iter(root, iter, NULL))
-
-#define for_each_mem_cgroup(iter)			\
-	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
-	     iter != NULL;				\
-	     iter = mem_cgroup_iter(NULL, iter, NULL))
 
 static inline bool task_is_dying(void)
 {
@@ -871,6 +887,13 @@ void __mod_memcg_lruvec_state(struct lruvec *lruvec, enum node_stat_item idx,
 	__this_cpu_add(pn->lruvec_stats_percpu->state[idx], val);
 
 	memcg_rstat_updated(memcg, val);
+
+	if (idx == NR_FILE_PAGES) {
+		if (val > 0)
+			page_counter_charge(&memcg->pagecache, val);
+		else
+			page_counter_uncharge(&memcg->pagecache, -val);
+	}
 	memcg_stats_unlock();
 }
 
@@ -1295,6 +1318,149 @@ static void invalidate_reclaim_iterators(struct mem_cgroup *dead_memcg)
 						dead_memcg);
 }
 
+/* memcg oom priority */
+/*
+ * do_mem_cgroup_account_oom_skip - account the memcg with OOM-unkillable task
+ * @memcg: mem_cgroup struct with OOM-unkillable task
+ * @oc: oom_control struct
+ *
+ * Account OOM-unkillable task to its cgroup and up to the OOMing cgroup's
+ * @num_oom_skip, if any one of the tasks of one cgroup hierarchy are
+ * OOM-unkillable we skip this cgroup hierarchy when select the victim cgroup.
+ *
+ * The @num_oom_skip must be reset when bad process selection has finished,
+ * since before the next round bad process selection, these OOM-unkillable
+ * tasks might become killable.
+ *
+ */
+static void do_mem_cgroup_account_oom_skip(struct mem_cgroup *memcg,
+					   struct oom_control *oc)
+{
+	struct mem_cgroup *root;
+	struct cgroup_subsys_state *css;
+
+	if (!oc->priority_select)
+		return;
+	if (unlikely(!memcg))
+		return;
+	root = oc->memcg;
+	if (!root)
+		root = root_mem_cgroup;
+
+	css = &memcg->css;
+	while (css) {
+		struct mem_cgroup *tmp;
+
+		tmp = mem_cgroup_from_css(css);
+		tmp->num_oom_skip++;
+		/*
+		 * Put these cgroups into a list to
+		 * reduce the iteration time when reset
+		 * the @num_oom_skip.
+		 */
+		if (!tmp->next_reset) {
+			css_get(&tmp->css);
+			tmp->next_reset = oc->reset_list;
+			oc->reset_list = tmp;
+		}
+
+		if (mem_cgroup_from_css(css) == root)
+			break;
+
+		css = css->parent;
+	}
+}
+
+void mem_cgroup_account_oom_skip(struct task_struct *task,
+				 struct oom_control *oc)
+{
+	do_mem_cgroup_account_oom_skip(mem_cgroup_from_task(task), oc);
+}
+
+/*
+ * __mem_cgroup_select_victim - select the victim memcg based on the base_prio
+ * @parent: corresponding cgroup_subsys_state struct of memcg
+ * @base_prio: lowest priority.
+ *
+ * Note:
+ * a. Rules of comparison: priority first, then page counter
+ * b. The smaller the number, the higher the priority
+ *
+ */
+static struct cgroup_subsys_state *
+__mem_cgroup_select_victim(struct cgroup_subsys_state *parent,
+			   int base_prio)
+{
+	struct cgroup_subsys_state *chosen = NULL;
+	int chosen_priority;
+	struct mem_cgroup *iter, *memcg, *chosen_memcg;
+
+	/* no proc or all unkillable */
+	if (!parent->nr_procs ||
+	    parent->nr_procs <= mem_cgroup_from_css(parent)->num_oom_skip)
+		return NULL;
+
+	chosen_priority = base_prio;
+	/* chosen = parent when all tasks are in parent */
+	if (cgroup_priority(parent) >= chosen_priority)
+		chosen = parent;
+	memcg = mem_cgroup_from_css(parent);
+	for_each_mem_cgroup_tree(iter, memcg) {
+		struct cgroup_subsys_state *css = &iter->css;
+		int prio = cgroup_priority(css);
+
+		if (css->nr_procs <= iter->num_oom_skip)
+			continue;
+		if (prio < chosen_priority)
+			continue;
+		else if (prio > chosen_priority || !chosen) {
+			chosen_priority = prio;
+			chosen = css;
+			continue;
+		}
+		chosen_memcg = mem_cgroup_from_css(chosen);
+		/* equal priority check memory usage */
+		if (do_memsw_account()) {
+			if (page_counter_read(&iter->memsw) >
+				page_counter_read(&chosen_memcg->memsw))
+				chosen = css;
+		} else if (page_counter_read(&iter->memory) >
+			page_counter_read(&chosen_memcg->memory)) {
+			chosen = css;
+		}
+	}
+
+	return chosen;
+}
+
+static struct mem_cgroup *
+mem_cgroup_select_victim_cgroup(struct mem_cgroup *memcg, int base_prio)
+{
+	struct cgroup_subsys_state *parent, *victim;
+
+	/* if priority reclaim's target priority larger than max return null */
+	if (base_prio >= CGROUP_PRIORITY_MAX)
+		return NULL;
+
+again:
+	rcu_read_lock();
+	parent = &memcg->css;
+	victim = __mem_cgroup_select_victim(parent, base_prio);
+
+	if (unlikely(!victim)) {
+		rcu_read_unlock();
+		return NULL;
+	}
+
+	if (!css_tryget(victim)) {
+		rcu_read_unlock();
+		goto again;
+	}
+
+	rcu_read_unlock();
+	return mem_cgroup_from_css(victim);
+}
+
 /**
  * mem_cgroup_scan_tasks - iterate over tasks of a memory cgroup hierarchy
  * @memcg: hierarchy root
@@ -1305,8 +1471,6 @@ static void invalidate_reclaim_iterators(struct mem_cgroup *dead_memcg)
  * descendants and calls @fn for each task. If @fn returns a non-zero
  * value, the function breaks the iteration loop. Otherwise, it will iterate
  * over all tasks and return 0.
- *
- * This function must not be called for the root memory cgroup.
  */
 void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
 			   int (*fn)(struct task_struct *, void *), void *arg)
@@ -1317,8 +1481,6 @@ void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
 #ifdef CONFIG_TEXT_UNEVICTABLE
 	if (memcg->allow_unevictable)
 		WARN_ON(mem_cgroup_is_root(memcg));
-#else
-	BUG_ON(mem_cgroup_is_root(memcg));
 #endif
 
 	for_each_mem_cgroup_tree(iter, memcg) {
@@ -1334,6 +1496,71 @@ void mem_cgroup_scan_tasks(struct mem_cgroup *memcg,
 			break;
 		}
 	}
+}
+
+void mem_cgroup_select_bad_process(struct oom_control *oc)
+{
+	struct mem_cgroup *memcg, *victim, *iter;
+
+	memcg = oc->memcg;
+	if (!memcg)
+		memcg = root_mem_cgroup;
+
+	victim = memcg;
+
+retry:
+	if (oc->priority_select) {
+		victim = mem_cgroup_select_victim_cgroup(memcg,
+							 oc->base_priority);
+		if (!victim) {
+			/* root_memcg and being killed with MMF_OOM_SKIP */
+			if (mem_cgroup_is_root(memcg) && oc->num_skip)
+				oc->chosen = (void *)-1UL;
+			goto out;
+		}
+	}
+
+	mem_cgroup_scan_tasks(victim, oom_evaluate_task, oc);
+	if (oc->priority_select) {
+		css_put(&victim->css);
+		if (oc->chosen == (void *)-1UL)
+			goto out;
+		if (!oc->chosen && victim != memcg) {
+			do_mem_cgroup_account_oom_skip(victim, oc);
+			goto retry;
+		}
+	}
+out:
+	/* See comments in mem_cgroup_account_oom_skip() */
+	while (oc->reset_list) {
+		iter = oc->reset_list;
+		iter->num_oom_skip = 0;
+		oc->reset_list = iter->next_reset;
+		iter->next_reset = NULL;
+		css_put(&iter->css);
+	}
+}
+
+static int memcg_get_prio(struct mem_cgroup *memcg);
+
+void mem_cgroup_oom_select_bad_process(struct oom_control *oc)
+{
+	struct mem_cgroup *memcg;
+
+	memcg = oc->memcg;
+
+	if (!memcg)
+		memcg = root_mem_cgroup;
+
+	if (!sysctl_vm_memory_qos)
+		oc->priority_select = false;
+	else if (sysctl_vm_use_priority_oom)
+		oc->priority_select = true;
+	else
+		oc->priority_select = memcg->use_priority_oom;
+
+	oc->base_priority = memcg_get_prio(memcg);
+	mem_cgroup_select_bad_process(oc);
 }
 
 #ifdef CONFIG_DEBUG_VM
@@ -1659,6 +1886,10 @@ static void memcg_stat_format(struct mem_cgroup *memcg, struct seq_buf *s)
 		       memcg_events(memcg, PGSTEAL_KSWAPD) +
 		       memcg_events(memcg, PGSTEAL_DIRECT) +
 		       memcg_events(memcg, PGSTEAL_KHUGEPAGED));
+	seq_buf_printf(s, "pgscan_in_background %lu\n",
+		       memcg_events(memcg, PGSCAN_KSWAPD));
+	seq_buf_printf(s, "pgsteal_in_background %lu\n",
+		       memcg_events(memcg, PGSTEAL_KSWAPD));
 
 	for (i = 0; i < ARRAY_SIZE(memcg_vm_event_stat); i++) {
 		if (memcg_vm_event_stat[i] == PGPGIN ||
@@ -2106,9 +2337,6 @@ struct mem_cgroup *mem_cgroup_get_oom_group(struct task_struct *victim,
 	struct mem_cgroup *oom_group = NULL;
 	struct mem_cgroup *memcg;
 
-	if (!cgroup_subsys_on_dfl(memory_cgrp_subsys))
-		return NULL;
-
 	if (!oom_domain)
 		oom_domain = root_mem_cgroup;
 
@@ -2388,7 +2616,7 @@ static void refill_stock(struct mem_cgroup *memcg, unsigned int nr_pages)
  * Drains all per-CPU charge caches for given root_memcg resp. subtree
  * of the hierarchy under it.
  */
-static void drain_all_stock(struct mem_cgroup *root_memcg)
+void drain_all_stock(struct mem_cgroup *root_memcg)
 {
 	int cpu, curcpu;
 
@@ -2437,6 +2665,32 @@ static int memcg_hotplug_cpu_dead(unsigned int cpu)
 	drain_stock(stock);
 
 	return 0;
+}
+
+static bool need_memcg_async_reclaim(struct mem_cgroup *memcg)
+{
+	if (!sysctl_vm_memory_qos)
+		return false;
+
+	return page_counter_read(&memcg->memory) > memcg->memory.async_high;
+}
+
+static void async_reclaim_func(struct work_struct *work)
+{
+	struct mem_cgroup *memcg;
+	unsigned long nr_pages;
+
+	memcg = container_of(work, struct mem_cgroup, async_work);
+	nr_pages = page_counter_read(&memcg->memory) - memcg->memory.async_low;
+
+	if (nr_pages <= 0)
+		return;
+
+	nr_pages = min(nr_pages,
+			(memcg->memory.async_high - memcg->memory.async_low));
+	memcg_memory_event(memcg, MEMCG_HIGH);
+	try_to_free_mem_cgroup_pages(memcg, nr_pages, GFP_KERNEL, true);
+
 }
 
 static unsigned long reclaim_high(struct mem_cgroup *memcg,
@@ -2702,6 +2956,188 @@ out:
 	css_put(&memcg->css);
 }
 
+static void setup_async_wmark(struct mem_cgroup *memcg)
+{
+	unsigned long high_throttle, low_throttle, distance;
+	unsigned long high = cgroup_subsys_on_dfl(memory_cgrp_subsys) ?
+				memcg->memory.high : memcg->memory.max;
+
+	if (memcg->async_wmark) {
+		high_throttle = (memcg->async_wmark * high) / ASYNC_RATIO_DIV;
+		distance = mult_frac(high,
+			memcg->async_distance_factor, ASYNC_DISTANCE_DIV);
+		if (distance >= high_throttle)
+			low_throttle = memcg->memory.low;
+		else
+			low_throttle = high_throttle - distance;
+	} else {
+		high_throttle = PAGE_COUNTER_MAX;
+		low_throttle = PAGE_COUNTER_MAX;
+	}
+	page_counter_set_async_high(&memcg->memory, high_throttle);
+	page_counter_set_async_low(&memcg->memory, low_throttle);
+}
+
+static void async_reclaim_reset_factor(struct mem_cgroup *memcg,
+					unsigned int new_prio)
+{
+	unsigned int wmark, distance;
+
+	if (memcg->async_wmark_delta < 0)
+		return;
+
+	wmark = ASYNC_RATIO_DIV -
+		(CGROUP_PRIORITY_MAX - new_prio) * memcg->async_wmark_delta;
+	xchg(&memcg->async_wmark, wmark);
+	distance = memcg->async_distance_delta * (new_prio + 1);
+	xchg(&memcg->async_distance_factor, distance);
+
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+}
+
+static struct task_struct *memcg_priod;
+static struct task_struct *memcg_priod_async;
+static DECLARE_WAIT_QUEUE_HEAD(memcg_prio_reclaim_wq);
+
+static void wakeup_memcg_priod(void)
+{
+	/* XXX check if necessary */
+	if (!waitqueue_active(&memcg_prio_reclaim_wq))
+		return;
+	wake_up_interruptible(&memcg_prio_reclaim_wq);
+}
+
+void memory_qos_update(void)
+{
+	spin_lock(&memcg_reclaim_prio_lock);
+	if (memcg_cur_reclaim_prio > CGROUP_PRIORITY_MAX - 1)
+		memcg_cur_reclaim_prio = CGROUP_PRIORITY_MAX - 1;
+	if (memcg_cur_reclaim_prio < sysctl_vm_qos_highest_reclaim_prio)
+		memcg_cur_reclaim_prio = sysctl_vm_qos_highest_reclaim_prio;
+	spin_unlock(&memcg_reclaim_prio_lock);
+
+	wakeup_memcg_priod();
+}
+
+unsigned long prio_reclaim_bytes = MEM_128M * 8;
+unsigned int sysctl_vm_qos_prio_reclaim_ratio;
+
+int memory_qos_prio_reclaim_ratio_update(void)
+{
+	u64 mem_total = totalram_pages() * PAGE_SIZE;
+	unsigned long new;
+
+	new = (mem_total * sysctl_vm_qos_prio_reclaim_ratio) / 100;
+	if (new < MEM_128M) {
+		pr_warn("mem qos: reserve mem too small\n");
+		return -EINVAL;
+	}
+	prio_reclaim_bytes = new;
+	wakeup_memcg_priod();
+
+	return 0;
+}
+
+static struct memcg_priority {
+	struct list_head head;
+	spinlock_t lock;
+	atomic_long_t count;
+} memcg_prios[CGROUP_PRIORITY_MAX];
+
+static struct memcg_global_reclaim {
+	struct list_head list;
+	struct mutex mutex;
+} memcg_global_reclaim_list;
+
+static int memcg_prio_hierarchy_count[CGROUP_PRIORITY_MAX + 1];
+static DEFINE_RWLOCK(memcg_prio_hierarchy_lock);
+
+static int memcg_get_prio(struct mem_cgroup *memcg)
+{
+	return cgroup_priority(&memcg->css);
+}
+
+static int memcg_prio_reclaimd_run(void);
+
+static int memcg_get_prio_hierarchy_count(int prio)
+{
+	int ret;
+
+	read_lock(&memcg_prio_hierarchy_lock);
+	ret = memcg_prio_hierarchy_count[prio];
+	read_unlock(&memcg_prio_hierarchy_lock);
+
+	return ret;
+}
+
+static bool memcg_reclaim_prio_exist(void)
+{
+	return !!memcg_get_prio_hierarchy_count(
+			sysctl_vm_qos_highest_reclaim_prio);
+}
+
+static int memcg_notify_prio_change(struct mem_cgroup *memcg,
+				unsigned int old_prio, unsigned int new_prio)
+{
+	struct memcg_priority *p;
+	int i;
+
+	if (!memcg)
+		return 0;
+
+	if (old_prio) {
+		p = &memcg_prios[old_prio];
+		spin_lock(&p->lock);
+		list_del(&memcg->prio_list);
+		spin_unlock(&p->lock);
+
+		atomic_long_dec(&p->count);
+		write_lock(&memcg_prio_hierarchy_lock);
+		for (i = 1; i <= old_prio; i++)
+			memcg_prio_hierarchy_count[i]--;
+		write_unlock(&memcg_prio_hierarchy_lock);
+	}
+
+	if (new_prio) {
+		p = &memcg_prios[new_prio];
+		spin_lock(&p->lock);
+		list_add(&memcg->prio_list, &p->head);
+		spin_unlock(&p->lock);
+
+		atomic_long_inc(&p->count);
+		write_lock(&memcg_prio_hierarchy_lock);
+		for (i = 1; i <= new_prio; i++)
+			memcg_prio_hierarchy_count[i]++;
+		write_unlock(&memcg_prio_hierarchy_lock);
+
+		wakeup_memcg_priod();
+	}
+
+	if (old_prio == 0 && new_prio > 0) {
+		mutex_lock(&memcg_global_reclaim_list.mutex);
+		list_add_tail_rcu(&memcg->prio_list_async,
+				  &memcg_global_reclaim_list.list);
+		mutex_unlock(&memcg_global_reclaim_list.mutex);
+	} else if (old_prio > 0 && new_prio == 0) {
+		mutex_lock(&memcg_global_reclaim_list.mutex);
+		list_del_rcu(&memcg->prio_list_async);
+		mutex_unlock(&memcg_global_reclaim_list.mutex);
+	}
+
+	return 0;
+}
+
+int mem_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
+				  u16 old_prio, u16 new_prio)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	async_reclaim_reset_factor(memcg, new_prio);
+	return memcg_notify_prio_change(memcg, old_prio, new_prio);
+}
+
 static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 			unsigned int nr_pages)
 {
@@ -2715,6 +3151,7 @@ static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 	bool drained = false;
 	bool raised_max_event = false;
 	unsigned long pflags;
+	bool need_reclaim = sysctl_vm_memory_qos && memcg_reclaim_prio_exist();
 #ifdef CONFIG_CGROUP_SLI
 	u64 start;
 #endif
@@ -2735,6 +3172,7 @@ retry:
 		reclaim_options &= ~MEMCG_RECLAIM_MAY_SWAP;
 	}
 
+retry_failed_reclaim:
 	if (batch > nr_pages) {
 		batch = nr_pages;
 		goto retry;
@@ -2768,6 +3206,10 @@ retry:
 	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
 #endif
 	psi_memstall_leave(&pflags);
+
+	need_reclaim = need_reclaim && RUE_CALL_TYPE(MEM,
+				mem_cgroup_notify_reclaim, bool,
+				mem_over_limit, nr_reclaimed);
 
 	if (mem_cgroup_margin(mem_over_limit) >= nr_pages)
 		goto retry;
@@ -2845,11 +3287,28 @@ force:
 	if (do_memsw_account())
 		page_counter_charge(&memcg->memsw, nr_pages);
 
+	if (sysctl_vm_memory_qos && memcg_reclaim_prio_exist())
+		RUE_CALL_VOID(MEM, mem_cgroup_notify_alloc, mem_over_limit, nr_pages);
+
 	return 0;
 
 done_restock:
+	if (need_reclaim) {
+		need_reclaim = RUE_CALL_TYPE(MEM, mem_cgroup_prio_need_reclaim, bool, memcg);
+		if (need_reclaim) {
+			mem_over_limit = memcg;
+			page_counter_uncharge(&memcg->memory, batch);
+			if (do_memsw_account())
+				page_counter_uncharge(&memcg->memsw, batch);
+			goto retry_failed_reclaim;
+		}
+	}
+
 	if (batch > nr_pages)
 		refill_stock(memcg, batch - nr_pages);
+
+	if (sysctl_vm_memory_qos && memcg_reclaim_prio_exist())
+		RUE_CALL_VOID(MEM, mem_cgroup_notify_alloc, memcg, batch);
 
 	/*
 	 * If the hierarchy is above the normal consumption range, schedule
@@ -2862,6 +3321,12 @@ done_restock:
 	 */
 	do {
 		bool mem_high, swap_high;
+
+		if (need_memcg_async_reclaim(memcg)) {
+			/* Kick off per memory cgroup async reclaim */
+			queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+			break;
+		}
 
 		mem_high = page_counter_read(&memcg->memory) >
 			READ_ONCE(memcg->memory.high);
@@ -3546,6 +4011,8 @@ static inline int mem_cgroup_move_swap_account(swp_entry_t entry,
 }
 #endif
 
+static void pagecache_set_limit(struct mem_cgroup *memcg);
+
 static DEFINE_MUTEX(memcg_max_mutex);
 
 static int mem_cgroup_resize_max(struct mem_cgroup *memcg,
@@ -3596,8 +4063,15 @@ static int mem_cgroup_resize_max(struct mem_cgroup *memcg,
 		}
 	} while (true);
 
-	if (!ret && enlarge)
-		memcg_oom_recover(memcg);
+	if (!ret) {
+		setup_async_wmark(memcg);
+		if (need_memcg_async_reclaim(memcg))
+			queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
+		if (enlarge)
+			memcg_oom_recover(memcg);
+		pagecache_set_limit(memcg);
+	}
 
 	return ret;
 }
@@ -3741,6 +4215,282 @@ static int mem_cgroup_hierarchy_write(struct cgroup_subsys_state *css,
 	return -EINVAL;
 }
 
+#define MIN_PAGECACHE_PAGES 16
+unsigned int
+vm_pagecache_limit_retry_times __read_mostly = MEMCG_PAGECACHE_RETRIES;
+
+void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
+{
+	long pages_reclaimed;
+	unsigned long pages_used, pages_max, goal_pages_used, pre_used;
+	unsigned int retry_times = 0;
+	unsigned int limit_retry_times;
+	u32 max_ratio;
+
+	if (!sysctl_vm_memory_qos || vm_pagecache_limit_global)
+		return;
+
+	if (!memcg || mem_cgroup_is_root(memcg))
+		return;
+
+	max_ratio = READ_ONCE(memcg->pagecache_max_ratio);
+	if (max_ratio == PAGECACHE_MAX_RATIO_MAX)
+		return;
+
+	pages_max = READ_ONCE(memcg->pagecache.max);
+	if (pages_max == PAGE_COUNTER_MAX)
+		return;
+
+	if (unlikely(task_is_dying()))
+		return;
+
+	if (unlikely(current->flags & PF_MEMALLOC))
+		return;
+
+	if (unlikely(task_in_memcg_oom(current)))
+		return;
+
+	if (!gfpflags_allow_blocking(gfp_mask))
+		return;
+
+	pages_used = page_counter_read(&memcg->pagecache);
+	limit_retry_times = READ_ONCE(vm_pagecache_limit_retry_times);
+	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio))
+				* pages_max / 100;
+	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES,
+				goal_pages_used);
+
+	if (pages_used > pages_max)
+		memcg_memory_event(memcg, MEMCG_PAGECACHE_MAX);
+
+	while (pages_used > goal_pages_used) {
+		if (fatal_signal_pending(current))
+			break;
+
+		pre_used = pages_used;
+		pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg,
+						pages_used - goal_pages_used);
+
+		if (pages_reclaimed == -EINVAL)
+			return;
+
+		if (limit_retry_times == 0)
+			goto next_shrink;
+
+		if (pages_reclaimed == 0) {
+			io_schedule_timeout(HZ/10);
+			retry_times++;
+		} else
+			retry_times = 0;
+
+		if (retry_times > limit_retry_times) {
+			pr_warn("Attempts to recycle many times have not recovered enough pages.\n");
+			break;
+		}
+
+next_shrink:
+		pages_used = page_counter_read(&memcg->pagecache);
+		cond_resched();
+	}
+}
+
+static u64 pagecache_reclaim_ratio_read(struct cgroup_subsys_state *css,
+					struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->pagecache_reclaim_ratio;
+}
+
+static ssize_t pagecache_reclaim_ratio_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	u64 reclaim_ratio;
+	int ret;
+	unsigned long nr_pages;
+
+	if (!sysctl_vm_memory_qos) {
+		pr_warn("you should open vm.memory_qos.\n");
+		return -EINVAL;
+	}
+
+	if (vm_pagecache_limit_global) {
+		pr_warn("you should clear vm_pagecache_limit_global.\n");
+		return -EINVAL;
+	}
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtou64(buf, 0, &reclaim_ratio);
+	if (ret)
+		return ret;
+
+	if ((reclaim_ratio > 0) && (reclaim_ratio < 100)) {
+		memcg->pagecache_reclaim_ratio = reclaim_ratio;
+		mem_cgroup_shrink_pagecache(memcg, GFP_KERNEL);
+		return nbytes;
+	} else if (reclaim_ratio == 100) {
+		nr_pages = page_counter_read(&memcg->pagecache);
+
+		//try reclaim once
+		shrink_page_cache_memcg(GFP_KERNEL, memcg, nr_pages);
+		return nbytes;
+	}
+
+	return -EINVAL;
+}
+
+static u64 mem_cgroup_priority_oom_read(struct cgroup_subsys_state *css,
+					struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->use_priority_oom;
+}
+
+static int mem_cgroup_priority_oom_write(struct cgroup_subsys_state *css,
+					 struct cftype *cft, u64 val)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	if (val > 1)
+		return -EINVAL;
+
+	memcg->use_priority_oom = val;
+	return 0;
+}
+
+static u64 pagecache_current_read(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return (u64)page_counter_read(&memcg->pagecache) * PAGE_SIZE;
+}
+
+static u64 memory_pagecache_max_read(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->pagecache_max_ratio;
+}
+
+unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
+{
+	unsigned long goal_pages_used, pages_used, pages_max;
+
+	if ((!memcg) || (mem_cgroup_is_root(memcg)))
+		return 0;
+
+	pages_max = READ_ONCE(memcg->pagecache.max);
+	if (pages_max == PAGE_COUNTER_MAX)
+		return 0;
+
+	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio))
+				* pages_max / 100;
+	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES,
+				goal_pages_used);
+	pages_used = page_counter_read(&memcg->pagecache);
+
+	return pages_used > pages_max ? pages_used - goal_pages_used : 0;
+}
+
+static void pagecache_set_limit(struct mem_cgroup *memcg)
+{
+	unsigned long max, pages_max;
+	u32 max_ratio;
+
+	pages_max = READ_ONCE(memcg->memory.max);
+	max_ratio = READ_ONCE(memcg->pagecache_max_ratio);
+	max = ((pages_max * max_ratio) / 100);
+	xchg(&memcg->pagecache.max, max);
+}
+
+static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	unsigned int nr_reclaims = vm_pagecache_limit_retry_times;
+	unsigned long max;
+	long pages_reclaimed;
+	int ret = 0;
+	u64 max_ratio, old;
+
+	if (!sysctl_vm_memory_qos) {
+		pr_warn("you should open vm.memory_qos.\n");
+		return -EINVAL;
+	}
+
+	if (vm_pagecache_limit_global) {
+		pr_warn("you should clear vm_pagecache_limit_global.\n");
+		return -EINVAL;
+	}
+
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtou64(buf, 0, &max_ratio);
+	if (ret)
+		return ret;
+
+	if (max_ratio > PAGECACHE_MAX_RATIO_MAX ||
+		max_ratio < PAGECACHE_MAX_RATIO_MIN)
+		return -EINVAL;
+
+	if (READ_ONCE(memcg->memory.max) == PAGE_COUNTER_MAX) {
+		pr_warn("pagecache limit not allowed for cgroup without memory limit set\n");
+		return -EPERM;
+	}
+
+	old = READ_ONCE(memcg->pagecache_max_ratio);
+	memcg->pagecache_max_ratio = max_ratio;
+	pagecache_set_limit(memcg);
+	max = READ_ONCE(memcg->pagecache.max);
+
+	for (;;) {
+		unsigned long pages_used = page_counter_read(&memcg->pagecache);
+
+		if (pages_used <= max)
+			break;
+
+		if (fatal_signal_pending(current)) {
+			ret = -EINTR;
+			break;
+		}
+
+		if (nr_reclaims) {
+			pages_reclaimed =
+				shrink_page_cache_memcg(GFP_KERNEL, memcg,
+				mem_cgroup_pagecache_get_reclaim_pages(memcg));
+
+			if (pages_reclaimed == -EINVAL) {
+				pr_warn("you should clear vm_pagecache_limit_global.\n");
+				return -EINVAL;
+			}
+
+			if (pages_reclaimed == 0) {
+				io_schedule_timeout(HZ/10);
+				nr_reclaims--;
+				cond_resched();
+			} else
+				nr_reclaims = vm_pagecache_limit_retry_times;
+
+			continue;
+		}
+
+		memcg->pagecache_max_ratio = old;
+		pagecache_set_limit(memcg);
+		pr_warn("Attempts to recycle many times have not recovered enough pages.\n");
+		return -EINVAL;
+	}
+
+	return ret ? : nbytes;
+}
+
 static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 {
 	unsigned long val;
@@ -3779,6 +4529,8 @@ enum {
 	RES_MAX_USAGE,
 	RES_FAILCNT,
 	RES_SOFT_LIMIT,
+	ASYNC_HIGH_LIMIT,
+	ASYNC_LOW_LIMIT,
 };
 
 static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
@@ -3819,6 +4571,10 @@ static u64 mem_cgroup_read_u64(struct cgroup_subsys_state *css,
 		return counter->failcnt;
 	case RES_SOFT_LIMIT:
 		return (u64)READ_ONCE(memcg->soft_limit) * PAGE_SIZE;
+	case ASYNC_HIGH_LIMIT:
+		return (u64)counter->async_high * PAGE_SIZE;
+	case ASYNC_LOW_LIMIT:
+		return (u64)counter->async_low * PAGE_SIZE;
 	default:
 		BUG();
 	}
@@ -4260,6 +5016,11 @@ static void memcg1_stat_format(struct mem_cgroup *memcg, struct seq_buf *s)
 		seq_buf_printf(s, "file_cost %lu\n", file_cost);
 	}
 #endif
+
+	seq_buf_printf(s, "pgscan_in_background %lu\n",
+		       memcg_events(memcg, PGSCAN_KSWAPD));
+	seq_buf_printf(s, "pgsteal_in_background %lu\n",
+		       memcg_events(memcg, PGSTEAL_KSWAPD));
 }
 
 #ifdef CONFIG_TEXT_UNEVICTABLE
@@ -4716,6 +5477,27 @@ void mem_cgroup_wb_stats(struct bdi_writeback *wb, unsigned long *pfilepages,
 		unsigned long ceiling = min(READ_ONCE(memcg->memory.max),
 					    READ_ONCE(memcg->memory.high));
 		unsigned long used = page_counter_read(&memcg->memory);
+
+		/*
+		 * Create a cgroup hierarchy a/{b, c}, b and c have no limit set,
+		 * or the limit of b + c is greater than the limit of a. Then if
+		 * the task of b does buffer IO first, this will cause the
+		 * available memory of a to be greatly reduced. When the subsequent
+		 * task of c is started, the available memory of a is small,
+		 * resulting in the dirty page waterline of c being very small,
+		 * the IO of c is suppressed and cannot be delivered normally.
+		 * Since the file cache in b is recyclable, we can try to reclaim it,
+		 * so when calculating the headroom, the available memory of a
+		 * includes the file cache of a.
+		 */
+		if (memcg != mem_cgroup_from_css(wb->memcg_css)) {
+			unsigned long file, dirty, writeback;
+
+			file = memcg_page_state(memcg, NR_FILE_PAGES);
+			dirty = memcg_page_state(memcg, NR_FILE_DIRTY);
+			writeback = memcg_page_state(memcg, NR_WRITEBACK);
+			used -= file - dirty - writeback;
+		}
 
 		*pheadroom = min(*pheadroom, ceiling - min(ceiling, used));
 		memcg = parent;
@@ -5440,43 +6222,50 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
-/**
- * bind memcg to a blkcg.
- * NULL str    : clear this configure.
- * illegal str : do nothing.
- * legal str   : replace configure.
- */
+#ifdef CONFIG_CGROUP_WRITEBACK
 static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 				char *buf, size_t nbytes, loff_t off)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
 	struct cgroup_subsys_state *css;
-	struct cgroup_subsys_state *orig_css;
 	struct path path;
 	char *pbuf;
 	int ret;
 
+	if (!buff_wb_enabled())
+		return -EPERM;
+
 	buf = strstrip(buf);
+
 	/* alloc memory outside mutex */
 	pbuf = kzalloc(PATH_MAX, GFP_KERNEL);
 	if (!pbuf)
 		return -ENOMEM;
-	strncpy(pbuf, buf, PATH_MAX - 1);
+	strscpy(pbuf, buf, PATH_MAX - 1);
+
 	mutex_lock(&memcg_max_mutex);
 
-	/* 0 len means clear configure. */
-	if (!strnlen(buf, PATH_MAX)) {
-		memcg_blkio_free(memcg);
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		memcg->bind_blkio_path = NULL;
+		css_put(memcg->bind_blkio);
+		memcg->bind_blkio = NULL;
+
 		wb_memcg_offline(memcg);
 		INIT_LIST_HEAD(&memcg->cgwb_list);
+	}
 
+	if (!strnlen(buf, PATH_MAX)) {
 		mutex_unlock(&memcg_max_mutex);
 		kfree(pbuf);
 		return nbytes;
 	}
+
 	ret = kern_path(pbuf, LOOKUP_FOLLOW, &path);
 	if (ret)
 		goto err;
+
 	css = css_tryget_online_from_dir(path.dentry, &io_cgrp_subsys);
 	if (IS_ERR(css)) {
 		ret = PTR_ERR(css);
@@ -5485,27 +6274,12 @@ static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 	}
 	path_put(&path);
 
-	/* if there exists old css, just free. */
-	orig_css = get_blkio_css(memcg);
-	if (orig_css) {
-		if (orig_css == css) {
-			ret = -EEXIST;
-			goto err;
-		} else {
-			memcg_blkio_free(memcg);
-			wb_memcg_offline(memcg);
-			INIT_LIST_HEAD(&memcg->cgwb_list);
-		}
-	}
-
-	/* we store this two into memcg->nodeinfo */
-	set_blkio_path(memcg, pbuf);
-	set_blkio_css(memcg, css);
-
+	memcg->bind_blkio_path = pbuf;
+	memcg->bind_blkio = css;
 	mutex_unlock(&memcg_max_mutex);
 	return nbytes;
 
- err:
+err:
 	kfree(pbuf);
 	mutex_unlock(&memcg_max_mutex);
 	return ret;
@@ -5515,12 +6289,28 @@ static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
 
-	char *bpath = get_blkio_path(memcg);
-
-	if (bpath)
-		seq_printf(m, "%s\n", bpath);
+	if (memcg->bind_blkio_path)
+		seq_printf(m, "%s\n", memcg->bind_blkio_path);
 
 	return 0;
+}
+#endif
+
+static ssize_t mem_cgroup_sync_write(struct kernfs_open_file *of, char *buf,
+				     size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+
+	if (mem_cgroup_is_root(memcg))
+		return -EINVAL;
+
+	if (!rue_io_enabled())
+		return -EPERM;
+
+#ifdef CONFIG_BLK_CGROUP
+	RUE_CALL_VOID(IO, cgroup_sync, memcg);
+#endif
+	return nbytes;
 }
 
 static u64 memory_current_read(struct cgroup_subsys_state *css,
@@ -5585,7 +6375,171 @@ static int mem_cgroup_unevictable_percent_write(struct cgroup_subsys_state *css,
 }
 #endif
 
+static int memory_async_reclaim_wmark_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_wmark));
+
+	return 0;
+}
+
+static ssize_t memory_async_reclaim_wmark_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, wmark;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &wmark);
+	if (ret)
+		return ret;
+
+	if (wmark > 100)
+		return -EINVAL;
+
+	xchg(&memcg->async_wmark, wmark);
+
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
+	return nbytes;
+}
+
+static int memory_async_distance_factor_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_distance_factor));
+
+	return 0;
+}
+
+static ssize_t memory_async_distance_factor_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, factor;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &factor);
+	if (ret)
+		return ret;
+
+	if ((factor > 150000) || (factor < 1))
+		return -EINVAL;
+
+	xchg(&memcg->async_distance_factor, factor);
+
+	setup_async_wmark(memcg);
+
+	return nbytes;
+}
+
+extern unsigned int vm_memcg_latency_histogram;
+
+static int mem_cgroup_lat_seq_show(struct seq_file *m, void *v)
+{
+	u64 sum_lat;
+	int i, cpu;
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	if (!sysctl_vm_memory_qos) {
+		seq_puts(m, "vm.memory_qos is not enabled.\n");
+		return 0;
+	}
+
+	if (!vm_memcg_latency_histogram) {
+		seq_puts(m, "vm.memcg_latency_histogram is not enabled.\n");
+		return 0;
+	}
+
+	for (i = 0; i < MEM_LATENCY_MAX_SLOTS; i++) {
+		sum_lat = 0;
+
+		for_each_possible_cpu(cpu) {
+			sum_lat += *per_cpu_ptr(memcg->latency_histogram[i], cpu);
+			*per_cpu_ptr(memcg->latency_histogram[i], cpu) = 0;
+		}
+		if (i == 0)
+			seq_printf(m, "[%-20llu, %-20llu]ns : %llu.\n",
+				   (u64)0, (u64)1, sum_lat);
+		else
+			seq_printf(m, "[%-20llu, %-20llu]ns : %llu.\n",
+				   (u64)1 << (i - 1),
+				   (u64)1 << i, sum_lat);
+	}
+
+	return 0;
+}
+
+static int mem_cgroup_page_cache_hit_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	long long mpa = 0, mbd = 0, apcl = 0, apd = 0, total = 0, misses = 0, hits = 0;
+	int cpu;
+
+	if (!sysctl_vm_memory_qos) {
+		seq_puts(m, "vm.memory_qos is not enabled.\n");
+		return 0;
+	}
+
+	if (!vm_memcg_page_cache_hit) {
+		seq_puts(m, "vm.memcg_page_cache_hit is not enabled.\n");
+		return 0;
+	}
+
+	if (!memcg->mpa || !memcg->mbd || !memcg->apcl || !memcg->apd)
+		return 0;
+
+	for_each_possible_cpu(cpu) {
+		mpa += (long long)*per_cpu_ptr(memcg->mpa, cpu);
+		*per_cpu_ptr(memcg->mpa, cpu) = 0;
+		mbd += (long long)*per_cpu_ptr(memcg->mbd, cpu);
+		*per_cpu_ptr(memcg->mbd, cpu) = 0;
+		apcl += (long long)*per_cpu_ptr(memcg->apcl, cpu);
+		*per_cpu_ptr(memcg->apcl, cpu) = 0;
+		apd += (long long)*per_cpu_ptr(memcg->apd, cpu);
+		*per_cpu_ptr(memcg->apd, cpu) = 0;
+	}
+
+	total = mpa - mbd;
+	if (total < 0)
+		total = 0;
+	misses = apcl - apd;
+	if (misses < 0)
+		misses = 0;
+	hits = total - misses;
+	if (hits < 0) {
+		misses = total;
+		hits = 0;
+	}
+
+	seq_printf(m, "total: %llu, hits: %llu, misses: %llu.\n", total, hits, misses);
+
+	return 0;
+}
+
+static int memory_oom_group_show(struct seq_file *m, void *v);
+static ssize_t memory_oom_group_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off);
+
 static struct cftype mem_cgroup_legacy_files[] = {
+	{
+		.name = "latency_histogram",
+		.seq_show = mem_cgroup_lat_seq_show,
+	},
+	{
+		.name = "page_cache_hit",
+		.seq_show = mem_cgroup_page_cache_hit_show,
+	},
 	{
 		.name = "usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_USAGE),
@@ -5643,6 +6597,58 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "use_hierarchy",
 		.write_u64 = mem_cgroup_hierarchy_write,
 		.read_u64 = mem_cgroup_hierarchy_read,
+	},
+	{
+		.name = "pagecache.reclaim_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_reclaim_ratio_read,
+		.write = pagecache_reclaim_ratio_write,
+	},
+	{
+		.name = "pagecache.max_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = memory_pagecache_max_read,
+		.write = memory_pagecache_max_write,
+	},
+	{
+		.name = "pagecache.current",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_current_read,
+	},
+	{
+		.name = "use_priority_oom",
+		.write_u64 = mem_cgroup_priority_oom_write,
+		.read_u64 = mem_cgroup_priority_oom_read,
+	},
+	{
+		.name = "oom.group",
+		.flags = CFTYPE_NOT_ON_ROOT | CFTYPE_NS_DELEGATABLE,
+		.seq_show = memory_oom_group_show,
+		.write = memory_oom_group_write,
+	},
+	{
+		.name = "async_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_reclaim_wmark_show,
+		.write = memory_async_reclaim_wmark_write,
+	},
+	{
+		.name = "async_high",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.private = MEMFILE_PRIVATE(_MEM, ASYNC_HIGH_LIMIT),
+		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "async_low",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.private = MEMFILE_PRIVATE(_MEM, ASYNC_LOW_LIMIT),
+		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "async_distance_factor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_factor_show,
+		.write = memory_async_distance_factor_write,
 	},
 	{
 		.name = "cgroup.event_control",		/* XXX: for compat */
@@ -5816,12 +6822,6 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.release = cgroup_mbuf_release,
 	},
 #endif
-	{
-		.name = "bind_blkio",
-		.flags = CFTYPE_NOT_ON_ROOT,
-		.write = mem_cgroup_bind_blkio_write,
-		.seq_show = mem_cgroup_bind_blkio_show,
-	},
 	{ },	/* terminate */
 };
 
@@ -5969,6 +6969,14 @@ static void free_mem_cgroup_per_node_info(struct mem_cgroup *memcg, int node)
 static void __mem_cgroup_free(struct mem_cgroup *memcg)
 {
 	int node;
+	int i;
+
+	for (i = 0; i < MEM_LATENCY_MAX_SLOTS; i++)
+		free_percpu(memcg->latency_histogram[i]);
+	free_percpu(memcg->mpa);
+	free_percpu(memcg->mbd);
+	free_percpu(memcg->apcl);
+	free_percpu(memcg->apd);
 
 	for_each_node(node)
 		free_mem_cgroup_per_node_info(memcg, node);
@@ -5991,15 +6999,8 @@ static struct mem_cgroup *mem_cgroup_alloc(struct mem_cgroup *parent)
 	int node, cpu;
 	int __maybe_unused i;
 	long error = -ENOMEM;
-	unsigned int size;
 
-	/*
-	 * For KABI, we have to use this ugly method to store blkcg info.
-	 * [nr_node_ids + ITEM_BLKIO_CSS]: struct cgroup_subsys_state *bind_blkio;
-	 * [nr_node_ids + ITEM_BLKIO_PATH]: char *bind_blkio_path;
-	 */
-	size = struct_size(memcg, nodeinfo, nr_node_ids+ITEM_BLKIO_MAX);
-	memcg = kzalloc(size, GFP_KERNEL);
+	memcg = kzalloc(struct_size(memcg, nodeinfo, nr_node_ids), GFP_KERNEL);
 	if (!memcg)
 		return ERR_PTR(error);
 
@@ -6037,6 +7038,7 @@ static struct mem_cgroup *mem_cgroup_alloc(struct mem_cgroup *parent)
 		goto fail;
 
 	INIT_WORK(&memcg->high_work, high_work_func);
+	INIT_WORK(&memcg->async_work, async_reclaim_func);
 	INIT_LIST_HEAD(&memcg->oom_notify);
 	mutex_init(&memcg->thresholds_lock);
 	spin_lock_init(&memcg->move_lock);
@@ -6072,6 +7074,8 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 {
 	struct mem_cgroup *parent = mem_cgroup_from_css(parent_css);
 	struct mem_cgroup *memcg, *old_memcg;
+	long error = -ENOMEM;
+	int index;
 
 	old_memcg = set_active_memcg(parent);
 	memcg = mem_cgroup_alloc(parent);
@@ -6081,6 +7085,34 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 
 	page_counter_set_high(&memcg->memory, PAGE_COUNTER_MAX);
 	WRITE_ONCE(memcg->soft_limit, PAGE_COUNTER_MAX);
+	memcg->mpa = alloc_percpu(u64);
+	if (!memcg->mpa)
+		goto fail;
+	memcg->mbd = alloc_percpu(u64);
+	if (!memcg->mbd) {
+		free_percpu(memcg->mpa);
+		goto fail;
+	}
+	memcg->apcl = alloc_percpu(u64);
+	if (!memcg->apcl) {
+		free_percpu(memcg->mpa);
+		free_percpu(memcg->mbd);
+		goto fail;
+	}
+	memcg->apd = alloc_percpu(u64);
+	if (!memcg->apd) {
+		free_percpu(memcg->mpa);
+		free_percpu(memcg->mbd);
+		free_percpu(memcg->apcl);
+		goto fail;
+	}
+	for (index = 0; index < MEM_LATENCY_MAX_SLOTS; index++) {
+		memcg->latency_histogram[index] = alloc_percpu(u64);
+		if (!memcg->latency_histogram[index])
+			goto fail;
+	}
+	memcg->pagecache_reclaim_ratio = DEFAULT_PAGE_RECLAIM_RATIO;
+	memcg->pagecache_max_ratio = PAGECACHE_MAX_RATIO_MAX;
 #if defined(CONFIG_MEMCG_KMEM) && defined(CONFIG_ZSWAP)
 	memcg->zswap_max = PAGE_COUNTER_MAX;
 #endif
@@ -6098,6 +7130,12 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 #endif
 		WRITE_ONCE(memcg->swappiness, mem_cgroup_swappiness(parent));
 		WRITE_ONCE(memcg->oom_kill_disable, READ_ONCE(parent->oom_kill_disable));
+		memcg->async_wmark = parent->async_wmark;
+		memcg->async_distance_factor = parent->async_distance_factor ?
+						: ASYNC_DISTANCE_DEF;
+		memcg->async_wmark_delta = parent->async_wmark_delta;
+		memcg->async_distance_delta = parent->async_distance_delta ?
+						: ASYNC_DISTANCE_DEF;
 #ifdef CONFIG_MEMCG_ZRAM
 		memcg->zram_prio = parent->zram_prio;
 #endif
@@ -6105,13 +7143,20 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		page_counter_init(&memcg->swap, &parent->swap);
 		page_counter_init(&memcg->kmem, &parent->kmem);
 		page_counter_init(&memcg->tcpmem, &parent->tcpmem);
+		page_counter_init(&memcg->pagecache, &parent->pagecache);
 	} else {
 		init_memcg_events();
 		page_counter_init(&memcg->memory, NULL);
 		page_counter_init(&memcg->swap, NULL);
 		page_counter_init(&memcg->kmem, NULL);
 		page_counter_init(&memcg->tcpmem, NULL);
+		page_counter_init(&memcg->pagecache, NULL);
+	}
 
+	setup_async_wmark(memcg);
+
+	if (!parent) {
+		memcg->async_wmark_delta = -1;
 		root_mem_cgroup = memcg;
 		return &memcg->css;
 	}
@@ -6124,7 +7169,14 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		static_branch_inc(&memcg_bpf_enabled_key);
 #endif
 
+	INIT_LIST_HEAD(&memcg->prio_list);
+	INIT_LIST_HEAD(&memcg->prio_list_async);
+
 	return &memcg->css;
+fail:
+	mem_cgroup_id_remove(memcg);
+	mem_cgroup_free(memcg);
+	return ERR_PTR(error);
 }
 
 static int mem_cgroup_css_online(struct cgroup_subsys_state *css)
@@ -6165,6 +7217,9 @@ static int mem_cgroup_css_online(struct cgroup_subsys_state *css)
 	idr_replace(&mem_cgroup_idr, memcg, memcg->id.id);
 	spin_unlock(&memcg_idr_lock);
 
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
+	memcg_notify_prio_change(memcg, 0, memcg_get_prio(memcg));
+
 	return 0;
 offline_kmem:
 	memcg_offline_kmem(memcg);
@@ -6173,11 +7228,46 @@ remove_id:
 	return -ENOMEM;
 }
 
+atomic_long_t dying_memcgs_count;
+
+void wakeup_kclean_dying_memcg(void)
+{
+	if (!waitqueue_active(&kclean_dying_memcg_wq)) /* .. */
+		return;
+
+	wake_up_interruptible(&kclean_dying_memcg_wq);
+}
+
+void charge_dying_memcgs(struct mem_cgroup *memcg)
+{
+	if (sysctl_vm_memory_qos == 0)
+		return;
+
+	if (sysctl_clean_dying_memcg_async == 0)
+		return;
+
+	if (sysctl_clean_dying_memcg_threshold == 0)
+		return;
+
+	if (atomic_long_read(&dying_memcgs_count) >=
+			sysctl_clean_dying_memcg_threshold) {
+		atomic_long_set(&dying_memcgs_count, 0);
+		wakeup_kclean_dying_memcg();
+	}
+
+	memcg->offline_times = jiffies;
+	atomic_long_add(1, &dying_memcgs_count);
+}
+
 static void mem_cgroup_css_offline(struct cgroup_subsys_state *css)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
 	struct mem_cgroup_event *event, *tmp;
 
+	charge_dying_memcgs(memcg);
+
+	/* XXX no direct number */
+	memcg_notify_prio_change(memcg, memcg_get_prio(memcg), 0);
 	/*
 	 * Unregister events and notify userspace.
 	 * Notify userspace about cgroup removing only after rmdir of cgroup
@@ -6192,6 +7282,8 @@ static void mem_cgroup_css_offline(struct cgroup_subsys_state *css)
 
 	page_counter_set_min(&memcg->memory, 0);
 	page_counter_set_low(&memcg->memory, 0);
+	page_counter_set_async_high(&memcg->memory, PAGE_COUNTER_MAX);
+	page_counter_set_async_low(&memcg->memory, PAGE_COUNTER_MAX);
 
 	memcg_offline_kmem(memcg);
 	reparent_shrinker_deferred(memcg);
@@ -6233,9 +7325,15 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 		static_branch_dec(&memcg_bpf_enabled_key);
 #endif
 
-	memcg_blkio_free(memcg);
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		css_put(memcg->bind_blkio);
+	}
+
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);
+	cancel_work_sync(&memcg->async_work);
 	mem_cgroup_remove_from_trees(memcg);
 	free_shrinker_info(memcg);
 	mem_cgroup_free(memcg);
@@ -6262,8 +7360,11 @@ static void mem_cgroup_css_reset(struct cgroup_subsys_state *css)
 	page_counter_set_max(&memcg->swap, PAGE_COUNTER_MAX);
 	page_counter_set_max(&memcg->kmem, PAGE_COUNTER_MAX);
 	page_counter_set_max(&memcg->tcpmem, PAGE_COUNTER_MAX);
+	page_counter_set_max(&memcg->pagecache, PAGE_COUNTER_MAX);
 	page_counter_set_min(&memcg->memory, 0);
 	page_counter_set_low(&memcg->memory, 0);
+	page_counter_set_async_high(&memcg->memory, PAGE_COUNTER_MAX);
+	page_counter_set_async_low(&memcg->memory, PAGE_COUNTER_MAX);
 	page_counter_set_high(&memcg->memory, PAGE_COUNTER_MAX);
 	WRITE_ONCE(memcg->soft_limit, PAGE_COUNTER_MAX);
 	page_counter_set_high(&memcg->swap, PAGE_COUNTER_MAX);
@@ -7266,6 +8367,10 @@ static ssize_t memory_high_write(struct kernfs_open_file *of,
 			break;
 	}
 
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+
 	memcg_wb_domain_size_changed(memcg);
 	return nbytes;
 }
@@ -7319,6 +8424,11 @@ static ssize_t memory_max_write(struct kernfs_open_file *of,
 			break;
 	}
 
+	setup_async_wmark(memcg);
+	if (need_memcg_async_reclaim(memcg))
+		queue_work(memcg_async_reclaim_wq, &memcg->async_work);
+	pagecache_set_limit(memcg);
+
 	memcg_wb_domain_size_changed(memcg);
 	return nbytes;
 }
@@ -7333,6 +8443,10 @@ static void __memory_events_show(struct seq_file *m, atomic_long_t *events)
 		   atomic_long_read(&events[MEMCG_OOM_KILL]));
 	seq_printf(m, "oom_group_kill %lu\n",
 		   atomic_long_read(&events[MEMCG_OOM_GROUP_KILL]));
+	seq_printf(m, "pagecache_max %lu\n",
+		   atomic_long_read(&events[MEMCG_PAGECACHE_MAX]));
+	seq_printf(m, "pagecache_oom %lu\n",
+		   atomic_long_read(&events[MEMCG_PAGECACHE_OOM]));
 }
 
 static int memory_events_show(struct seq_file *m, void *v)
@@ -7496,7 +8610,102 @@ static ssize_t memory_reclaim(struct kernfs_open_file *of, char *buf,
 	return nbytes;
 }
 
+static int memory_async_high_wmark_show(struct seq_file *m, void *v)
+{
+	return seq_puts_memcg_tunable(m,
+		READ_ONCE(mem_cgroup_from_seq(m)->memory.async_high));
+}
+
+static int memory_async_low_wmark_show(struct seq_file *m, void *v)
+{
+	return seq_puts_memcg_tunable(m,
+		READ_ONCE(mem_cgroup_from_seq(m)->memory.async_low));
+}
+
+static int memory_async_distance_delta_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_distance_delta));
+
+	return 0;
+}
+
+static ssize_t memory_async_distance_delta_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, delta;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &delta);
+	if (ret)
+		return ret;
+
+	if ((delta > 50) || (delta < 1))
+		return -EINVAL;
+
+	xchg(&memcg->async_distance_delta, delta);
+
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
+
+	return nbytes;
+}
+
+static int memory_async_wmark_delta_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	seq_printf(m, "%d\n", READ_ONCE(memcg->async_wmark_delta));
+
+	return 0;
+}
+
+static ssize_t memory_async_wmark_delta_write(struct kernfs_open_file *of,
+				      char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	int ret, delta;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtoint(buf, 0, &delta);
+	if (ret)
+		return ret;
+
+	if (((delta > 10) || (delta < 1)) && (delta != -1))
+		return -EINVAL;
+
+	xchg(&memcg->async_wmark_delta, delta);
+
+	async_reclaim_reset_factor(memcg, memcg_get_prio(memcg));
+
+	return nbytes;
+}
+
 static struct cftype memory_files[] = {
+	{
+		.name = "pagecache.reclaim_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_reclaim_ratio_read,
+		.write = pagecache_reclaim_ratio_write,
+	},
+	{
+		.name = "pagecache.max_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = memory_pagecache_max_read,
+		.write = memory_pagecache_max_write,
+	},
+	{
+		.name = "pagecache.current",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_current_read,
+	},
 	{
 		.name = "current",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -7532,6 +8741,11 @@ static struct cftype memory_files[] = {
 		.write = memory_max_write,
 	},
 	{
+		.name = "use_priority_oom",
+		.write_u64 = mem_cgroup_priority_oom_write,
+		.read_u64 = mem_cgroup_priority_oom_read,
+	},
+	{
 		.name = "events",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.file_offset = offsetof(struct mem_cgroup, events_file),
@@ -7564,6 +8778,45 @@ static struct cftype memory_files[] = {
 		.flags = CFTYPE_NS_DELEGATABLE,
 		.write = memory_reclaim,
 	},
+	{
+		.name = "async_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_reclaim_wmark_show,
+		.write = memory_async_reclaim_wmark_write,
+	},
+	{
+		.name = "async_high",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_high_wmark_show,
+	},
+	{
+		.name = "async_low",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_low_wmark_show,
+	},
+	{
+		.name = "async_distance_factor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_factor_show,
+		.write = memory_async_distance_factor_write,
+	},
+	{
+		.name = "async_ratio_delta",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_wmark_delta_show,
+		.write = memory_async_wmark_delta_write,
+	},
+	{
+		.name = "async_distance_delta",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = memory_async_distance_delta_show,
+		.write = memory_async_distance_delta_write,
+	},
+	{
+		.name = "sync",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_sync_write,
+	},
 	{ }	/* terminate */
 };
 
@@ -7579,6 +8832,7 @@ struct cgroup_subsys memory_cgrp_subsys = {
 	.attach = mem_cgroup_attach,
 	.cancel_attach = mem_cgroup_cancel_attach,
 	.post_attach = mem_cgroup_move_task,
+	.css_priority_change = mem_cgroup_notify_prio_change,
 	.dfl_cftypes = memory_files,
 	.legacy_cftypes = mem_cgroup_legacy_files,
 	.early_init = 0,
@@ -8136,6 +9390,10 @@ static int __init cgroup_memory(char *s)
 }
 __setup("cgroup.memory=", cgroup_memory);
 
+#define DEFAULT_SPAN_PERCENT   10
+#define MAX_SPAN_SIZE          (10ull * SZ_1G)
+#define MIN_SPAN_SIZE          (2ull * SZ_1G)
+
 /*
  * subsys_initcall() for memory controller.
  *
@@ -8147,6 +9405,13 @@ __setup("cgroup.memory=", cgroup_memory);
 static int __init mem_cgroup_init(void)
 {
 	int cpu, node;
+
+	memcg_async_reclaim_wq = alloc_workqueue("memcg_async_reclaim",
+				WQ_MEM_RECLAIM | WQ_UNBOUND | WQ_FREEZABLE,
+				WQ_UNBOUND_MAX_ACTIVE);
+
+	if (!memcg_async_reclaim_wq)
+		return -ENOMEM;
 
 	/*
 	 * Currently s32 type (can refer to struct batched_lruvec_stat) is
@@ -8173,6 +9438,19 @@ static int __init mem_cgroup_init(void)
 		spin_lock_init(&rtpn->lock);
 		soft_limit_tree.rb_tree_per_node[node] = rtpn;
 	}
+
+{
+	int i;
+
+	memcg_prio_reclaimd_run();
+	for (i = 0; i < CGROUP_PRIORITY_MAX; i++) {
+		INIT_LIST_HEAD(&memcg_prios[i].head);
+		spin_lock_init(&memcg_prios[i].lock);
+	}
+
+	INIT_LIST_HEAD(&memcg_global_reclaim_list.list);
+	mutex_init(&memcg_global_reclaim_list.mutex);
+}
 
 	return 0;
 }
@@ -8525,6 +9803,19 @@ static struct cftype memsw_files[] = {
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
 	},
+#ifdef CONFIG_CGROUP_WRITEBACK
+	{
+		.name = "bind_blkio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_bind_blkio_write,
+		.seq_show = mem_cgroup_bind_blkio_show,
+	},
+#endif
+	{
+		.name = "sync",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_sync_write,
+	},
 	{ },	/* terminate */
 };
 
@@ -8691,3 +9982,411 @@ static int __init mem_cgroup_swap_init(void)
 subsys_initcall(mem_cgroup_swap_init);
 
 #endif /* CONFIG_SWAP */
+
+#define RMEM_UPDATE_FREQ           10
+
+static void memcg_rmem_update_wmark(unsigned long rmem_size)
+{
+	unsigned long limit = totalram_pages() << PAGE_SHIFT;
+	unsigned long setpoint;
+
+	/* XXX fix error case */
+	if (limit < rmem_size)
+		return;
+
+	setpoint = limit - rmem_size;
+	if (rmem_wmark_setpoint == setpoint)
+		return;
+
+	rmem_wmark_setpoint = setpoint;
+	if (setpoint >= rmem_size) {
+		rmem_wmark_freerun = setpoint - rmem_size;
+		rmem_wmark_limit = limit;
+	} else {
+		rmem_wmark_freerun = 0;
+		rmem_wmark_limit = setpoint + setpoint;
+	}
+}
+
+static void memcg_rmem_wmark_adjust(void)
+{
+	memcg_rmem_update_wmark(prio_reclaim_bytes);
+}
+
+/*
+ *                           usage - setpoint 3
+ *        f(usage) := 1.0 + (----------------)
+ *                           limit - setpoint
+ *
+ * it's a 3rd order polynomial that subjects to
+ *
+ * (1) f(limit)    = 2.0
+ * (2) f(setpoint) = 1.0
+ * (3) f(freerun)  = 0
+ */
+#define POS_RATIO_SETPOINT_VAL    1024l
+#define POS_RATIO_WARN_OFFSET     16l
+#define RATELIMIT_CALC_SHIFT   10
+static long long pos_ratio_polynom(unsigned long setpoint,
+				   unsigned long usage,
+				   unsigned long limit)
+{
+	long long pos_ratio;
+	long x;
+
+	x = div64_s64(((s64)usage - (s64)setpoint) << RATELIMIT_CALC_SHIFT,
+		      (limit - setpoint) | 1);
+	pos_ratio = x;
+	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
+	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
+	pos_ratio += 1 << RATELIMIT_CALC_SHIFT;
+
+	return clamp(pos_ratio, 0LL, 2LL << RATELIMIT_CALC_SHIFT);
+}
+
+static void memcg_rmem_calc_pos_ratio(void)
+{
+	unsigned long mem_used;
+
+	mem_used = (totalram_pages() - global_zone_page_state(NR_FREE_PAGES))
+		   << PAGE_SHIFT;
+
+	if (mem_used <= rmem_wmark_freerun) {
+		memcg_pos_ratio = 0;
+	} else {
+		memcg_pos_ratio = pos_ratio_polynom(rmem_wmark_setpoint,
+						(mem_used > rmem_wmark_limit) ?
+						rmem_wmark_limit : mem_used,
+						rmem_wmark_limit);
+	}
+}
+
+static void memcg_expand_reclaim_prio(void)
+{
+	while (memcg_cur_reclaim_prio > sysctl_vm_qos_highest_reclaim_prio) {
+		memcg_cur_reclaim_prio--;
+		if (atomic_long_read(
+			&memcg_prios[memcg_cur_reclaim_prio].count))
+			break;
+	}
+}
+
+static void memcg_shrink_reclaim_prio(void)
+{
+	while (memcg_cur_reclaim_prio < CGROUP_PRIORITY_MAX - 1) {
+		memcg_cur_reclaim_prio++;
+		if (atomic_long_read(
+			&memcg_prios[memcg_cur_reclaim_prio].count))
+			break;
+	}
+}
+
+static void memcg_update_reclaim_prio(void)
+{
+	static long last_pos_ratio;
+
+	spin_lock(&memcg_reclaim_prio_lock);
+	if (memcg_pos_ratio > POS_RATIO_SETPOINT_VAL + POS_RATIO_WARN_OFFSET &&
+	    memcg_pos_ratio > last_pos_ratio) {
+		memcg_expand_reclaim_prio();
+	} else if (memcg_pos_ratio <
+		   POS_RATIO_SETPOINT_VAL - POS_RATIO_WARN_OFFSET &&
+		   memcg_pos_ratio < last_pos_ratio) {
+		memcg_shrink_reclaim_prio();
+	}
+	last_pos_ratio = memcg_pos_ratio;
+	spin_unlock(&memcg_reclaim_prio_lock);
+}
+
+static int max_retry_times = 5;
+static long memcg_prio_reclaim_async(void)
+{
+	struct mem_cgroup *memcg;
+	int prio;
+	bool reclaim_succeed = false;
+	int nr_reclaimed;
+	int retry_times = 0;
+	int nr_reclaim_memcg, zero_reclaim_memcg;
+
+	if (atomic_long_read(&memcg_reclaimed_count) >= memcg_reclaim_goal)
+		return HZ;
+
+retry:
+	retry_times++;
+	nr_reclaim_memcg = 0;
+	zero_reclaim_memcg = 0;
+	rcu_read_lock();
+	list_for_each_entry_rcu(memcg, &memcg_global_reclaim_list.list,
+				prio_list_async) {
+		prio = memcg_get_prio(memcg);
+		if (prio < memcg_cur_reclaim_prio)
+			continue;
+
+		if (memcg_reclaim_goal > 0) {
+			nr_reclaim_memcg++;
+			nr_reclaimed = try_to_free_mem_cgroup_pages(memcg,
+					memcg_reclaim_goal, GFP_KERNEL, true);
+			if (!RUE_CALL_TYPE(MEM, mem_cgroup_notify_reclaim, bool,
+					   memcg, nr_reclaimed))
+				break;
+
+			if (nr_reclaimed == 0)
+				zero_reclaim_memcg++;
+			if (atomic_long_read(&memcg_reclaimed_count) >
+				memcg_reclaim_goal) {
+				reclaim_succeed = true;
+				break;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	if (reclaim_succeed)
+		return HZ / 2;
+
+	if (nr_reclaim_memcg == zero_reclaim_memcg) {
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		io_schedule_timeout(HZ/10);
+		return HZ;
+	}
+
+	if (retry_times <= max_retry_times)
+		goto retry;
+
+	return HZ / 10;
+}
+
+static int memcg_prio_reclaimd_async(void *data)
+{
+	DEFINE_WAIT(wait_async);
+	// XXX  simplify kthread
+	for ( ; ; ) {
+		long timeout;
+
+		timeout = memcg_prio_reclaim_async();
+		prepare_to_wait(&memcg_prio_reclaim_wq, &wait_async,
+				TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule_timeout(timeout);
+		else {
+			finish_wait(&memcg_prio_reclaim_wq, &wait_async);
+			break;
+		}
+		finish_wait(&memcg_prio_reclaim_wq, &wait_async);
+	}
+
+	return 0;
+}
+
+static long memcg_prio_strategy(void)
+{
+#define RMEM_CHECK_PERIOD_MS		100
+#define STRATEG_UPDATE_PERIOD_MS	1000
+	long timeout = MAX_SCHEDULE_TIMEOUT;
+	unsigned long alloc, goal = 0;
+	static unsigned long last_time;
+
+	if (!sysctl_vm_memory_qos || !memcg_reclaim_prio_exist())
+		goto out;
+
+	memcg_rmem_wmark_adjust();
+	memcg_rmem_calc_pos_ratio();
+
+	alloc = atomic_long_xchg(&memcg_allocated_count, 0);
+
+	if (memcg_pos_ratio <= 0) {
+		timeout = HZ / 2;
+		goto out;
+	} else {
+		timeout = msecs_to_jiffies(RMEM_CHECK_PERIOD_MS);
+	}
+
+	memcg_update_reclaim_prio();
+
+	if (time_after(jiffies, last_time + HZ))
+		alloc = 1;
+	goal = (alloc * memcg_pos_ratio) >> RATELIMIT_CALC_SHIFT;
+	atomic_long_xchg(&memcg_reclaimed_count, 0);
+out:
+	memcg_reclaim_goal = goal;
+	last_time = jiffies;
+	return timeout;
+}
+
+static int memcg_prio_reclaimd(void *data)
+{
+	DEFINE_WAIT(wait);
+	// XXX  simplify kthread
+	for ( ; ; ) {
+		long timeout;
+
+		timeout = memcg_prio_strategy();
+		prepare_to_wait(&memcg_prio_reclaim_wq, &wait,
+				TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule_timeout(timeout);
+		else {
+			finish_wait(&memcg_prio_reclaim_wq, &wait);
+			break;
+		}
+		finish_wait(&memcg_prio_reclaim_wq, &wait);
+	}
+
+	return 0;
+}
+
+static int memcg_prio_reclaimd_run(void)
+{
+	int ret = 0;
+
+	if (!memcg_priod) {
+		memcg_priod = kthread_run(memcg_prio_reclaimd,
+					  NULL, "memcg_priod");
+		if (IS_ERR(memcg_priod)) {
+			pr_err("Failed to start memcg_prio_reclaimd thread\n");
+			ret = PTR_ERR(memcg_priod);
+			memcg_priod = NULL;
+		}
+	}
+
+	if (!memcg_priod_async) {
+		memcg_priod_async = kthread_run(memcg_prio_reclaimd_async,
+						NULL, "memcg_priod_async");
+		if (IS_ERR(memcg_priod_async)) {
+			pr_err("Failed to start memcg_prio_reclaimd_async thread\n");
+			ret = PTR_ERR(memcg_priod_async);
+			memcg_priod_async = NULL;
+		}
+	}
+
+	return ret;
+}
+
+extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
+				struct mem_cgroup *memcg,
+				 int priority);
+
+void reap_slab(struct mem_cgroup *memcg)
+{
+	struct mem_cgroup *parent;
+
+	/*
+	 * Offline memcg's kmem_cache had been moved to its parent memcg.
+	 * so we must shrink its parent memcg.
+	 */
+	parent = parent_mem_cgroup(memcg);
+	if (parent) {
+		int nid;
+		unsigned long freed, count;
+
+		for_each_online_node(nid) {
+			freed = count = 0;
+
+			do {
+				count++;
+				freed = shrink_slab(GFP_KERNEL, nid, parent, 0);
+			} while (freed > 10 && count < 10);
+		}
+	}
+}
+
+static void clean_each_dying_memcg(struct mem_cgroup *memcg)
+{
+	unsigned long current_pages;
+	int drained = 0;
+	unsigned int jiff_dirty_exp = HZ * dirty_expire_interval / 100;
+
+	if ((memcg_page_state(memcg, NR_WRITEBACK) +
+			memcg_page_state(memcg, NR_FILE_DIRTY))
+			&& time_after(memcg->offline_times +
+					jiff_dirty_exp, jiffies)) {
+		return;
+	}
+
+	current_pages = page_counter_read(&memcg->memory);
+	while (current_pages) {
+		unsigned int ret;
+
+		ret = try_to_free_mem_cgroup_pages(memcg, current_pages,
+							GFP_KERNEL, true);
+		if (ret)
+			goto next;
+
+#ifdef CONFIG_CGROUP_WRITEBACK
+		if (buff_wb_enabled())
+#endif
+			reap_slab(memcg);
+
+		if (!drained) {
+			drain_all_stock(memcg);
+			drained = 1;
+		} else
+			break;
+next:
+		current_pages = page_counter_read(&memcg->memory);
+	}
+}
+
+static void clean_all_dying_memcgs(void)
+{
+	struct mem_cgroup *memcg;
+
+	for_each_mem_cgroup_tree(memcg, NULL) {
+		if (!mem_cgroup_online(memcg))
+			clean_each_dying_memcg(memcg);
+
+		cond_resched();
+	}
+}
+
+static int kclean_dying_memcgs(void *data)
+{
+	DEFINE_WAIT(wait);
+
+	if (waitqueue_active(&kclean_dying_memcg_wq)) /* .. */
+		wake_up_interruptible(&kclean_dying_memcg_wq);
+
+	for ( ; ; ) {
+		clean_all_dying_memcgs();
+		prepare_to_wait(&kclean_dying_memcg_wq,
+					&wait, TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule();
+		else {
+			finish_wait(&kclean_dying_memcg_wq, &wait);
+			break;
+		}
+		finish_wait(&kclean_dying_memcg_wq, &wait);
+	}
+
+	return 0;
+}
+
+int kclean_dying_memcg_run(void)
+{
+	int ret = 0;
+
+	if (kclean_dying_memcg)
+		return 0;
+
+	kclean_dying_memcg = kthread_run(kclean_dying_memcgs,
+					NULL, "kclean_dying_memcgs");
+	if (IS_ERR(kclean_dying_memcg)) {
+		pr_err("Failed to start kclean_dying_memcgs kthread.\n");
+		ret = PTR_ERR(kclean_dying_memcgs);
+		kclean_dying_memcg = NULL;
+	}
+
+	return ret;
+}
+
+void kclean_dying_memcg_stop(void)
+{
+	if (kclean_dying_memcg) {
+		kthread_stop(kclean_dying_memcg);
+		kclean_dying_memcg = NULL;
+	}
+}
