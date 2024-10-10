@@ -24,129 +24,6 @@ struct gendisk;
 
 #define FC_APPID_LEN              129
 
-#ifdef CONFIG_BLK_CGROUP
-extern struct cgroup_subsys_state * const blkcg_root_css;
-
-void blkcg_schedule_throttle(struct gendisk *disk, bool use_memdelay);
-void blkcg_maybe_throttle_current(void);
-bool blk_cgroup_congested(void);
-void blkcg_pin_online(struct cgroup_subsys_state *blkcg_css);
-void blkcg_unpin_online(struct cgroup_subsys_state *blkcg_css);
-struct list_head *blkcg_get_cgwb_list(struct cgroup_subsys_state *css);
-struct cgroup_subsys_state *bio_blkcg_css(struct bio *bio);
-
-enum blkg_iostat_type {
-	BLKG_IOSTAT_READ,
-	BLKG_IOSTAT_WRITE,
-	BLKG_IOSTAT_DISCARD,
-
-	BLKG_IOSTAT_NR,
-};
-
-struct blkg_iostat {
-	u64				bytes[BLKG_IOSTAT_NR];
-	u64				ios[BLKG_IOSTAT_NR];
-};
-
-struct blkg_iostat_set {
-	struct u64_stats_sync		sync;
-	struct blkcg_gq		       *blkg;
-	struct llist_node		lnode;
-	int				lqueued;	/* queued in llist */
-	struct blkg_iostat		cur;
-	struct blkg_iostat		last;
-};
-
-/*
- * Upstream dec223c92a4 (blk-cgroup: move struct blkcg to block/blk-cgroup.h)
- * move the struct blkcg to block/blk-cgroup.c
- * Move it out for RUE module.
- */
-struct blkcg {
-	struct cgroup_subsys_state	css;
-	spinlock_t			lock;
-	refcount_t			online_pin;
-
-	struct radix_tree_root		blkg_tree;
-	struct blkcg_gq	__rcu		*blkg_hint;
-	struct hlist_head		blkg_list;
-
-	struct blkcg_policy_data	*cpd[BLKCG_MAX_POLS];
-
-	struct list_head		all_blkcgs_node;
-
-	/*
-	 * List of updated percpu blkg_iostat_set's since the last flush.
-	 */
-	struct llist_head __percpu	*lhead;
-
-#ifdef CONFIG_BLK_CGROUP_FC_APPID
-	char                            fc_app_id[FC_APPID_LEN];
-#endif
-#ifdef CONFIG_CGROUP_WRITEBACK
-	struct list_head		cgwb_list;
-#endif
-#ifdef CONFIG_BLK_CGROUP_DISKSTATS
-	unsigned int			dkstats_on;
-	struct list_head		dkstats_list;
-	struct blkcg_dkstats		*dkstats_hint;
-#endif
-
-#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
-	struct percpu_counter           nr_dirtied;
-	unsigned long                   bw_time_stamp;
-	unsigned long                   dirtied_stamp;
-	unsigned long                   dirty_ratelimit;
-	unsigned long long              buffered_write_bps;
-#endif
-
-	unsigned int			readwrite_dynamic_ratio;
-
-	KABI_RESERVE(1);
-	KABI_RESERVE(2);
-	KABI_RESERVE(3);
-	KABI_RESERVE(4);
-};
-
-/* association between a blk cgroup and a request queue */
-struct blkcg_gq {
-	/* Pointer to the associated request_queue */
-	struct request_queue		*q;
-	struct list_head		q_node;
-	struct hlist_node		blkcg_node;
-	struct blkcg			*blkcg;
-
-	/* all non-root blkcg_gq's are guaranteed to have access to parent */
-	struct blkcg_gq			*parent;
-
-	/* reference count */
-	struct percpu_ref		refcnt;
-
-	/* is this blkg online? protected by both blkcg and q locks */
-	bool				online;
-
-	struct blkg_iostat_set __percpu	*iostat_cpu;
-	struct blkg_iostat_set		iostat;
-
-	struct blkg_policy_data		*pd[BLKCG_MAX_POLS];
-#ifdef CONFIG_BLK_CGROUP_PUNT_BIO
-	spinlock_t			async_bio_lock;
-	struct bio_list			async_bios;
-#endif
-	union {
-		struct work_struct	async_bio_work;
-		struct work_struct	free_work;
-	};
-
-	atomic_t			use_delay;
-	atomic64_t			delay_nsec;
-	atomic64_t			delay_start;
-	u64				last_delay;
-	int				last_use;
-
-	struct rcu_head			rcu_head;
-};
-
 enum blkg_rwstat_type {
 	BLKG_RWSTAT_READ,
 	BLKG_RWSTAT_WRITE,
@@ -189,39 +66,10 @@ struct blkg_policy_data {
 	bool                online;
 };
 
-/* Dynamic read/write ratio limitation */
-#define MAX_READ_RATIO (5)
-#define MIN_READ_RATIO (1)
-#define DFL_READ_RATIO (3)
-
-/*
- * When throttle by IOPS. The jiffy_wait of approx time could be one
- * throtl_slice of arrive time, which may not enough for small READ IOPS quota.
- *
- * In this case, if nr_queued[READ] of sq is 0, it is possible that iops
- * limitaion won't split by ratio. Write can use the read quota, which make
- * the quota overflow by about 50%. Add a RW_GRANULARITY to avoid this and
- * make ratio change smoothly.
- */
-#define RW_GRANULARITY (5)
-
 enum {
 	LIMIT_LOW,
 	LIMIT_MAX,
 	LIMIT_CNT,
-};
-
-/* We measure latency for request size from <= 4k to >= 1M */
-#define LATENCY_BUCKET_SIZE 9
-
-struct latency_bucket {
-	unsigned long total_latency; /* ns / 1024 */
-	int samples;
-};
-
-struct avg_latency_bucket {
-	unsigned long latency; /* ns / 1024 */
-	bool valid;
 };
 
 /*
@@ -372,6 +220,158 @@ struct throtl_grp {
 	struct blkg_rwstat stat_ios;
 };
 
+#ifdef CONFIG_BLK_CGROUP
+extern struct cgroup_subsys_state * const blkcg_root_css;
+
+void blkcg_schedule_throttle(struct gendisk *disk, bool use_memdelay);
+void blkcg_maybe_throttle_current(void);
+bool blk_cgroup_congested(void);
+void blkcg_pin_online(struct cgroup_subsys_state *blkcg_css);
+void blkcg_unpin_online(struct cgroup_subsys_state *blkcg_css);
+struct list_head *blkcg_get_cgwb_list(struct cgroup_subsys_state *css);
+struct cgroup_subsys_state *bio_blkcg_css(struct bio *bio);
+
+enum blkg_iostat_type {
+	BLKG_IOSTAT_READ,
+	BLKG_IOSTAT_WRITE,
+	BLKG_IOSTAT_DISCARD,
+
+	BLKG_IOSTAT_NR,
+};
+
+struct blkg_iostat {
+	u64				bytes[BLKG_IOSTAT_NR];
+	u64				ios[BLKG_IOSTAT_NR];
+};
+
+struct blkg_iostat_set {
+	struct u64_stats_sync		sync;
+	struct blkcg_gq		       *blkg;
+	struct llist_node		lnode;
+	int				lqueued;	/* queued in llist */
+	struct blkg_iostat		cur;
+	struct blkg_iostat		last;
+};
+
+/*
+ * Upstream dec223c92a4 (blk-cgroup: move struct blkcg to block/blk-cgroup.h)
+ * move the struct blkcg to block/blk-cgroup.c
+ * Move it out for RUE module.
+ */
+struct blkcg {
+	struct cgroup_subsys_state	css;
+	spinlock_t			lock;
+	refcount_t			online_pin;
+
+	struct radix_tree_root		blkg_tree;
+	struct blkcg_gq	__rcu		*blkg_hint;
+	struct hlist_head		blkg_list;
+
+	struct blkcg_policy_data	*cpd[BLKCG_MAX_POLS];
+
+	struct list_head		all_blkcgs_node;
+
+	/*
+	 * List of updated percpu blkg_iostat_set's since the last flush.
+	 */
+	struct llist_head __percpu	*lhead;
+
+#ifdef CONFIG_BLK_CGROUP_FC_APPID
+	char                            fc_app_id[FC_APPID_LEN];
+#endif
+#ifdef CONFIG_CGROUP_WRITEBACK
+	struct list_head		cgwb_list;
+#endif
+#ifdef CONFIG_BLK_CGROUP_DISKSTATS
+	unsigned int			dkstats_on;
+	struct list_head		dkstats_list;
+	struct blkcg_dkstats		*dkstats_hint;
+#endif
+
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+	struct percpu_counter           nr_dirtied;
+	unsigned long                   bw_time_stamp;
+	unsigned long                   dirtied_stamp;
+	unsigned long                   dirty_ratelimit;
+	unsigned long long              buffered_write_bps;
+#endif
+
+	unsigned int			readwrite_dynamic_ratio;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
+};
+
+/* association between a blk cgroup and a request queue */
+struct blkcg_gq {
+	/* Pointer to the associated request_queue */
+	struct request_queue		*q;
+	struct list_head		q_node;
+	struct hlist_node		blkcg_node;
+	struct blkcg			*blkcg;
+
+	/* all non-root blkcg_gq's are guaranteed to have access to parent */
+	struct blkcg_gq			*parent;
+
+	/* reference count */
+	struct percpu_ref		refcnt;
+
+	/* is this blkg online? protected by both blkcg and q locks */
+	bool				online;
+
+	struct blkg_iostat_set __percpu	*iostat_cpu;
+	struct blkg_iostat_set		iostat;
+
+	struct blkg_policy_data		*pd[BLKCG_MAX_POLS];
+#ifdef CONFIG_BLK_CGROUP_PUNT_BIO
+	spinlock_t			async_bio_lock;
+	struct bio_list			async_bios;
+#endif
+	union {
+		struct work_struct	async_bio_work;
+		struct work_struct	free_work;
+	};
+
+	atomic_t			use_delay;
+	atomic64_t			delay_nsec;
+	atomic64_t			delay_start;
+	u64				last_delay;
+	int				last_use;
+
+	struct rcu_head			rcu_head;
+};
+
+/* Dynamic read/write ratio limitation */
+#define MAX_READ_RATIO (5)
+#define MIN_READ_RATIO (1)
+#define DFL_READ_RATIO (3)
+
+/*
+ * When throttle by IOPS. The jiffy_wait of approx time could be one
+ * throtl_slice of arrive time, which may not enough for small READ IOPS quota.
+ *
+ * In this case, if nr_queued[READ] of sq is 0, it is possible that iops
+ * limitaion won't split by ratio. Write can use the read quota, which make
+ * the quota overflow by about 50%. Add a RW_GRANULARITY to avoid this and
+ * make ratio change smoothly.
+ */
+#define RW_GRANULARITY (5)
+
+/* We measure latency for request size from <= 4k to >= 1M */
+#define LATENCY_BUCKET_SIZE 9
+
+struct latency_bucket {
+	unsigned long total_latency; /* ns / 1024 */
+	int samples;
+};
+
+struct avg_latency_bucket {
+	unsigned long latency; /* ns / 1024 */
+	bool valid;
+};
+
 struct throtl_data {
 	/* service tree for active throtl groups */
 	struct throtl_service_queue service_queue;
@@ -502,25 +502,7 @@ struct latency_bucket {
 struct avg_latency_bucket {
 };
 
-struct throtl_qnode {
-};
-
-struct throtl_service_queue {
-};
-
-struct throtl_grp {
-};
-
 struct throtl_data {
-};
-
-struct blkg_rwstat {
-};
-
-struct blkg_rwstat_sample {
-};
-
-struct blkg_policy_data {
 };
 
 struct blkcg {
