@@ -22,6 +22,14 @@ thirdparty_bnxt(){
 	fi
 }
 
+thirdparty_mpt3sas(){
+	if [ -e release-drivers/mpt3sas ]; then
+		rm -rf ../../drivers/scsi/mpt3sas
+		cp -a release-drivers/mpt3sas ../../drivers/scsi/
+		sed -i 's/---help---/help/g' ../../drivers/scsi/mpt3sas/Kconfig
+	fi
+}
+
 ##
 ## main , script start run at here.
 ##
@@ -30,3 +38,5 @@ if [[ $1 != without_mlnx ]]; then
 fi
 
 thirdparty_bnxt
+
+thirdparty_mpt3sas
