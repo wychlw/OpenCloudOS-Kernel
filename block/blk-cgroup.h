@@ -440,16 +440,10 @@ void blkcg_add_delay(struct blkcg_gq *blkg, u64 now, u64 delta);
 
 #else	/* CONFIG_BLK_CGROUP */
 
-struct blkg_policy_data {
-};
-
 struct blkcg_policy_data {
 };
 
 struct blkcg_policy {
-};
-
-struct blkcg {
 };
 
 static inline struct blkcg_gq *blkg_lookup(struct blkcg *blkcg, void *key) { return NULL; }

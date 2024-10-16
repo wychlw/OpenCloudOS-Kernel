@@ -861,17 +861,17 @@ static int throtl_info_inflight(struct wbt_throtl_info *ti)
 }
 
 static inline unsigned int throtl_info_get_limit(struct wbt_throtl_info *ti,
-						 unsigned long rw)
+						 enum req_op op)
 {
 	unsigned int limit;
 
 	if (!throtl_info_enabled(ti))
 		return UINT_MAX;
-	if ((rw & REQ_OP_MASK) == REQ_OP_DISCARD)
+	if ((op & REQ_OP_MASK) == REQ_OP_DISCARD)
 		return ti->wb_background;
-	if (rw & REQ_HIPRIO || current_is_kswapd())
+	if (op & REQ_HIPRIO || current_is_kswapd())
 		limit = ti->max_depth;
-	else if (rw & REQ_BACKGROUND)
+	else if (op & REQ_BACKGROUND)
 		limit = ti->wb_background;
 	else
 		limit = ti->wb_normal;

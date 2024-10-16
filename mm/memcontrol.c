@@ -6225,7 +6225,7 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
-#ifdef CONFIG_CGROUP_WRITEBACK
+#if defined(CONFIG_CGROUP_WRITEBACK) && defined(CONFIG_SWAP)
 static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 				char *buf, size_t nbytes, loff_t off)
 {
