@@ -1486,9 +1486,7 @@ int sli_monitor_open(struct kernfs_open_file *of)
 	struct file *filp = of->file;
 	int ret = 0;
 
-	filp->f_mode &= FMODE_READ;
-
-	if (!filp->f_mode & FMODE_READ)
+	if (!(filp->f_mode & FMODE_READ))
 		ret = -EINVAL;
 
 	return ret;
