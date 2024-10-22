@@ -1984,6 +1984,7 @@ blkcg_css_alloc(struct cgroup_subsys_state *parent_css)
 #endif
 #ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
 	percpu_counter_init(&blkcg->nr_dirtied, 0, GFP_KERNEL);
+	blkcg->dirty_ratelimit = INIT_DIRTY_BW;
 #endif
 	list_add_tail(&blkcg->all_blkcgs_node, &all_blkcgs);
 

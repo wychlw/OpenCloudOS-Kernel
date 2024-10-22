@@ -221,6 +221,15 @@ struct throtl_grp {
 };
 
 #ifdef CONFIG_BLK_CGROUP
+
+#ifdef CONFIG_BLK_DEV_THROTTLING_CGROUP_V1
+/*
+ * Initial write bandwidth: 1000 MB/s (wb_init is 100 MB/s)
+ * The bandwidth will be updated via blkcg_update_bandwidth()
+ */
+#define INIT_DIRTY_BW     (1000 << (20 - PAGE_SHIFT))
+#endif
+
 extern struct cgroup_subsys_state * const blkcg_root_css;
 
 void blkcg_schedule_throttle(struct gendisk *disk, bool use_memdelay);
