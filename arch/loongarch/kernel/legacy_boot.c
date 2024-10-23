@@ -25,6 +25,15 @@
 #define MSI_MSG_ADDRESS		0x2FF00000
 #define MSI_MSG_DEFAULT_COUNT	0xC0
 
+extern int liointc_acpi_init(struct irq_domain *parent,
+					struct acpi_madt_lio_pic *acpi_liointc);
+extern int eiointc_acpi_init(struct irq_domain *parent,
+					struct acpi_madt_eio_pic *acpi_eiointc);
+extern int htvec_acpi_init(struct irq_domain *parent,
+					struct acpi_madt_ht_pic *acpi_htvec);
+extern int pch_lpc_acpi_init(struct irq_domain *parent,
+					struct acpi_madt_lpc_pic *acpi_pchlpc);
+
 struct boot_params *efi_bp;
 struct loongsonlist_mem_map *g_mmap;
 struct acpi_madt_lio_pic *acpi_liointc;
