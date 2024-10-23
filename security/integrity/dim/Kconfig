@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Dynamic Integrity Measurement Architecture
+#
+config DIM
+    bool "DIM (Dynamic Integrity Measurement)"
+    depends on INTEGRITY
+    default y
+    help
+      The Dynamic Integrity Measurement(DIM) architechture maintains a list
+      of hash values of executables and running processes. If an attacker
+      manages to change the executables being measured, we can tell.
+
+      If your system has a TPM chip, then DIM can extend the hash value to
+      the TPM hardware, so that the TPM can prove to a third party whether
+      or not critical executables have been modified.
+      If unsure, say N.
+
+if DIM
+
+config DIM_CORE
+    tristate "DIM core module support"
+    default m
+    help
+      Enable the dim_core module of DIM architechture.
+
+      This option enables the dim_core security module, which provides
+      integrity measurement for running processes. If unsure, say M.
+
+config DIM_HASH_SUPPORT_SM3
+    bool "Enable SM3 hash algorithm support for DIM"
+    depends on DIM_CORE
+    default y
+    help
+      Enable support for the SM3 hash algorithm in DIM.
+
+      If this option is enabled, the DIM module will be built with
+      support for the SM3 hash algorithm. If unsure, say N.
+
+config DIM_MONITOR
+    tristate "DIM monitor module support"
+    depends on DIM_CORE
+    default m
+    help
+      Enable the dim_monitor module of DIM architechture.
+
+      This option enables the dim_monitor security module, which provides
+      integrity measurement for dim_core. If unsure, say N.
+
+endif  # If DIM
