@@ -74,7 +74,7 @@ static inline bool drm_arch_can_wc_memory(void)
 	 * cache coherency machanism. This means WUC can only used for write-only
 	 * memory regions.
 	 */
-	return false;
+	return wc_enabled;
 #else
 	return true;
 #endif
