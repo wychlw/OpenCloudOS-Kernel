@@ -44,7 +44,7 @@ struct cgroup_cls_state *task_cls_state(struct task_struct *p)
 }
 EXPORT_SYMBOL_GPL(task_cls_state);
 
-int cls_cgroup_stats_init(struct cls_cgroup_stats *stats)
+static int cls_cgroup_stats_init(struct cls_cgroup_stats *stats)
 {
 	struct {
 		struct nlattr nla;
@@ -73,7 +73,7 @@ int cls_cgroup_stats_init(struct cls_cgroup_stats *stats)
 	return err;
 }
 
-void cls_cgroup_stats_destroy(struct cls_cgroup_stats *stats)
+static void cls_cgroup_stats_destroy(struct cls_cgroup_stats *stats)
 {
 	rtnl_lock();
 	gen_kill_estimator(&stats->est);
@@ -373,7 +373,7 @@ static ssize_t write_bps_dev_limit(struct kernfs_open_file *of,
 	kfree(limit_bw_config[ifindex].name);
 
 	limit_bw_config[ifindex].name = name;
-	strncpy(limit_bw_config[ifindex].name, dev_name, strlen(dev_name));
+	strscpy(limit_bw_config[ifindex].name, dev_name, strlen(dev_name));
 
 	if (!rx_rate)
 		cs->rx_dev_scale[ifindex] = WND_DIVISOR;
@@ -521,7 +521,7 @@ out_free_lports:
 	return ret;
 }
 
-int net_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
+static int net_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
 				  u16 old_prio, u16 new_prio)
 {
 	if (css)
@@ -615,7 +615,7 @@ static ssize_t write_dev_online_bps_max(struct kernfs_open_file *of,
 	kfree(online_max_config[ifindex].name);
 
 	online_max_config[ifindex].name = name;
-	strncpy(online_max_config[ifindex].name, dev_name, strlen(dev_name));
+	strscpy(online_max_config[ifindex].name, dev_name, strlen(dev_name));
 
 	if (rx_rate > -1) {
 		online_max_config[ifindex].rx_bps_max = rx_rate;
@@ -726,7 +726,7 @@ static ssize_t write_dev_online_bps_min(struct kernfs_open_file *of,
 	kfree(online_min_config[ifindex].name);
 
 	online_min_config[ifindex].name = name;
-	strncpy(online_min_config[ifindex].name, dev_name, strlen(dev_name));
+	strscpy(online_min_config[ifindex].name, dev_name, strlen(dev_name));
 
 	if (rx_rate > -1)
 		RUE_CALL_INT(NET, write_rx_online_bps_min, cs, ifindex, rx_rate);
@@ -835,7 +835,7 @@ static ssize_t write_dev_bps_config(struct kernfs_open_file *of,
 		kfree(bw_config[ifindex].name);
 
 		bw_config[ifindex].name = name;
-		strncpy(bw_config[ifindex].name, dev_name, strlen(dev_name));
+		strscpy(bw_config[ifindex].name, dev_name, strlen(dev_name));
 
 		if (v[0] > -1 && v[1] > -1) {
 			bw_config[ifindex].rx_bps_min = v[0];
@@ -932,7 +932,7 @@ static u64 read_rx_min_rwnd_segs(struct cgroup_subsys_state *css,
 	return RUE_CALL_TYPE(NET, read_rx_min_rwnd_segs, u64, css, cft);
 }
 
-int read_class_stat(struct seq_file *sf, void *v)
+static int read_class_stat(struct seq_file *sf, void *v)
 {
 	struct cgroup_subsys_state *css = seq_css(sf);
 
@@ -941,19 +941,19 @@ int read_class_stat(struct seq_file *sf, void *v)
 	return 0;
 }
 
-int rx_dump(struct seq_file *sf, void *v)
+static int rx_dump(struct seq_file *sf, void *v)
 {
 	RUE_CALL_VOID(NET, dump_rx_tb, sf);
 	return 0;
 }
 
-int tx_dump(struct seq_file *sf, void *v)
+static int tx_dump(struct seq_file *sf, void *v)
 {
 	RUE_CALL_VOID(NET, dump_tx_tb, sf);
 	return 0;
 }
 
-int bps_limit_dump(struct seq_file *sf, void *v)
+static int bps_limit_dump(struct seq_file *sf, void *v)
 {
 	struct cgroup_subsys_state *css = seq_css(sf);
 
