@@ -37,6 +37,8 @@ extern unsigned int sysctl_clean_dying_memcg_threshold;
 extern void kclean_dying_memcg_stop(void);
 extern void wakeup_kclean_dying_memcg(void);
 extern atomic_long_t dying_memcgs_count;
+extern void memory_qos_update(void);
+extern int memory_qos_prio_reclaim_ratio_update(void);
 
 /* Cgroup-specific page state, on top of universal node page state */
 enum memcg_stat_item {

@@ -3129,7 +3129,7 @@ static int memcg_notify_prio_change(struct mem_cgroup *memcg,
 	return 0;
 }
 
-int mem_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
+static int mem_cgroup_notify_prio_change(struct cgroup_subsys_state *css,
 				  u16 old_prio, u16 new_prio)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
@@ -4222,7 +4222,7 @@ vm_pagecache_limit_retry_times __read_mostly = MEMCG_PAGECACHE_RETRIES;
 void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 {
 	long pages_reclaimed;
-	unsigned long pages_used, pages_max, goal_pages_used, pre_used;
+	unsigned long pages_used, pages_max, goal_pages_used;
 	unsigned int retry_times = 0;
 	unsigned int limit_retry_times;
 	u32 max_ratio;
@@ -4267,7 +4267,6 @@ void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 		if (fatal_signal_pending(current))
 			break;
 
-		pre_used = pages_used;
 		pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg,
 						pages_used - goal_pages_used);
 
@@ -4379,7 +4378,7 @@ static u64 memory_pagecache_max_read(struct cgroup_subsys_state *css,
 	return memcg->pagecache_max_ratio;
 }
 
-unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
+static unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
 {
 	unsigned long goal_pages_used, pages_used, pages_max;
 
@@ -7241,7 +7240,7 @@ void wakeup_kclean_dying_memcg(void)
 	wake_up_interruptible(&kclean_dying_memcg_wq);
 }
 
-void charge_dying_memcgs(struct mem_cgroup *memcg)
+static void charge_dying_memcgs(struct mem_cgroup *memcg)
 {
 	if (sysctl_vm_memory_qos == 0)
 		return;
@@ -10271,7 +10270,7 @@ extern unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				struct mem_cgroup *memcg,
 				 int priority);
 
-void reap_slab(struct mem_cgroup *memcg)
+static void reap_slab(struct mem_cgroup *memcg)
 {
 	struct mem_cgroup *parent;
 
