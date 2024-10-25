@@ -7456,7 +7456,7 @@ unsigned long __pagecache_over_limit(void)
 }
 
 int proc_pagecache_system_usage(struct ctl_table *table, int write,
-				  void __user *buffer, size_t *lenp, loff_t *ppos)
+				  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	vm_pagecache_system_usage = __pagecache_over_limit();
 
@@ -7512,8 +7512,8 @@ static void pagecache_reclaim_unlock_zone(struct zone *zone)
  * reclaim lock on any zone are sleeping on this waitqueue.
  * So this is basically a congestion wait queue for them.
  */
-DECLARE_WAIT_QUEUE_HEAD(pagecache_reclaim_wq);
-DECLARE_WAIT_QUEUE_HEAD(kpagecache_limitd_wq);
+static DECLARE_WAIT_QUEUE_HEAD(pagecache_reclaim_wq);
+static DECLARE_WAIT_QUEUE_HEAD(kpagecache_limitd_wq);
 
 /*
  * Similar to shrink_zone but it has a different consumer - pagecache limit
