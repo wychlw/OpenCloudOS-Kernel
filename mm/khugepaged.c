@@ -1794,7 +1794,9 @@ static int collapse_file(struct mm_struct *mm, unsigned long addr,
 	struct page *page;
 	struct page *tmp;
 	struct folio *folio;
+#ifdef CONFIG_MEMCG
 	struct mem_cgroup *memcg;
+#endif
 	pgoff_t index = 0, end = start + HPAGE_PMD_NR;
 	LIST_HEAD(pagelist);
 	XA_STATE_ORDER(xas, &mapping->i_pages, start, HPAGE_PMD_ORDER);
@@ -2125,11 +2127,12 @@ immap_locked:
 	if (is_shmem)
 		__mod_lruvec_page_state(hpage, NR_SHMEM_THPS, nr);
 	else {
+#ifdef CONFIG_MEMCG
 		memcg = page_memcg(hpage);
 
 		if (!mem_cgroup_disabled() && memcg)
 			page_counter_charge(&memcg->pagecache, nr);
-
+#endif
 		__mod_lruvec_page_state(hpage, NR_FILE_THPS, nr);
 	}
 

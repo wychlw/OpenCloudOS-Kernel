@@ -108,8 +108,6 @@ extern int sysctl_vm_use_priority_oom;
 extern int sysctl_vm_qos_highest_reclaim_prio;
 extern unsigned int sysctl_vm_qos_prio_reclaim_ratio;
 extern unsigned int sysctl_clean_dying_memcg_async;
-extern void memory_qos_update(void);
-extern int memory_qos_prio_reclaim_ratio_update(void);
 static int vm_lowest_prio = CGROUP_PRIORITY_MAX;
 static int twenty = 20;
 #endif
@@ -624,7 +622,7 @@ static int setup_pagecache_limit(void)
 }
 
 static int pc_limit_proc_dointvec(struct ctl_table *table, int write,
-				  void __user *buffer, size_t *lenp, loff_t *ppos)
+				  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 
@@ -635,7 +633,7 @@ static int pc_limit_proc_dointvec(struct ctl_table *table, int write,
 }
 
 static int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
-					  void __user *buffer, size_t *lenp, loff_t *ppos)
+					  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int pre_reclaim_ratio = vm_pagecache_limit_reclaim_ratio;
 	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
@@ -654,7 +652,7 @@ static int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
 }
 
 static int pc_limit_async_handler(struct ctl_table *table, int write,
-				  void __user *buffer, size_t *lenp, loff_t *ppos)
+				  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 
@@ -1973,8 +1971,8 @@ int proc_do_static_key(struct ctl_table *table, int write,
 }
 
 #ifdef CONFIG_MEMCG
-int memory_qos_sysctl_handler(struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp, loff_t *ppos)
+static int memory_qos_sysctl_handler(struct ctl_table *table, int write,
+		void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int error;
 
@@ -2000,8 +1998,8 @@ out:
 	return error;
 }
 
-int memory_qos_sysctl_highest_reclaim_prio_handler(struct ctl_table *table,
-				int write, void __user *buffer,
+static int memory_qos_sysctl_highest_reclaim_prio_handler(struct ctl_table *table,
+				int write, void *buffer,
 				size_t *lenp, loff_t *ppos)
 {
 	int error;
@@ -2016,8 +2014,8 @@ int memory_qos_sysctl_highest_reclaim_prio_handler(struct ctl_table *table,
 	return 0;
 }
 
-int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
-				int write, void __user *buffer,
+static int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
+				int write, void *buffer,
 				size_t *lenp, loff_t *ppos)
 {
 	int error;
@@ -2043,7 +2041,7 @@ int memory_qos_sysctl_prio_reclaim_ratio_handler(struct ctl_table *table,
 }
 
 static int clean_dying_memcg_async_handler(struct ctl_table *table, int write,
-				void __user *buffer, size_t *lenp, loff_t *ppos)
+				void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
 
@@ -2065,7 +2063,7 @@ static int clean_dying_memcg_async_handler(struct ctl_table *table, int write,
 }
 
 static int clean_dying_memcg_threshold_handler(struct ctl_table *table,
-		int write, void __user *buffer, size_t *lenp, loff_t *ppos)
+		int write, void *buffer, size_t *lenp, loff_t *ppos)
 {
 	unsigned int old_val = sysctl_clean_dying_memcg_threshold;
 	int ret = proc_douintvec_minmax(table, write, buffer, lenp, ppos);
