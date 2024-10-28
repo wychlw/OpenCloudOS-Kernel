@@ -292,16 +292,6 @@ static inline bool kvm_guest_has_lasx(struct kvm_vcpu_arch *arch)
 	return arch->cpucfg[2] & CPUCFG2_LASX;
 }
 
-static inline bool kvm_guest_has_pmu(struct kvm_vcpu_arch *arch)
-{
-	return arch->cpucfg[6] & CPUCFG6_PMP;
-}
-
-static inline int kvm_get_pmu_num(struct kvm_vcpu_arch *arch)
-{
-	return (arch->cpucfg[6] & CPUCFG6_PMNUM) >> CPUCFG6_PMNUM_SHIFT;
-}
-
 static inline bool kvm_guest_has_lbt(struct kvm_vcpu_arch *arch)
 {
 	return arch->cpucfg[2] & (CPUCFG2_X86BT | CPUCFG2_ARMBT | CPUCFG2_MIPSBT);

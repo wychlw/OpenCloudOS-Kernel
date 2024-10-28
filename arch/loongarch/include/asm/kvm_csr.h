@@ -211,11 +211,6 @@ static __always_inline void kvm_change_sw_gcsr(struct loongarch_csrs *csr,
 	csr->csrs[gid] |= val & _mask;
 }
 
-#define KVM_PMU_PLV_ENABLE     (CSR_PERFCTRL_PLV0 |		\
-					CSR_PERFCTRL_PLV1 |	\
-					CSR_PERFCTRL_PLV2 |	\
-					CSR_PERFCTRL_PLV3)
-
 #define KVM_PMU_EVENT_ENABLED	(CSR_PERFCTRL_PLV0 | CSR_PERFCTRL_PLV1 | \
 					CSR_PERFCTRL_PLV2 | CSR_PERFCTRL_PLV3)
 
