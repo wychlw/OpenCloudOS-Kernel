@@ -15,3 +15,4 @@ config DRM_LOONGSON
 	  If "M" is selected, the module will be called loongson.
 
 	  If in doubt, say "N".
+source "drivers/gpu/drm/loongson/ast/Kconfig"
