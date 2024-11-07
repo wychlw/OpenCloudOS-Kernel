@@ -39,4 +39,12 @@ config TKERNEL_AEGIS_MODULE
 	help
 		ONION aegis module
 
+config TKERNEL_IRQ_LATENCY
+	tristate "irq latency debug"
+	depends on STACKTRACE
+	depends on X86
+	default m
+	help
+	  This option adds support for irq latency debug.
+
 endif
