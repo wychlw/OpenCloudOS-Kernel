@@ -1,3 +1,187 @@
+* Thu Nov  7 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.58-15
+- integrity: add dynamic integrity measurement (DIM) support
+- Merge branch 'honglin/release' into 'release' (merge request !220)
+- rue/mm: fix suspicious RCU usage in mem_cgroup_account_oom_skip
+- rue/mm: fix some sparse warnings of incorrect type in argument
+- rue/mm: fix compile error of dereferencing pointer to incomplete type
+- rue/mm: fix some sparse warnings due to no previous prototype
+- rue/net: fix some sparse warnings in netclassid_cgroup.c
+- Merge linux 6.6.58
+- kunit/overflow: Fix UB in overflow_allocation_test
+- Merge branch 'frankjpliu/master-mr-ocknext' into 'release' (merge request !217)
+- Loongarch: Dynamically enable Write Combining
+- Loongarch: Driver for loongson SE SDF
+- pci/quirks: Enable MSI for LS7A2000 PCIe devices
+- !240 [next-6.6] LoongArch: Add AVEC irqchip support and add acpi mcfg quirk for 3C6000
+- acpi: mcfg quirk: Increased multi-chip support for the 3C6000
+- LoongArch: Add AVEC irqchip support
+- !239 [next-6.6] LoongArch: Change SHMLBA from SZ_64K to PAGE_SIZE
+- LoongArch: Change SHMLBA from SZ_64K to PAGE_SIZE
+- rue/io: fix child blkcg of hier buffered write can not exceed 2MB
+- crashkernel: auto adjust crashkernel min size to 800MB for KASAN
+- sli: fix crash when open the sli.monitor file in rw mode
+- Merge linux 6.6.57
+- Merge branch 'cunhuang/jitterentropy-failed' into 'master' (merge request !209)
+- crypto: jitter - set default OSR to 3
+- crypto: jitter - use permanent health test storage
+- crypto: jitter - reuse allocated entropy collector
+- crypto: jitter - Allow configuration of oversampling rate
+- crypto: jitter - Allow configuration of memory size
+- crypto: jitter - add RCT/APT support for different OSRs
+- watchdog: handle the ENODEV failure case of lockup_detector_delay_init() separately
+- Merge branch 'haisu/master-fix-rue-lore-issues' into 'master' (merge request !207)
+- rue/io: mem_cgroup_bind_blkio_write also require CONFIG_SWAP
+- rue/io: fix sparse error of restricted blk_opf_t degrades to integer
+- rue/io: fix compile errors of redefinition blkg_policy_data
+- config: iommu: default arm64 iommu Lazy mode
+- mpt3sas: add mpt3sas commercial-quality driver
+- Merge branch 'likexu/kvm/fixes' into 'master' (merge request !205)
+- KVM: x86: Add fastpath handling of HLT VM-Exits
+- KVM: x86: Reorganize code in x86.c to co-locate vCPU blocking/running helpers
+- KVM: x86: Exit to userspace if fastpath triggers one on instruction skip
+- KVM: x86: Dedup fastpath MSR post-handling logic
+- KVM: x86: Re-enter guest if WRMSR(X2APIC_ICR) fastpath is successful
+- KVM: x86: Re-split x2APIC ICR into ICR+ICR2 for AMD (x2AVIC)
+- KVM: nVMX: Assert that vcpu->mutex is held when accessing secondary VMCSes
+- KVM: nVMX: Explicitly invalidate posted_intr_nv if PI is disabled at VM-Enter
+- KVM: x86: Fold kvm_get_apic_interrupt() into kvm_cpu_get_interrupt()
+- KVM: nVMX: Detect nested posted interrupt NV at nested VM-Exit injection
+- KVM: nVMX: Suppress external interrupt VM-Exit injection if there's no IRQ
+- KVM: nVMX: Get to-be-acknowledge IRQ for nested VM-Exit at injection site
+- KVM: x86: Move "ack" phase of local APIC IRQ delivery to separate API
+- KVM: Fix coalesced_mmio_has_room() to avoid premature userspace exit
+- KVM: x86: Fully defer to vendor code to decide how to force immediate exit
+- KVM: VMX: Handle KVM-induced preemption timer exits in fastpath for L2
+- KVM: x86: Move handling of is_guest_mode() into fastpath exit handlers
+- KVM: VMX: Handle forced exit due to preemption timer in fastpath
+- KVM: VMX: Re-enter guest in fastpath for "spurious" preemption timer exits
+- KVM: x86: Plumb "force_immediate_exit" into kvm_entry() tracepoint
+- Merge branch 'haisu/master-cve-v9' into 'master' (merge request !204)
+- btrfs: don't BUG_ON on ENOMEM from btrfs_lookup_extent_info() in walk_down_proc()
+- btrfs: handle errors from btrfs_dec_ref() properly
+- binfmt_elf_fdpic: fix AUXV size calculation when ELF_HWCAP2 is defined
+- f2fs: fix null reference error when checking end of zone
+- nfs: pass explicit offset/count to trace events
+- Merge linux 6.6.56
+- Merge linux 6.6.55
+- Merge linux 6.6.54
+- Merge linux 6.6.53
+- Merge linux 6.6.52
+- Merge linux 6.6.51
+- Merge linux 6.6.50
+- Merge linux 6.6.49
+- Merge linux 6.6.48
+- Merge branch 'haisu/master-tryrue-20240905-merge-honglin' into 'master' (merge request !197)
+- rue/io: introduce wbt class for cgroup priority
+- rue/io: skip throttle REQ_META/REQ_PRIO IO
+- rue/io: buffered_write_bps hierarchy support
+- rue/io: support readwrite unified configuration
+- rue/io: Add iocost and iolatency entry for cgroup v1
+- rue/io: add io_cgv1_buff_wb to enable buffer IO counting in cgroup v1
+- rue/io: introduce per mem_cgroup sync interface
+- rue/io: add bufio isolation based for cgroup v1
+- rue/io: Add bps information to blkio.throttle.stat
+- rue/io: Add blkio.throttle.stat
+- rue/io: add buffer IO writeback throtl for cgroup v1
+- rue/io: add io_qos switch and throtl hierarchy
+- rue/io: Enable CONFIG_BLK_DEV_THROTTLING_CGROUP_V1 configuration
+- rue/io: Correct the alloc type to disk_stats
+- rue/io: add support for recursive diskstats
+- rue/io: blkcg export blkcg symbols to be used in bpf accounting
+- rue/mm: add sysctl_vm_use_priority_oom to enable priority oom for all cgroups
+- rue/mm: compatible with mglru for pagecache limit
+- rue/mm: fix file page_counter 'memcg->pagecache' error when THP enabled
+- rue/mm: introduce new feature to async clean dying memcgs
+- rue/mm: introduce memcg page cache hit & miss ratio tool
+- rue/mm: introduce memory allocation latency for per-cgroup tool
+- rue/mm: async free memory while process exiting
+- rue/mm: pagecache limit per cgroup support
+- rue/mm: add memory cgroup async page reclaim mechanism
+- rue/mm: introduce memcg priority oom
+- rue/mm: add priority reclaim support
+- pagecachelimit: set an initial value for may_deactivate in shrink page cache
+- rue/net: avoid wrong memory access to struct net_device
+- rue/net: avoid wrong memory access to struct cgroup_cls_state
+- rue/net: adapt to the new rue modular framework
+- rue/net: add dynamic bandwidth allocation between online cgroups
+- rue/net: add netdev-based rate limit for per cgroup
+- rue/net: add total bandwidth limit for multiprio preemption
+- rue/net: add support for cgroup whitelist ports
+- rue/net: add rx && tx rate limit for per cgroup
+- rue/net: init netcls traffic controller
+- rue: Revert "kallsyms: unexport kallsyms_lookup_name() and kallsyms_on_each_symbol()"
+- rue: Add support for rue modularization
+- rue: init rue module
+- rue: cgroup priority
+- blkcg/diskstats: Fix the extra cpu parameter
+- mm: set default watermark_boost_factor value to 0
+- Revert "io/tqos: merge buffer io limit series patch from brookxu, and rework some function."
+- Revert "io/tqos: add sysctl_buffer_io_limit switch for buffer io limit."
+- Revert "cgroup: allow cgroup to split direct io and buffered io into different blkio cgroup"
+- emm: update to v0.1.7.4
+- dist,spec: provide kernel-debug-debuginfo in debug version
+- dist,sepc: supprot kernel-debug in core and modules and devel rpm
+- Merge branch 'frankjpliu/master-mr-ocknext' into 'master' (merge request !202)
+- !234 [next-6.6] Intel: Backport to support Intel IFS(In Field Scan) SBAF on GNR for kernel 6.6
+- platform/x86/intel/ifs: Fix SBAF title underline length
+- trace: platform/x86/intel/ifs: Add SBAF trace support
+- platform/x86/intel/ifs: Add SBAF test support
+- platform/x86/intel/ifs: Add SBAF test image loading support
+- platform/x86/intel/ifs: Refactor MSR usage in IFS test code
+- selftests: ifs: verify IFS ARRAY BIST functionality
+- selftests: ifs: verify IFS scan test functionality
+- selftests: ifs: verify test image loading functionality
+- selftests: ifs: verify test interfaces are created by the driver
+- platform/x86/intel/ifs: Disable irq during one load stage
+- platform/x86/intel/ifs: trace: display batch num in hex
+- platform/x86/intel/ifs: Classify error scenarios correctly
+- platform/x86/intel/ifs: Remove unnecessary initialization of 'ret'
+- platform/x86/intel/ifs: Add an entry rendezvous for SAF
+- platform/x86/intel/ifs: Replace the exit rendezvous with an entry rendezvous for ARRAY_BIST
+- platform/x86/intel/ifs: Add current batch number to trace output
+- platform/x86/intel/ifs: Trace on all HT threads when executing a test
+- ALSA: hda: Add support for Hygon family 18h model 10h HD-Audio
+- hwmon/k10temp: Add support for Hygon family 18h model 10h
+- EDAC/amd64: Add support for Hygon family 18h model 10h
+- x86/amd_nb: Add support for Hygon family 18h model 10h
+- x86/cpu: Get LLC ID for Hygon family 18h model 10h
+- perf/x86/uncore: Add L3 PMU support for Hygon family 18h model 7h
+- EDAC/amd64: Add support for Hygon family 18h model 7h
+- x86/amd_nb: Add support for Hygon family 18h model 7h
+- crypto: ccp: add more checks for sev_dev_hooks_installed
+- config: set CONFIG_KASAN_STACK=y in debug.config
+- net/netlat: fix a deadlock when reset the /proc/net/twatcher/log
+- xfs: allow symlinks with short remote targets
+- Merge branch 'likexu/kvm/vpmu/fixes' into 'master' (merge request !200)
+- KVM: x86/pmu: Explicitly check NMI from guest to reducee false positives
+- KVM: x86: Get CPL directly when checking if loaded vCPU is in kernel mode
+- KVM: VMX: Disable LBR virtualization if the CPU doesn't support LBR callstacks
+- perf/x86/intel: Expose existence of callback support to KVM
+- KVM: VMX: Snapshot LBR capabilities during module initialization
+- KVM: x86/pmu: Explicitly check for RDPMC of unsupported Intel PMC types
+- KVM: x86/pmu: Treat "fixed" PMU type in RDPMC as index as a value, not flag
+- KVM: x86/pmu: Disallow "fast" RDPMC for architectural Intel PMUs
+- KVM: x86/pmu: Apply "fast" RDPMC only to Intel PMUs
+- KVM: x86/pmu: Prioritize VMX interception over #GP on RDPMC due to bad index
+- KVM: x86/pmu: Don't ignore bits 31:30 for RDPMC index on AMD
+- KVM: x86/pmu: Get eventsel for fixed counters from perf
+- KVM: x86/pmu: Setup fixed counters' eventsel during PMU initialization
+- KVM: x86/pmu: Remove KVM's enumeration of Intel's architectural encodings
+- KVM: x86/pmu: Allow programming events that match unsupported arch events
+- KVM: x86/pmu: Always treat Fixed counters as available when supported
+- KVM: x86/pmu: Track emulated counter events instead of previous counter
+- KVM: x86/pmu: Update sample period in pmc_write_counter()
+- KVM: x86/pmu: Remove manual clearing of fields in kvm_pmu_init()
+- KVM: x86/pmu: Stop calling kvm_pmu_reset() at RESET (it's redundant)
+- selftests/bpf: DENYLIST.aarch64: Skip fexit_sleep again
+- bpf, arm64: Fix trampoline for BPF_TRAMP_F_CALL_ORIG
+- closures: Change BUG_ON() to WARN_ON()
+- dist,Makefile: inherit the existing value of the DISABLED variable
+- config: configure panic_timeout=-1, restart immediately when panic occurs
+- config,debug: set CONFIG_LOCALVERSION="+debug" in debug*.config
+- dist,Makefile: generic-debug config only build kernel rpm
+- config: split debug.config to debug.config and debug-sched.config
+
 * Mon Sep 23 2024 Jianping Liu <frankjpliu@tencent.com> - 6.6.47-12
 - crypto: ccp: fix the sev_do_cmd panic on non-Hygon platforms
 - emm: upadate to v0.1.7.3
