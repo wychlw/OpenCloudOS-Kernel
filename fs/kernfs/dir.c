@@ -203,6 +203,7 @@ int kernfs_name(struct kernfs_node *kn, char *buf, size_t buflen)
 	read_unlock_irqrestore(&kernfs_rename_lock, flags);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(kernfs_name);
 
 /**
  * kernfs_path_from_node - build path of node @to relative to @from.

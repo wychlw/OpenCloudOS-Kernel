@@ -11845,6 +11845,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 	.early_init	= true,
 	.threaded	= true,
 };
+EXPORT_SYMBOL_GPL(cpu_cgrp_subsys);
 
 #endif	/* CONFIG_CGROUP_SCHED */
 
