@@ -54,4 +54,16 @@ config TKERNEL_KILL_HOOK
 	  This option enables the kill hook interface to support
 	  kill interception.
 
+config TKERNEL_KILL_BLOCK
+	tristate "block kill signal"
+	default m
+	depends on CGROUPS
+	select GLOB
+	select TKERNEL_KILL_HOOK
+	help
+	  This option enables the kill block feature.
+	  If the kill signal match the block rule, it will be blocked.
+	  This feature is useful to some k8s user who don't allow k8s
+	  kill user process.
+
 endif
