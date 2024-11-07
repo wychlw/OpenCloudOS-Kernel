@@ -6,3 +6,4 @@ obj-$(CONFIG_TKERNEL_SHIELD_MOUNTS) += shield_mounts.o
 obj-$(CONFIG_TKERNEL_SECURITY_MONITOR) += onionhook/
 obj-$(CONFIG_TKERNEL_AEGIS_MODULE) += aegis/
 obj-$(CONFIG_TKERNEL_IRQ_LATENCY) += irqlatency/
+obj-$(CONFIG_TKERNEL_KILL_HOOK) += killhook/

@@ -47,4 +47,11 @@ config TKERNEL_IRQ_LATENCY
 	help
 	  This option adds support for irq latency debug.
 
+config TKERNEL_KILL_HOOK
+	bool "kill hook"
+	default n
+	help
+	  This option enables the kill hook interface to support
+	  kill interception.
+
 endif
