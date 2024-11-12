@@ -20,3 +20,4 @@ loongson-y += loongson_device.o \
 	      loongson_module.o
 
 obj-$(CONFIG_DRM_LOONGSON) += loongson.o
+obj-$(CONFIG_DRM_AST_LOONGSON) += ast/

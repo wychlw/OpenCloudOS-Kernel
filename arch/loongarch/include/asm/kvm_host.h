@@ -19,6 +19,9 @@
 #include <asm/inst.h>
 #include <asm/kvm_mmu.h>
 #include <asm/loongarch.h>
+#include <asm/kvm_ipi.h>
+#include <asm/kvm_extioi.h>
+#include <asm/kvm_pch_pic.h>
 
 /* Loongarch KVM register ids */
 #define KVM_GET_IOC_CSR_IDX(id)		((id & KVM_CSR_IDX_MASK) >> LOONGARCH_REG_SHIFT)
@@ -26,18 +29,49 @@
 
 #define KVM_MAX_VCPUS			256
 #define KVM_MAX_CPUCFG_REGS		21
-/* memory slots that does not exposed to userspace */
-#define KVM_PRIVATE_MEM_SLOTS		0
 
 #define KVM_HALT_POLL_NS_DEFAULT	500000
-#define KVM_REQ_RECORD_STEAL		KVM_ARCH_REQ(1)
+#define KVM_REQ_TLB_FLUSH_GPA		KVM_ARCH_REQ(0)
+#define KVM_REQ_STEAL_UPDATE		KVM_ARCH_REQ(1)
+#define KVM_REQ_PMU			KVM_ARCH_REQ(2)
+
+#define KVM_GUESTDBG_SW_BP_MASK		\
+	(KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_SW_BP)
+#define KVM_GUESTDBG_VALID_MASK		\
+	(KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_SW_BP | KVM_GUESTDBG_SINGLESTEP)
+
+/* KVM_IRQ_LINE irq field index values */
+#define KVM_LOONGARCH_IRQ_TYPE_SHIFT	24
+#define KVM_LOONGARCH_IRQ_TYPE_MASK	0xff
+#define KVM_LOONGARCH_IRQ_VCPU_SHIFT	16
+#define KVM_LOONGARCH_IRQ_VCPU_MASK	0xff
+#define KVM_LOONGARCH_IRQ_NUM_SHIFT	0
+#define KVM_LOONGARCH_IRQ_NUM_MASK	0xffff
+
+/* irq_type field */
+#define KVM_LOONGARCH_IRQ_TYPE_CPU_IP	0
+#define KVM_LOONGARCH_IRQ_TYPE_CPU_IO	1
+#define KVM_LOONGARCH_IRQ_TYPE_HT	2
+#define KVM_LOONGARCH_IRQ_TYPE_MSI	3
+#define KVM_LOONGARCH_IRQ_TYPE_IOAPIC	4
+#define KVM_LOONGARCH_IRQ_TYPE_ROUTE	5
 
 #define KVM_GUESTDBG_VALID_MASK		(KVM_GUESTDBG_ENABLE | \
 			KVM_GUESTDBG_USE_SW_BP | KVM_GUESTDBG_SINGLESTEP)
+
+#define KVM_DIRTY_LOG_MANUAL_CAPS	\
+	(KVM_DIRTY_LOG_MANUAL_PROTECT_ENABLE | KVM_DIRTY_LOG_INITIALLY_SET)
+
 struct kvm_vm_stat {
 	struct kvm_vm_stat_generic generic;
 	u64 pages;
 	u64 hugepages;
+	u64 ipi_read_exits;
+	u64 ipi_write_exits;
+	u64 extioi_read_exits;
+	u64 extioi_write_exits;
+	u64 pch_pic_read_exits;
+	u64 pch_pic_write_exits;
 };
 
 struct kvm_vcpu_stat {
@@ -55,9 +89,13 @@ struct kvm_arch_memory_slot {
 	unsigned long flags;
 };
 
+#define HOST_MAX_PMNUM			16
 struct kvm_context {
 	unsigned long vpid_cache;
 	struct kvm_vcpu *last_vcpu;
+	/* Host PMU CSR */
+	u64 perf_ctrl[HOST_MAX_PMNUM];
+	u64 perf_cntr[HOST_MAX_PMNUM];
 };
 
 struct kvm_world_switch {
@@ -69,12 +107,13 @@ struct kvm_world_switch {
 #define MAX_PGTABLE_LEVELS	4
 
 /*
- * Physical cpu id is used for interrupt routing, there are different
+ * Physical CPUID is used for interrupt routing, there are different
  * definitions about physical cpuid on different hardwares.
- *  For LOONGARCH_CSR_CPUID register, max cpuid size if 512
- *  For IPI HW, max dest CPUID size 1024
- *  For extioi interrupt controller, max dest CPUID size is 256
- *  For MSI interrupt controller, max supported CPUID size is 65536
+ *
+ *  For LOONGARCH_CSR_CPUID register, max CPUID size if 512
+ *  For IPI hardware, max destination CPUID size 1024
+ *  For extioi interrupt controller, max destination CPUID size is 256
+ *  For msgint interrupt controller, max supported CPUID size is 65536
  *
  * Currently max CPUID is defined as 256 for KVM hypervisor, in future
  * it will be expanded to 4096, including 16 packages at most. And every
@@ -101,9 +140,14 @@ struct kvm_arch {
 	unsigned int  root_level;
 	spinlock_t    phyid_map_lock;
 	struct kvm_phyid_map  *phyid_map;
+	/* Enabled PV features */
+	unsigned long pv_features;
 
 	s64 time_offset;
 	struct kvm_context __percpu *vmcs;
+	struct loongarch_ipi *ipi;
+	struct loongarch_extioi *extioi;
+	struct loongarch_pch_pic *pch_pic;
 };
 
 #define CSR_MAX_NUMS		0x800
@@ -127,9 +171,15 @@ enum emulation_result {
 #define KVM_LARCH_FPU		(0x1 << 0)
 #define KVM_LARCH_LSX		(0x1 << 1)
 #define KVM_LARCH_LASX		(0x1 << 2)
-#define KVM_LARCH_SWCSR_LATEST	(0x1 << 3)
-#define KVM_LARCH_HWCSR_USABLE	(0x1 << 4)
-#define KVM_LARCH_PERF		(0x1 << 5)
+#define KVM_LARCH_LBT		(0x1 << 3)
+#define KVM_LARCH_PMU		(0x1 << 4)
+#define KVM_LARCH_SWCSR_LATEST	(0x1 << 5)
+#define KVM_LARCH_HWCSR_USABLE	(0x1 << 6)
+
+#define LOONGARCH_PV_FEAT_UPDATED	BIT_ULL(63)
+#define LOONGARCH_PV_FEAT_MASK		(BIT(KVM_FEATURE_IPI) |		\
+					 BIT(KVM_FEATURE_STEAL_TIME) |	\
+					 BIT(KVM_FEATURE_VIRT_EXTIOI))
 
 struct kvm_vcpu_arch {
 	/*
@@ -163,9 +213,13 @@ struct kvm_vcpu_arch {
 
 	/* FPU state */
 	struct loongarch_fpu fpu FPU_ALIGN;
+	struct loongarch_lbt lbt;
 
 	/* CSR state */
 	struct loongarch_csrs *csr;
+
+	/* Guest max PMU CSR id */
+	int max_pmu_csrid;
 
 	/* GPR used as IO source/target */
 	u32 io_gpr;
@@ -188,6 +242,7 @@ struct kvm_vcpu_arch {
 
 	/* vcpu's vpid */
 	u64 vpid;
+	gpa_t flush_gpa;
 
 	/* Frequency of stable timer in Hz */
 	u64 timer_mhz;
@@ -197,6 +252,8 @@ struct kvm_vcpu_arch {
 	int last_sched_cpu;
 	/* mp state */
 	struct kvm_mp_state mp_state;
+	/* ipi state */
+	struct ipi_state ipi_state;
 	/* cpucfg */
 	u32 cpucfg[KVM_MAX_CPUCFG_REGS];
 	/* paravirt steal time */
@@ -233,6 +290,11 @@ static inline bool kvm_guest_has_lsx(struct kvm_vcpu_arch *arch)
 static inline bool kvm_guest_has_lasx(struct kvm_vcpu_arch *arch)
 {
 	return arch->cpucfg[2] & CPUCFG2_LASX;
+}
+
+static inline bool kvm_guest_has_lbt(struct kvm_vcpu_arch *arch)
+{
+	return arch->cpucfg[2] & (CPUCFG2_X86BT | CPUCFG2_ARMBT | CPUCFG2_MIPSBT);
 }
 
 static inline bool kvm_guest_has_pmu(struct kvm_vcpu_arch *arch)
