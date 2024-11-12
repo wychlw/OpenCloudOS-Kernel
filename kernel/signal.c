@@ -58,6 +58,8 @@
 #include <asm/cacheflush.h>
 #include <asm/syscall.h>	/* for syscall_get_* */
 
+#include <linux/kill_hook.h>
+
 /*
  * SLAB caches for signal bits.
  */
@@ -870,7 +872,11 @@ static int check_kill_permission(int sig, struct kernel_siginfo *info,
 		}
 	}
 
-	return security_task_kill(t, info, sig, NULL);
+	error = security_task_kill(t, info, sig, NULL);
+	if (error)
+		return error;
+
+	return call_kill_hook(sig, info, t);
 }
 
 /**
