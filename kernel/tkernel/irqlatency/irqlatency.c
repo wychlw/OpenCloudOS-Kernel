@@ -23,7 +23,7 @@
 #include <asm/irq_regs.h>
 #include <linux/sched/clock.h>
 
-#define MAX_STACK_ENTRIES           (PAGE_SIZE / sizeof(unsigned long))
+#define MAX_STACK_ENTRIES           (4096 / sizeof(unsigned long))
 #define PER_STACK_ENTRIES_AVERAGE   (8 + 8)
 #define MAX_STACK_ENTRIES_INDEX     (MAX_STACK_ENTRIES / PER_STACK_ENTRIES_AVERAGE)
 
