@@ -4,7 +4,6 @@
  *
  * Copyright (C) 2022 tencent, Inc., liu hua
  *
- *
  * shookliu <shookliu@tencent.com>
  */
 #define pr_fmt(fmt) "irqlatency: " fmt
@@ -21,26 +20,19 @@
 #include <linux/stacktrace.h>
 #include <linux/timer.h>
 #include <linux/uaccess.h>
-#include <linux/kprobes.h>
-#include <linux/version.h>
 #include <asm/irq_regs.h>
 #include <linux/sched/clock.h>
 
-#define MAX_STACK_ENTRIES		(PAGE_SIZE / sizeof(unsigned long))
-#define PER_STACK_ENTRIES_AVERAGE	(8 + 8)
-#define MAX_STACK_ENTRIES_INDEX	(MAX_STACK_ENTRIES / PER_STACK_ENTRIES_AVERAGE)
+#define MAX_STACK_ENTRIES           (PAGE_SIZE / sizeof(unsigned long))
+#define PER_STACK_ENTRIES_AVERAGE   (8 + 8)
+#define MAX_STACK_ENTRIES_INDEX     (MAX_STACK_ENTRIES / PER_STACK_ENTRIES_AVERAGE)
 
-#define MAX_LATENCY_RECORD		10
+#define MAX_LATENCY_RECORD          10
 
 #define NS_TO_MS(ns) ((ns) / 1000000)
 
-#define MIN_FREQ_MS (5)
-#define MAX_FREQ_MS (5000)
-
-
-static u64 freq_ms = 10;
-static u64 irq_latency_ms = 30;
-static u32 check_enable;
+#define MIN_FREQ_MS  (5)
+#define MAX_FREQ_MS  (5000)
 
 struct per_stack {
 	unsigned int nr_entries;
@@ -55,10 +47,10 @@ struct latency_data {
 	unsigned long entries[MAX_STACK_ENTRIES];
 	unsigned long latency_count[MAX_LATENCY_RECORD];
 
-	/* Task command names*/
+	/* Task command names */
 	char comms[MAX_STACK_ENTRIES_INDEX][TASK_COMM_LEN];
 
-	/* Task pids*/
+	/* Task pids */
 	pid_t pids[MAX_STACK_ENTRIES_INDEX];
 
 	struct {
@@ -68,18 +60,23 @@ struct latency_data {
 };
 
 struct per_cpu_detect_data {
-	u32 soft_in_irq;
+	unsigned int soft_in_irq;
 	struct timer_list softirq_timer;
 	struct hrtimer irq_timer;
-	struct latency_data irq_data, softirq_data;
+	struct latency_data irq_data;
+	struct latency_data softirq_data;
 };
+
+static u64 freq_ms = 10;
+static u64 irq_latency_ms = 30;
+static unsigned int check_enable;
 
 static struct per_cpu_detect_data __percpu *detect_data;
 
-/**
+/*
  * Note: Must be called with irq disabled.
  */
-static bool save_stack(u32 isirq, u64 latency, u32 soft_in_irq)
+static bool save_stack(u64 latency, unsigned int isirq, unsigned int soft_in_irq)
 {
 	unsigned long nr_entries, stack_index;
 	struct per_stack *pstack;
@@ -107,7 +104,7 @@ static bool save_stack(u32 isirq, u64 latency, u32 soft_in_irq)
 				MAX_STACK_ENTRIES - nr_entries, 0);
 	lat_data->total_entries += pstack->nr_entries;
 
-	/**
+	/*
 	 * Ensure that the initialisation of @stacks is complete before we
 	 * update the @index.
 	 */
@@ -122,7 +119,7 @@ static bool save_stack(u32 isirq, u64 latency, u32 soft_in_irq)
 	return true;
 }
 
-static bool record_latency(u64 delta, u32 isirq, u32 soft_in_irq)
+static bool record_latency(u64 delta, unsigned int isirq, unsigned int soft_in_irq)
 {
 	int index = 0;
 	u64 throttle = freq_ms << 1;
@@ -131,7 +128,7 @@ static bool record_latency(u64 delta, u32 isirq, u32 soft_in_irq)
 		return false;
 
 	if (unlikely(delta >= irq_latency_ms))
-		save_stack(isirq, delta, soft_in_irq);
+		save_stack(delta, isirq, soft_in_irq);
 
 	delta -= freq_ms;
 	delta >>= 1;
@@ -166,7 +163,6 @@ static void reset_latency_trace(void *data)
 		detect_data->softirq_data.latency_count[i] = 0;
 	}
 }
-
 
 static void softirq_timer_func(struct timer_list *softirq_timer)
 {
@@ -274,9 +270,9 @@ static int enable_open(struct inode *inode, struct file *file)
 static ssize_t enable_write(struct file *file, const char __user *buf,
 			    size_t count, loff_t *ppos)
 {
-	unsigned long enable;
+	unsigned int enable;
 
-	if (kstrtoul_from_user(buf, count, 0, &enable))
+	if (kstrtouint_from_user(buf, count, 0, &enable))
 		return -EINVAL;
 
 	if (enable > 2)
@@ -428,7 +424,7 @@ static void trace_stack_print(struct seq_file *m, struct per_stack *stack)
 		seq_printf(m, "%*c%pS\n", 5, ' ', (void *)stack->perstack[i]);
 }
 
-static void trace_stack_irq_show(struct seq_file *m, void *v, u32 isirq)
+static void trace_stack_irq_show(struct seq_file *m, void *v, unsigned int isirq)
 {
 	int cpu;
 
@@ -440,7 +436,7 @@ static void trace_stack_irq_show(struct seq_file *m, void *v, u32 isirq)
 		lat_data = isirq ? per_cpu_ptr(&detect_data->irq_data, cpu) :
 			per_cpu_ptr(&detect_data->softirq_data, cpu);
 
-		/* *
+		/*
 		 * Paired with smp_store_release() in the save_trace().
 		 */
 		stack_index = smp_load_acquire(&lat_data->stack_index);
@@ -541,7 +537,7 @@ static bool trace_histogram_show(struct seq_file *m, const char *header,
 	return true;
 }
 
-static void trace_dist_show_irq(struct seq_file *m, void *v, u32 isirq)
+static void trace_dist_show_irq(struct seq_file *m, void *v, unsigned int isirq)
 {
 	int cpu;
 	unsigned long latency_count[MAX_LATENCY_RECORD] = { 0 };
@@ -570,7 +566,6 @@ static int trace_dist_show(struct seq_file *m, void *v)
 
 	return 0;
 }
-
 
 static int trace_dist_open(struct inode *inode, struct file *file)
 {
