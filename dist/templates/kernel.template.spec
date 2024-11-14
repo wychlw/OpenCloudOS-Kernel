@@ -1650,8 +1650,8 @@ fi
 %defattr(-,root,root)
 %{_sbindir}/bpftool
 %{_sysconfdir}/bash_completion.d/bpftool
-%{_mandir}/man8/bpftool.8.gz
-%{_mandir}/man8/bpftool-*.8.gz
+%{_mandir}/man8/bpftool.8.*
+%{_mandir}/man8/bpftool-*.8.*
 
 %if %{with_debuginfo}
 %files -f bpftool-debuginfo.list -n bpftool-debuginfo
