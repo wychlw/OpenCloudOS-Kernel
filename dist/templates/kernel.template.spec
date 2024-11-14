@@ -492,10 +492,11 @@ License: GPLv2
 %if "%{?dist}" != ".tl3"
 ## "${DISTRO}" is .tl4 or oc9
 BuildRequires: kernel-srpm-macros
-BuildRequires: kernel-rpm-macros
-BuildRequires: lsof
 BuildRequires: perl-sigtrap
 %endif
+BuildRequires: kernel-rpm-macros
+BuildRequires: lsof
+BuildRequires: pciutils
 %description -n mlnx-ofed-dist
 This package contains all the signed ko files.
 %endif
