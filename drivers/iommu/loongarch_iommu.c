@@ -115,6 +115,8 @@ int loongarch_iommu_disable;
 	writel(val, iommu->confbase + off)
 #define iommu_read_regl(iommu, off)	readl(iommu->confbase + off)
 
+static void switch_huge_to_page(unsigned long *ptep, unsigned long start);
+
 static void iommu_translate_disable(struct loongarch_iommu *iommu)
 {
 	u32 val;
@@ -173,6 +175,83 @@ static bool la_iommu_capable(struct device *dev, enum iommu_cap cap)
 static struct dom_info *to_dom_info(struct iommu_domain *dom)
 {
 	return container_of(dom, struct dom_info, domain);
+}
+
+static void flush_iotlb_by_domain_id(struct loongarch_iommu *iommu, u16 domain_id, bool read)
+{
+	u32 val;
+	u32 flush_read_tlb = read? 1:0;
+
+	if (iommu == NULL) {
+		pr_err("%s iommu is NULL", __func__);
+		return;
+	}
+
+	val = iommu_read_regl(iommu, LA_IOMMU_EIVDB);
+	val &= ~0xf0000;
+	val |= ((u32)domain_id) << 16;
+	iommu_write_regl(iommu, LA_IOMMU_EIVDB, val);
+
+	/* Flush all  */
+	val = iommu_read_regl(iommu, LA_IOMMU_VBTC);
+	val &= ~0x10f;
+	val |= (flush_read_tlb << 8) | 4;
+	iommu_write_regl(iommu, LA_IOMMU_VBTC, val);
+}
+
+static int flush_pgtable_is_busy(struct loongarch_iommu *iommu)
+{
+	u32 val;
+
+	val = iommu_read_regl(iommu, LA_IOMMU_VBTC);
+	return val & IOMMU_PGTABLE_BUSY;
+}
+
+static int iommu_flush_iotlb_by_domain(struct la_iommu_dev_data *dev_data)
+{
+	u32 retry = 0;
+	struct loongarch_iommu *iommu;
+	u16 domain_id;
+
+	if (dev_data == NULL) {
+		pr_err("%s dev_data is NULL", __func__);
+		return 0;
+	}
+
+	if (dev_data->iommu == NULL) {
+		pr_err("%s iommu is NULL", __func__);
+		return 0;
+	}
+
+	if (dev_data->iommu_entry == NULL) {
+		pr_err("%s iommu_entry is NULL", __func__);
+		return 0;
+	}
+
+	iommu = dev_data->iommu;
+	domain_id = dev_data->iommu_entry->id;
+
+	flush_iotlb_by_domain_id(iommu, domain_id, 0);
+	while (flush_pgtable_is_busy(iommu)) {
+		if (retry == LOOP_TIMEOUT) {
+			pr_err("LA-IOMMU: %s %d iotlb flush busy\n", __func__, __LINE__);
+			return -EIO;
+		}
+		retry++;
+		udelay(1);
+	}
+
+	flush_iotlb_by_domain_id(iommu, domain_id, 1);
+	while (flush_pgtable_is_busy(iommu)) {
+		if (retry == LOOP_TIMEOUT) {
+			pr_err("LA-IOMMU: %s %d iotlb flush busy\n", __func__, __LINE__);
+			return -EIO;
+		}
+		retry++;
+		udelay(1);
+	}
+	iommu_translate_enable(iommu);
+	return 0;
 }
 
 static int update_dev_table(struct la_iommu_dev_data *dev_data, int flag)
@@ -250,6 +329,8 @@ static int update_dev_table(struct la_iommu_dev_data *dev_data, int flag)
 		if (index < MAX_ATTACHED_DEV_ID)
 			__clear_bit(index, iommu->devtable_bitmap);
 	}
+
+	iommu_flush_iotlb_by_domain(dev_data);
 	return 0;
 }
 
@@ -267,14 +348,6 @@ static void flush_iotlb(struct loongarch_iommu *iommu)
 	val &= ~0x1f;
 	val |= 0x5;
 	iommu_write_regl(iommu, LA_IOMMU_VBTC, val);
-}
-
-static int flush_pgtable_is_busy(struct loongarch_iommu *iommu)
-{
-	u32 val;
-
-	val = iommu_read_regl(iommu, LA_IOMMU_VBTC);
-	return val & IOMMU_PGTABLE_BUSY;
 }
 
 static int iommu_flush_iotlb(struct loongarch_iommu *iommu)
@@ -324,8 +397,6 @@ static void do_attach(struct iommu_info *info, struct la_iommu_dev_data *dev_dat
 	spin_unlock(&info->devlock);
 
 	update_dev_table(dev_data, 1);
-	if (info->dev_cnt > 0)
-		iommu_flush_iotlb(dev_data->iommu);
 }
 
 static void do_detach(struct la_iommu_dev_data *dev_data)
@@ -889,7 +960,7 @@ static size_t iommu_page_map(void *pt_base,
 {
 	unsigned long next, old, step;
 	unsigned long pte, *ptep, *pgtable;
-	int ret, huge;
+	int ret, huge, switch_page;
 
 	old = start;
 	ptep = iommu_pte_offset(pt_base, start, level);
@@ -910,9 +981,16 @@ static size_t iommu_page_map(void *pt_base,
 		next = iommu_ptable_end(start, end, level);
 		step = next - start;
 		huge = 0;
-		if ((level == IOMMU_PT_LEVEL1) && (step == IOMMU_HPAGE_SIZE))
-			if (!iommu_pte_present(ptep) || iommu_pte_huge(ptep))
+		switch_page = 0;
+		if (level == IOMMU_PT_LEVEL1) {
+			if ((step == IOMMU_HPAGE_SIZE) && (!iommu_pte_present(ptep) || iommu_pte_huge(ptep)))
 				huge = 1;
+			else if (iommu_pte_present(ptep) && iommu_pte_huge(ptep))
+				switch_page = 1;
+		}
+
+		if (switch_page)
+			switch_huge_to_page(ptep, start);
 
 		if (huge) {
 			pte =  (paddr & IOMMU_HPAGE_MASK) |
@@ -931,6 +1009,21 @@ static size_t iommu_page_map(void *pt_base,
 		start = next;
 	} while (start < end);
 	return start - old;
+}
+
+static void switch_huge_to_page(unsigned long *ptep, unsigned long start)
+{
+	phys_addr_t paddr = *ptep & IOMMU_HPAGE_MASK;
+	unsigned long next = start + IOMMU_HPAGE_SIZE;
+	unsigned long *pgtable;
+	int ret;
+
+	*ptep = 0;
+	ret = iommu_get_page_table(ptep);
+	if (ret == 0) {
+		pgtable = phys_to_virt(*ptep & IOMMU_PAGE_MASK);
+		iommu_page_map(pgtable, start, next, paddr, 0);
+	}
 }
 
 static int domain_map_page(struct dom_info *priv, unsigned long start,
@@ -969,6 +1062,11 @@ static size_t iommu_page_unmap(void *pt_base,
 			next = iommu_ptable_end(start, end, level);
 			if (!iommu_pte_present(ptep))
 				continue;
+
+			if ((level == IOMMU_PT_LEVEL1) &&
+			    iommu_pte_huge(ptep) &&
+			    ((next - start) < IOMMU_HPAGE_SIZE))
+				switch_huge_to_page(ptep, start);
 
 			if (iommu_pte_huge(ptep)) {
 				if ((next - start) != IOMMU_HPAGE_SIZE)
